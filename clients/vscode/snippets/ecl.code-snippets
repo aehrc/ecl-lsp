@@ -1,0 +1,102 @@
+{
+  "Descendant of": {
+    "prefix": "ecl-desc",
+    "body": "< ${1:conceptId} |${2:term}|",
+    "description": "Descendant of — all children of a concept, excluding itself",
+  },
+  "Descendant or self of": {
+    "prefix": "ecl-desc-self",
+    "body": "<< ${1:conceptId} |${2:term}|",
+    "description": "Descendant or self of — all children of a concept, including itself",
+  },
+  "Ancestor of": {
+    "prefix": "ecl-anc",
+    "body": "> ${1:conceptId} |${2:term}|",
+    "description": "Ancestor of — all parents of a concept, excluding itself",
+  },
+  "Ancestor or self of": {
+    "prefix": "ecl-anc-self",
+    "body": ">> ${1:conceptId} |${2:term}|",
+    "description": "Ancestor or self of — all parents of a concept, including itself",
+  },
+  "AND combination": {
+    "prefix": "ecl-and",
+    "body": "${1:expression} AND ${2:expression}",
+    "description": "Logical AND — both constraints must be satisfied",
+  },
+  "OR combination": {
+    "prefix": "ecl-or",
+    "body": "${1:expression} OR ${2:expression}",
+    "description": "Logical OR — at least one constraint must be satisfied",
+  },
+  "MINUS exclusion": {
+    "prefix": "ecl-minus",
+    "body": "${1:expression} MINUS ${2:expression}",
+    "description": "MINUS exclusion — exclude concepts matching the right operand",
+  },
+  "Member of": {
+    "prefix": "ecl-member",
+    "body": "^ ${1:refsetId} |${2:term}|",
+    "description": "Member of — concepts that are members of the specified reference set",
+  },
+  "Simple refinement": {
+    "prefix": "ecl-refine",
+    "body": "<< ${1:concept}: ${2:attribute} = << ${3:value}",
+    "description": "Simple refinement — constrain by a single attribute-value pair",
+  },
+  "Grouped refinement": {
+    "prefix": "ecl-refine-group",
+    "body": "<< ${1:concept}: { ${2:attribute} = << ${3:value} }",
+    "description": "Grouped refinement — attribute group with curly braces",
+  },
+  "Multi-attribute refinement": {
+    "prefix": "ecl-refine-multi",
+    "body": "<< ${1:concept}: ${2:attr1} = << ${3:val1}, ${4:attr2} = << ${5:val2}",
+    "description": "Multi-attribute refinement — multiple attribute-value pairs separated by comma",
+  },
+  "Nested expression": {
+    "prefix": "ecl-nested",
+    "body": "<< ${1:concept}: ${2:attribute} = (<< ${3:value})",
+    "description": "Nested expression — attribute value is a sub-expression in parentheses",
+  },
+  "AND refinement": {
+    "prefix": "ecl-refine-and",
+    "body": "<< ${1:concept}: ${2:attr1} = << ${3:val1} AND ${4:attr2} = << ${5:val2}",
+    "description": "AND refinement — multiple attributes combined with AND",
+  },
+  "Cardinality": {
+    "prefix": "ecl-card",
+    "body": "<< ${1:concept}: [${2:1}..${3:*}] ${4:attribute} = << ${5:value}",
+    "description": "Cardinality constraint — specify min..max occurrences of an attribute",
+  },
+  "Any concept": {
+    "prefix": "ecl-any",
+    "body": "*",
+    "description": "Any concept — wildcard matching all SNOMED CT concepts",
+  },
+  "Any with refinement": {
+    "prefix": "ecl-any-refine",
+    "body": "*: ${1:attribute} = << ${2:value}",
+    "description": "Any concept with refinement — all concepts matching an attribute constraint",
+  },
+  "Dot notation": {
+    "prefix": "ecl-dot",
+    "body": "<< ${1:concept} . ${2:attribute}",
+    "description": "Dot notation — retrieve attribute values for matching concepts",
+  },
+  "Concrete string value": {
+    "prefix": "ecl-concrete-str",
+    "body": "<< ${1:concept}: ${2:attribute} = \"${3:value}\"",
+    "description": "Concrete string value — match concepts with a specific string attribute value",
+  },
+  "Concrete number value": {
+    "prefix": "ecl-concrete-num",
+    "body": "<< ${1:concept}: ${2:attribute} = #${3:value}",
+    "description": "Concrete number value — match concepts with a specific numeric attribute value",
+  },
+  "Term filter": {
+    "prefix": "ecl-filter",
+    "body": "< ${1:concept} {{ term = \"${2:searchTerm}\" }}",
+    "description": "Term filter — filter results by matching term text",
+  },
+}

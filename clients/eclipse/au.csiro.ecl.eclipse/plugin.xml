@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?eclipse version="3.4"?>
+<plugin>
+
+   <!-- Content Type: .ecl files -->
+   <extension point="org.eclipse.core.contenttype.contentTypes">
+      <content-type
+            id="au.csiro.ecl.eclipse.eclContentType"
+            name="SNOMED CT Expression Constraint Language"
+            base-type="org.eclipse.core.runtime.text"
+            file-extensions="ecl"
+            priority="normal">
+      </content-type>
+   </extension>
+
+   <!-- Editor binding: open .ecl files in Generic Editor (LSP4E + TM4E) -->
+   <extension point="org.eclipse.ui.editors">
+      <editorContentTypeBinding
+            contentTypeId="au.csiro.ecl.eclipse.eclContentType"
+            editorId="org.eclipse.ui.genericeditor.GenericEditor">
+      </editorContentTypeBinding>
+   </extension>
+
+   <!-- LSP4E: Language Server registration -->
+   <extension point="org.eclipse.lsp4e.languageServer">
+      <server
+            id="au.csiro.ecl.eclipse.eclServer"
+            class="au.csiro.ecl.eclipse.EclStreamConnectionProvider"
+            label="ECL Language Server"
+            singleton="true">
+      </server>
+      <contentTypeMapping
+            contentType="au.csiro.ecl.eclipse.eclContentType"
+            id="au.csiro.ecl.eclipse.eclServer"
+            languageId="ecl">
+      </contentTypeMapping>
+   </extension>
+
+   <!-- TM4E: TextMate grammar registration -->
+   <extension point="org.eclipse.tm4e.registry.grammars">
+      <grammar
+            scopeName="source.ecl"
+            path="syntaxes/ecl.tmLanguage.json">
+      </grammar>
+      <scopeNameContentTypeBinding
+            contentTypeId="au.csiro.ecl.eclipse.eclContentType"
+            scopeName="source.ecl">
+      </scopeNameContentTypeBinding>
+   </extension>
+
+   <!-- TM4E: Language configuration (brackets, comments) -->
+   <extension point="org.eclipse.tm4e.languageconfiguration.languageConfigurations">
+      <languageConfiguration
+            contentTypeId="au.csiro.ecl.eclipse.eclContentType"
+            path="language-configurations/ecl.language-configuration.json">
+      </languageConfiguration>
+   </extension>
+
+   <!-- Preference page -->
+   <extension point="org.eclipse.ui.preferencePages">
+      <page
+            id="au.csiro.ecl.eclipse.preferences"
+            class="au.csiro.ecl.eclipse.EclPreferencePage"
+            name="ECL Language Server">
+      </page>
+   </extension>
+
+   <!-- Default preference values -->
+   <extension point="org.eclipse.core.runtime.preferences">
+      <initializer class="au.csiro.ecl.eclipse.EclPreferenceInitializer"/>
+   </extension>
+
+</plugin>

@@ -1,0 +1,48 @@
+{
+  "name": "ecl-core",
+  "version": "1.0.0",
+  "license": "Apache-2.0",
+  "author": "Commonwealth Scientific and Industrial Research Organisation (CSIRO)",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/aehrc/ecl-lsp.git",
+    "directory": "packages/ecl-core"
+  },
+  "homepage": "https://github.com/aehrc/ecl-lsp/tree/main/packages/ecl-core#readme",
+  "bugs": {
+    "url": "https://github.com/aehrc/ecl-lsp/issues"
+  },
+  "description": "Core ECL parsing, formatting, validation, and terminology library",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist/**",
+    "!dist/test/",
+    "LICENSE"
+  ],
+  "scripts": {
+    "prepack": "node -e \"require('fs').copyFileSync('../../LICENSE','LICENSE')\"",
+    "antlr4ts": "antlr4ts -visitor -no-listener -o src/parser/generated ../../grammar/*.g4",
+    "precompile": "npm run antlr4ts",
+    "compile": "tsc -b",
+    "watch": "tsc -b --watch",
+    "clean": "rimraf dist src/parser/generated",
+    "test": "npm run compile && node --test dist/test/*.test.js"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "antlr4ts": "^0.5.0-alpha.4"
+  },
+  "optionalDependencies": {
+    "node-fetch": "^2.7.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.3",
+    "@types/node": "^20.10.6",
+    "@types/node-fetch": "^2.6.9",
+    "rimraf": "^5.0.5",
+    "antlr4ts-cli": "^0.5.0-alpha.4"
+  }
+}

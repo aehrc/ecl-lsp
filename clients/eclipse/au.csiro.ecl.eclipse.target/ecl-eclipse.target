@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<?pde version="3.8"?>
+<target name="ECL Eclipse Target Platform">
+    <locations>
+        <!-- All dependencies from Eclipse 2024-12 for version compatibility -->
+        <location includeAllPlatforms="false" includeConfigurePhase="true"
+                  includeMode="planner" includeSource="true" type="InstallableUnit">
+            <repository location="https://download.eclipse.org/releases/2024-12/"/>
+            <unit id="org.eclipse.platform.feature.group" version="0.0.0"/>
+            <unit id="org.eclipse.lsp4e" version="0.0.0"/>
+            <unit id="org.eclipse.tm4e.feature.feature.group" version="0.0.0"/>
+            <unit id="org.junit" version="0.0.0"/>
+        </location>
+    </locations>
+</target>

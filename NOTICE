@@ -1,0 +1,11 @@
+ECL Language Tools
+Copyright 2024-2026 Commonwealth Scientific and Industrial Research Organisation (CSIRO)
+ABN 41 687 119 230
+
+This product includes software developed at CSIRO's Australian e-Health
+Research Centre (https://aehrc.csiro.au/).
+
+This product uses the official SNOMED CT Expression Constraint Language grammar
+maintained by SNOMED International (https://github.com/IHTSDO/snomed-expression-constraint-language).
+
+Third-party dependency licenses are listed in THIRD-PARTY-LICENSES.txt.

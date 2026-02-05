@@ -1,0 +1,25 @@
+{
+  "name": "ecl-textmate",
+  "version": "1.0.0",
+  "contributes": {
+    "languages": [
+      {
+        "id": "ecl",
+        "extensions": [
+          ".ecl"
+        ],
+        "aliases": [
+          "ECL",
+          "Expression Constraint Language"
+        ]
+      }
+    ],
+    "grammars": [
+      {
+        "language": "ecl",
+        "scopeName": "source.ecl",
+        "path": "./syntaxes/ecl.tmLanguage.json"
+      }
+    ]
+  }
+}

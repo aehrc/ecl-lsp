@@ -1,0 +1,17 @@
+Manifest-Version: 1.0
+Bundle-ManifestVersion: 2
+Bundle-Name: ECL Language Support Tests
+Bundle-SymbolicName: au.csiro.ecl.eclipse.test
+Bundle-Version: 1.0.0.qualifier
+Bundle-Vendor: CSIRO Australian e-Health Research Centre
+Fragment-Host: au.csiro.ecl.eclipse;bundle-version="1.0.0"
+Bundle-RequiredExecutionEnvironment: JavaSE-17
+Require-Bundle: org.eclipse.core.runtime;bundle-version="3.26.0",
+ org.eclipse.core.resources;bundle-version="3.18.0",
+ org.eclipse.core.contenttype;bundle-version="3.9.0",
+ org.eclipse.ui;bundle-version="3.204.0",
+ org.eclipse.ui.ide;bundle-version="3.22.0",
+ org.eclipse.lsp4e;bundle-version="0.18.0",
+ org.eclipse.lsp4j;bundle-version="0.19.0",
+ org.eclipse.tm4e.registry;bundle-version="0.9.0",
+ org.junit;bundle-version="4.13.0"

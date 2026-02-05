@@ -1,0 +1,10 @@
+# Maven/Tycho build output
+**/target/
+
+# Bundled server (copied during build from packages/)
+au.csiro.ecl.eclipse/server/
+
+# Eclipse IDE files
+.project
+.classpath
+.settings/

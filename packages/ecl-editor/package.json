@@ -1,0 +1,61 @@
+{
+  "name": "ecl-editor",
+  "version": "1.0.0",
+  "license": "Apache-2.0",
+  "author": "Commonwealth Scientific and Industrial Research Organisation (CSIRO)",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/aehrc/ecl-lsp.git",
+    "directory": "packages/ecl-editor"
+  },
+  "homepage": "https://github.com/aehrc/ecl-lsp/tree/main/packages/ecl-editor#readme",
+  "bugs": {
+    "url": "https://github.com/aehrc/ecl-lsp/issues"
+  },
+  "description": "Web Component for ECL editing with Monaco",
+  "type": "module",
+  "main": "dist/index.cjs",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist/**",
+    "LICENSE"
+  ],
+  "scripts": {
+    "prepack": "node -e \"require('fs').copyFileSync('../../LICENSE','LICENSE')\"",
+    "build": "vite build",
+    "compile": "vite build",
+    "dev": "vite build --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "storybook": "storybook dev -p 6007",
+    "build-storybook": "storybook build"
+  },
+  "dependencies": {
+    "ecl-editor-core": "file:../ecl-editor-core"
+  },
+  "peerDependencies": {
+    "monaco-editor": ">=0.40.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.2",
+    "@storybook/web-components-vite": "^9.0.4",
+    "lit": "^3.3.0",
+    "monaco-editor": "^0.52.2",
+    "storybook": "^9.0.4",
+    "typescript": "^5.3.3",
+    "vite": "^6.3.5",
+    "vite-plugin-dts": "^4.5.4",
+    "vite-plugin-node-polyfills": "^0.25.0",
+    "vitest": "^3.2.1"
+  }
+}

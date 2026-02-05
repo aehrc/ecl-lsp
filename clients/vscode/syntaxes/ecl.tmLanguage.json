@@ -1,0 +1,157 @@
+{
+  "name": "ECL",
+  "scopeName": "source.ecl",
+  "patterns": [
+    { "include": "#block-comment" },
+    { "include": "#line-comment" },
+    { "include": "#display-term" },
+    { "include": "#history-keyword" },
+    { "include": "#logical-operator" },
+    { "include": "#filter-block" },
+    { "include": "#constraint-operator" },
+    { "include": "#structural-operator" },
+    { "include": "#concept-id" },
+    { "include": "#wildcard" },
+    { "include": "#punctuation" }
+  ],
+  "repository": {
+    "block-comment": {
+      "name": "comment.block.ecl",
+      "begin": "/\\*",
+      "end": "\\*/",
+      "beginCaptures": { "0": { "name": "punctuation.definition.comment.begin.ecl" } },
+      "endCaptures": { "0": { "name": "punctuation.definition.comment.end.ecl" } }
+    },
+    "line-comment": {
+      "name": "comment.line.double-slash.ecl",
+      "match": "//.*$"
+    },
+    "display-term": {
+      "name": "string.quoted.pipe.ecl",
+      "match": "(\\|)[^|]*(\\|)",
+      "captures": {
+        "1": { "name": "punctuation.definition.string.begin.ecl" },
+        "2": { "name": "punctuation.definition.string.end.ecl" }
+      }
+    },
+    "history-keyword": {
+      "name": "support.constant.history.ecl",
+      "match": "(?i)\\bHISTORY(?:-(?:MIN|MOD|MAX))?\\b"
+    },
+    "logical-operator": {
+      "name": "keyword.operator.logical.ecl",
+      "match": "(?i)\\b(AND|OR|MINUS|NOT)\\b"
+    },
+    "filter-block": {
+      "begin": "\\{\\{",
+      "end": "\\}\\}",
+      "beginCaptures": { "0": { "name": "punctuation.definition.filter.begin.ecl" } },
+      "endCaptures": { "0": { "name": "punctuation.definition.filter.end.ecl" } },
+      "patterns": [
+        { "include": "#block-comment" },
+        { "include": "#line-comment" },
+        { "include": "#display-term" },
+        {
+          "name": "support.type.filter.ecl",
+          "match": "(?i)\\b(typeId|moduleId|dialectId|definitionStatusId|term|language|active|effectiveTime|id)\\b"
+        },
+        { "include": "#logical-operator" },
+        { "include": "#structural-operator" },
+        { "include": "#concept-id" },
+        { "include": "#wildcard" }
+      ]
+    },
+    "constraint-operator": {
+      "patterns": [
+        {
+          "name": "keyword.operator.constraint.child-or-self.ecl",
+          "match": "<<!"
+        },
+        {
+          "name": "keyword.operator.constraint.descendant-or-self.ecl",
+          "match": "<<"
+        },
+        {
+          "name": "keyword.operator.constraint.child.ecl",
+          "match": "<!"
+        },
+        {
+          "name": "keyword.operator.constraint.parent-or-self.ecl",
+          "match": ">>!"
+        },
+        {
+          "name": "keyword.operator.constraint.ancestor-or-self.ecl",
+          "match": ">>"
+        },
+        {
+          "name": "keyword.operator.constraint.parent.ecl",
+          "match": ">!"
+        },
+        {
+          "name": "keyword.operator.constraint.top.ecl",
+          "match": "!!>"
+        },
+        {
+          "name": "keyword.operator.constraint.bottom.ecl",
+          "match": "!!<"
+        },
+        {
+          "name": "keyword.operator.constraint.descendant.ecl",
+          "match": "<"
+        },
+        {
+          "name": "keyword.operator.constraint.ancestor.ecl",
+          "match": ">"
+        },
+        {
+          "name": "keyword.operator.constraint.member-of.ecl",
+          "match": "\\^"
+        }
+      ]
+    },
+    "structural-operator": {
+      "patterns": [
+        {
+          "name": "keyword.operator.comparison.not-equal.ecl",
+          "match": "!="
+        },
+        {
+          "name": "keyword.operator.comparison.equal.ecl",
+          "match": "="
+        },
+        {
+          "name": "keyword.operator.refinement.ecl",
+          "match": ":"
+        },
+        {
+          "name": "keyword.operator.dot.ecl",
+          "match": "\\."
+        }
+      ]
+    },
+    "concept-id": {
+      "name": "constant.numeric.sctid.ecl",
+      "match": "\\b\\d{6,18}\\b"
+    },
+    "wildcard": {
+      "name": "variable.language.wildcard.ecl",
+      "match": "\\*"
+    },
+    "punctuation": {
+      "patterns": [
+        {
+          "name": "punctuation.parenthesis.ecl",
+          "match": "[()]"
+        },
+        {
+          "name": "punctuation.bracket.ecl",
+          "match": "[\\[\\]]"
+        },
+        {
+          "name": "punctuation.brace.ecl",
+          "match": "[{}]"
+        }
+      ]
+    }
+  }
+}

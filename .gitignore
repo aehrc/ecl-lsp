@@ -1,0 +1,46 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+*.vsix
+*.tsbuildinfo
+
+# Generated files
+server/src/parser/generated/
+packages/ecl-core/src/parser/generated/
+
+# LICENSE copies (prepack/prebuild copies from root — single source of truth)
+packages/*/LICENSE
+clients/vscode/LICENSE
+clients/vscode/THIRD-PARTY-LICENSES.txt
+
+# Test artifacts
+test-results/
+.playwright-mcp/
+
+# Test coverage
+coverage/
+.nyc_output/
+
+# IDE
+.vscode/
+.idea/
+
+# Secrets and credentials
+.env
+.env.*
+.npmrc
+*.pem
+*.key
+*.p12
+credentials.json
+secrets.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*

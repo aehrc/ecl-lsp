@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<site>
+   <feature id="au.csiro.ecl.eclipse.feature" version="0.0.0">
+      <category name="ecl"/>
+   </feature>
+   <category-def name="ecl" label="ECL Language Support">
+      <description>
+         SNOMED CT Expression Constraint Language tools for clinical
+         terminology expression authoring in Eclipse IDE.
+      </description>
+   </category-def>
+</site>

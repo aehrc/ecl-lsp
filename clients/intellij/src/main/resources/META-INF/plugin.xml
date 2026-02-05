@@ -1,0 +1,42 @@
+<idea-plugin>
+    <id>au.csiro.ecl.intellij</id>
+    <name>ECL Language Support</name>
+    <vendor>CSIRO</vendor>
+    <description><![CDATA[
+        Language support for SNOMED CT Expression Constraint Language (ECL).
+        Provides syntax highlighting, completion, diagnostics, hover, formatting,
+        code actions, and Code Lens for .ecl files via the ECL Language Server.
+    ]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+    <depends>com.intellij.modules.lsp</depends>
+    <depends>org.jetbrains.plugins.textmate</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <fileType
+            name="ECL"
+            implementationClass="au.csiro.ecl.intellij.EclFileType"
+            fieldName="INSTANCE"
+            language="ECL"
+            extensions="ecl"/>
+
+        <textmate.bundleProvider
+            implementation="au.csiro.ecl.intellij.EclTextMateBundleProvider"/>
+
+        <applicationService
+            serviceImplementation="au.csiro.ecl.intellij.EclSettings"/>
+
+        <applicationConfigurable
+            parentId="language"
+            id="au.csiro.ecl.settings"
+            displayName="ECL Language Server"
+            instance="au.csiro.ecl.intellij.EclSettingsConfigurable"/>
+
+        <platform.lsp.serverSupportProvider
+            implementation="au.csiro.ecl.intellij.EclLspServerSupportProvider"/>
+
+        <statusBarWidgetFactory
+            id="ecl.snomedEdition"
+            implementation="au.csiro.ecl.intellij.SnomedEditionWidgetFactory"/>
+    </extensions>
+</idea-plugin>

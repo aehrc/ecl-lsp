@@ -1,0 +1,181 @@
+{
+  "name": "ecl-lsp-client",
+  "displayName": "ECL Language Support",
+  "description": "Language support for SNOMED CT Expression Constraint Language",
+  "version": "1.0.0",
+  "license": "Apache-2.0",
+  "author": "Commonwealth Scientific and Industrial Research Organisation (CSIRO)",
+  "publisher": "ecl-lsp",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/aehrc/ecl-lsp.git",
+    "directory": "clients/vscode"
+  },
+  "homepage": "https://github.com/aehrc/ecl-lsp/tree/main/clients/vscode#readme",
+  "bugs": {
+    "url": "https://github.com/aehrc/ecl-lsp/issues"
+  },
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "activationEvents": [
+    "onLanguage:ecl"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "ecl",
+        "aliases": [
+          "ECL",
+          "Expression Constraint Language"
+        ],
+        "extensions": [
+          ".ecl"
+        ],
+        "configuration": "./language-configuration.json",
+        "semanticHighlighting": true
+      }
+    ],
+    "grammars": [
+      {
+        "language": "ecl",
+        "scopeName": "source.ecl",
+        "path": "./syntaxes/ecl.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "ecl",
+        "path": "./snippets/ecl.code-snippets"
+      }
+    ],
+    "commands": [
+      {
+        "command": "ecl.searchConcept",
+        "title": "ECL: Search for Concept"
+      },
+      {
+        "command": "ecl.evaluateExpression",
+        "title": "ECL: Evaluate Expression"
+      },
+      {
+        "command": "ecl.selectSnomedEdition",
+        "title": "ECL: Select SNOMED CT Edition"
+      }
+    ],
+    "configuration": {
+      "title": "ECL",
+      "properties": {
+        "ecl.terminology.serverUrl": {
+          "type": "string",
+          "default": "https://tx.ontoserver.csiro.au/fhir",
+          "description": "Base URL of the FHIR terminology server used for concept lookup and search"
+        },
+        "ecl.terminology.timeout": {
+          "type": "number",
+          "default": 2000,
+          "minimum": 500,
+          "maximum": 30000,
+          "description": "Timeout in milliseconds for concept lookup requests to the terminology server"
+        },
+        "ecl.formatting.indentSize": {
+          "type": "number",
+          "default": 2,
+          "minimum": 1,
+          "maximum": 8,
+          "description": "Number of spaces for each indentation level (when using spaces)"
+        },
+        "ecl.formatting.indentStyle": {
+          "type": "string",
+          "enum": [
+            "space",
+            "tab"
+          ],
+          "default": "space",
+          "description": "Use spaces or tabs for indentation"
+        },
+        "ecl.formatting.spaceAroundOperators": {
+          "type": "boolean",
+          "default": true,
+          "description": "Add spaces around logical operators (AND, OR, MINUS)"
+        },
+        "ecl.formatting.maxLineLength": {
+          "type": "number",
+          "default": 80,
+          "minimum": 0,
+          "description": "Maximum line length before breaking (0 for unlimited)"
+        },
+        "ecl.formatting.alignTerms": {
+          "type": "boolean",
+          "default": true,
+          "description": "Vertically align term pipes in multi-attribute refinements"
+        },
+        "ecl.formatting.wrapComments": {
+          "type": "boolean",
+          "default": false,
+          "description": "Wrap line comments (//) that exceed the maximum line length"
+        },
+        "ecl.formatting.breakOnOperators": {
+          "type": "boolean",
+          "default": false,
+          "description": "Force a new line before every AND, OR, or MINUS operator"
+        },
+        "ecl.formatting.breakOnRefinementComma": {
+          "type": "boolean",
+          "default": false,
+          "description": "Force a new line after every comma in a refinement attribute list"
+        },
+        "ecl.formatting.breakAfterColon": {
+          "type": "boolean",
+          "default": false,
+          "description": "Force a new line after the refinement colon (:), indenting attributes under the focus concept"
+        },
+        "ecl.evaluation.resultLimit": {
+          "type": "number",
+          "default": 200,
+          "minimum": 1,
+          "maximum": 10000,
+          "description": "Maximum number of concepts to return when evaluating an ECL expression"
+        },
+        "ecl.terminology.snomedVersion": {
+          "type": "string",
+          "default": "",
+          "description": "SNOMED CT edition/version URI. Edition-only (e.g. http://snomed.info/sct/32506021000036107) uses the latest version. Pinned (e.g. http://snomed.info/sct/32506021000036107/version/20260131) uses that exact release. Empty uses the server default."
+        },
+        "ecl.semanticValidation.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable semantic validation of ECL expressions (attribute scope, value constraints, empty sub-expressions). Requires FHIR terminology server access."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -b",
+    "watch": "tsc -b --watch",
+    "clean": "rimraf dist",
+    "test": "tsc -b && node --test dist/test/extension.test.js",
+    "test:e2e": "tsc -b && node dist/test/e2e/runTests.js",
+    "bundle": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --sourcemap",
+    "prebuild:vsix": "npm run compile && npm run bundle && node scripts/bundle-server.js && node -e \"require('fs').copyFileSync('../../LICENSE','LICENSE');require('fs').copyFileSync('../../THIRD-PARTY-LICENSES.txt','THIRD-PARTY-LICENSES.txt')\"",
+    "build:vsix": "vsce package --no-dependencies"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.6",
+    "@types/node": "^20.10.6",
+    "@types/vscode": "^1.75.0",
+    "@vscode/test-electron": "^2.4.1",
+    "@vscode/vsce": "^3.4.2",
+    "esbuild": "^0.25.12",
+    "mocha": "^10.7.3",
+    "rimraf": "^5.0.5",
+    "typescript": "^5.3.3"
+  }
+}

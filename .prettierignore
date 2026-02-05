@@ -1,0 +1,10 @@
+node_modules
+dist
+build
+server/src/parser/generated/
+grammar/
+*.ecl
+*.g4
+*.interp
+*.tokens
+package-lock.json

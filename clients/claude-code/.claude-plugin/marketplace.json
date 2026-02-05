@@ -1,0 +1,23 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "ecl-lsp-marketplace",
+  "description": "ECL Language Server plugin for SNOMED CT Expression Constraint Language support in Claude Code",
+  "owner": {
+    "name": "CSIRO Australian e-Health Research Centre",
+    "email": "ontoserver-support@csiro.au"
+  },
+  "plugins": [
+    {
+      "name": "ecl-lsp",
+      "description": "SNOMED CT Expression Constraint Language (ECL) language server providing diagnostics, completion, hover, formatting, code actions, and FHIR terminology integration",
+      "version": "1.0.0",
+      "author": {
+        "name": "CSIRO Australian e-Health Research Centre",
+        "email": "ontoserver-support@csiro.au"
+      },
+      "source": "./plugins/ecl-lsp",
+      "category": "development",
+      "homepage": "https://github.com/AuDigitalHealth/ecl-lsp"
+    }
+  ]
+}

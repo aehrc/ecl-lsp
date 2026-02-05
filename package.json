@@ -1,0 +1,82 @@
+{
+  "name": "ecl-lsp",
+  "version": "1.0.0",
+  "description": "Language Server Protocol implementation for SNOMED CT Expression Constraint Language (ECL)",
+  "private": true,
+  "workspaces": [
+    "packages/ecl-core",
+    "packages/ecl-lsp-server",
+    "packages/ecl-mcp-server",
+    "packages/ecl-editor-core",
+    "packages/ecl-editor-react",
+    "packages/ecl-editor",
+    "clients/vscode"
+  ],
+  "scripts": {
+    "prepare": "git config core.hooksPath .githooks || true",
+    "postinstall": "npm run compile",
+    "compile": "npm run compile:core && npm run compile:server && npm run compile:mcp && npm run compile:editor-core && npm run compile:editor-react && npm run compile:editor && npm run compile:client",
+    "compile:core": "cd packages/ecl-core && npm run compile",
+    "compile:server": "cd packages/ecl-lsp-server && npm run compile",
+    "compile:mcp": "cd packages/ecl-mcp-server && npm run compile",
+    "compile:editor-core": "cd packages/ecl-editor-core && npm run compile",
+    "compile:editor-react": "cd packages/ecl-editor-react && npm run compile",
+    "compile:editor": "cd packages/ecl-editor && npm run compile",
+    "compile:client": "cd clients/vscode && npm run compile",
+    "watch": "npm run watch:server & npm run watch:client",
+    "watch:server": "cd packages/ecl-lsp-server && npm run watch",
+    "watch:client": "cd clients/vscode && npm run watch",
+    "clean": "npm run clean:core && npm run clean:server && npm run clean:client",
+    "clean:core": "cd packages/ecl-core && npm run clean",
+    "clean:server": "cd packages/ecl-lsp-server && npm run clean",
+    "clean:client": "cd clients/vscode && npm run clean",
+    "test": "npm run test:core && npm run test:server && npm run test:mcp && npm run test:editor-core && npm run test:editor-react && npm run test:editor",
+    "test:core": "cd packages/ecl-core && npm test",
+    "test:server": "cd packages/ecl-lsp-server && npm test",
+    "test:mcp": "cd packages/ecl-mcp-server && npm test",
+    "test:editor-core": "cd packages/ecl-editor-core && npm test",
+    "test:editor-react": "cd packages/ecl-editor-react && npm test",
+    "test:editor": "cd packages/ecl-editor && npm test",
+    "test:e2e": "cd packages/ecl-editor-react && npm run test:e2e && cd ../../packages/ecl-editor && npm run test:e2e",
+    "test:e2e:react": "cd packages/ecl-editor-react && npm run test:e2e",
+    "test:e2e:webcomponent": "cd packages/ecl-editor && npm run test:e2e",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "sonar": "sonar-scanner",
+    "licenses": "generate-license-file --overwrite",
+    "licenses:check": "generate-license-file --overwrite && git diff --exit-code THIRD-PARTY-LICENSES.txt"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "author": "Commonwealth Scientific and Industrial Research Organisation (CSIRO)",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/aehrc/ecl-lsp.git"
+  },
+  "homepage": "https://github.com/aehrc/ecl-lsp#readme",
+  "bugs": {
+    "url": "https://github.com/aehrc/ecl-lsp/issues"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.0.2",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-sonarjs": "^4.0.0",
+    "eslint-plugin-unicorn": "^63.0.0",
+    "generate-license-file": "^4.1.1",
+    "globals": "^17.3.0",
+    "prettier": "^3.8.1",
+    "sonarqube-scanner": "^4.3.4",
+    "typescript-eslint": "^8.56.0"
+  },
+  "overrides": {
+    "axios": "^1.13.5",
+    "@microsoft/api-extractor": {
+      "minimatch": "10.2.4"
+    }
+  }
+}

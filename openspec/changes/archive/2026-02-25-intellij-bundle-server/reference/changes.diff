@@ -1,0 +1,544 @@
+diff --git a/clients/intellij/README.md b/clients/intellij/README.md
+index 5f9da9e..7bba5a2 100644
+--- a/clients/intellij/README.md
++++ b/clients/intellij/README.md
+@@ -3,22 +3,7 @@
+ ## Prerequisites
+ 
+ - IntelliJ IDEA Ultimate 2024.2+
+-- Node.js 18+
+-
+-## Install the server
+-
+-```bash
+-npm install -g ecl-lsp-server
+-```
+-
+-Or build from source:
+-
+-```bash
+-cd server
+-npm install
+-npm run compile
+-npm link
+-```
++- Node.js 18+ (the language server is bundled in the plugin)
+ 
+ ## Install the plugin
+ 
+@@ -26,6 +11,8 @@ npm link
+ 2. In IntelliJ: **Settings** > **Plugins** > gear icon > **Install Plugin from Disk...**
+ 3. Select the `.zip` file and restart
+ 
++Verify that `node` is on your PATH — the plugin uses it to run the bundled language server.
++
+ ## Features
+ 
+ - **Syntax Highlighting** — TextMate grammar for ECL expressions
+@@ -65,8 +52,8 @@ Click the **SNOMED CT** widget in the bottom-right status bar to select an editi
+ 
+ ## Troubleshooting
+ 
+-**Server not found:**
+-Ensure `ecl-lsp-server` is on your PATH. Run `ecl-lsp-server --version` in a terminal to verify.
++**Server not starting:**
++Ensure `node` is on your PATH. Run `node --version` in a terminal to verify (requires 18+). The language server is bundled inside the plugin — no separate installation is needed. If the bundled server is not found, the plugin falls back to looking for a globally installed `ecl-lsp-server` on your PATH.
+ 
+ **Enable LSP debug logging:**
+ Go to **Help** > **Diagnostic Tools** > **Debug Log Settings** and add:
+diff --git a/clients/intellij/build.gradle.kts b/clients/intellij/build.gradle.kts
+index 8b4729b..7ac3cf7 100644
+--- a/clients/intellij/build.gradle.kts
++++ b/clients/intellij/build.gradle.kts
+@@ -1,3 +1,5 @@
++import org.jetbrains.intellij.platform.gradle.TestFrameworkType
++
+ plugins {
+     id("java")
+     id("org.jetbrains.kotlin.jvm") version "2.0.21"
+@@ -24,7 +26,10 @@ dependencies {
+         bundledPlugin("org.jetbrains.plugins.textmate")
+         pluginVerifier()
+         zipSigner()
++        testFramework(TestFrameworkType.Platform)
+     }
++    testImplementation("junit:junit:4.13.2")
++    testRuntimeOnly("org.opentest4j:opentest4j:1.3.0")
+ }
+ 
+ intellijPlatform {
+@@ -39,9 +44,60 @@ intellijPlatform {
+     }
+ }
+ 
+-// Copy shared TextMate grammar into plugin resources at build time
++// Copy shared TextMate grammar into plugin resources (for reference) at build time
+ tasks.processResources {
+     from("../../shared/syntaxes/ecl.tmLanguage.json") {
+         into("textmate/ecl/Syntaxes")
+     }
+ }
++
++// --- Bundle the ECL language server into the plugin ---
++
++val serverDir = file("../../server")
++val serverBuildDir = layout.buildDirectory.dir("ecl-server")
++
++val bundleServer by tasks.registering(Sync::class) {
++    description = "Bundle the ECL language server dist into the plugin"
++
++    from(serverDir.resolve("dist")) {
++        exclude("test/**")
++    }
++    into(serverBuildDir.map { it.dir("dist") })
++}
++
++val installServerDeps by tasks.registering(Exec::class) {
++    description = "Install production-only Node.js dependencies for the bundled server"
++    dependsOn(bundleServer)
++
++    inputs.file(serverDir.resolve("package.json"))
++    outputs.dir(serverBuildDir.map { it.dir("node_modules") })
++
++    doFirst {
++        copy {
++            from(serverDir.resolve("package.json"))
++            into(serverBuildDir)
++        }
++    }
++
++    workingDir = serverBuildDir.get().asFile
++    commandLine("npm", "install", "--production", "--no-optional", "--ignore-scripts")
++
++    doLast {
++        // Clean up lock file (package.json is needed at runtime by fhir-service.js)
++        serverBuildDir.get().asFile.resolve("package-lock.json").delete()
++    }
++}
++
++// Hook into prepareSandbox to copy bundled server and TextMate grammar into plugin directory
++tasks.named<Sync>("prepareSandbox") {
++    dependsOn(installServerDeps)
++    from(serverBuildDir) {
++        into("${project.name}/ecl-server")
++    }
++    from("../../shared/syntaxes/ecl.tmLanguage.json") {
++        into("${project.name}/textmate/ecl/Syntaxes")
++    }
++    from("src/main/resources/textmate/ecl/package.json") {
++        into("${project.name}/textmate/ecl")
++    }
++}
+diff --git a/clients/intellij/gradle.properties b/clients/intellij/gradle.properties
+index 1d64d3b..ceb8cc3 100644
+--- a/clients/intellij/gradle.properties
++++ b/clients/intellij/gradle.properties
+@@ -2,7 +2,7 @@ pluginGroup = au.csiro.ecl
+ pluginName = ECL Language Support
+ pluginVersion = 1.0.0
+ pluginSinceBuild = 242
+-pluginUntilBuild = 262.*
++pluginUntilBuild = 253.*
+ 
+ platformType = IU
+ platformVersion = 2024.2
+diff --git a/clients/intellij/src/main/kotlin/au/csiro/ecl/intellij/EclFileType.kt b/clients/intellij/src/main/kotlin/au/csiro/ecl/intellij/EclFileType.kt
+deleted file mode 100644
+index 0dfbef1..0000000
+--- a/clients/intellij/src/main/kotlin/au/csiro/ecl/intellij/EclFileType.kt
++++ /dev/null
+@@ -1,14 +0,0 @@
+-package au.csiro.ecl.intellij
+-
+-import com.intellij.openapi.fileTypes.LanguageFileType
+-import com.intellij.lang.Language
+-import javax.swing.Icon
+-
+-object EclLanguage : Language("ECL")
+-
+-object EclFileType : LanguageFileType(EclLanguage) {
+-    override fun getName(): String = "ECL"
+-    override fun getDescription(): String = "SNOMED CT Expression Constraint Language"
+-    override fun getDefaultExtension(): String = "ecl"
+-    override fun getIcon(): Icon = EclIcons.FILE
+-}
+diff --git a/clients/intellij/src/main/kotlin/au/csiro/ecl/intellij/EclIcons.kt b/clients/intellij/src/main/kotlin/au/csiro/ecl/intellij/EclIcons.kt
+deleted file mode 100644
+index 21a5eaf..0000000
+--- a/clients/intellij/src/main/kotlin/au/csiro/ecl/intellij/EclIcons.kt
++++ /dev/null
+@@ -1,8 +0,0 @@
+-package au.csiro.ecl.intellij
+-
+-import com.intellij.openapi.util.IconLoader
+-
+-object EclIcons {
+-    @JvmField
+-    val FILE = IconLoader.getIcon("/icons/ecl.svg", EclIcons::class.java)
+-}
+diff --git a/clients/intellij/src/main/kotlin/au/csiro/ecl/intellij/EclLspServerDescriptor.kt b/clients/intellij/src/main/kotlin/au/csiro/ecl/intellij/EclLspServerDescriptor.kt
+index 6feecd2..9d1e5e9 100644
+--- a/clients/intellij/src/main/kotlin/au/csiro/ecl/intellij/EclLspServerDescriptor.kt
++++ b/clients/intellij/src/main/kotlin/au/csiro/ecl/intellij/EclLspServerDescriptor.kt
+@@ -1,6 +1,8 @@
+ package au.csiro.ecl.intellij
+ 
+ import com.intellij.execution.configurations.GeneralCommandLine
++import com.intellij.ide.plugins.PluginManagerCore
++import com.intellij.openapi.extensions.PluginId
+ import com.intellij.openapi.project.Project
+ import com.intellij.openapi.vfs.VirtualFile
+ import com.intellij.platform.lsp.api.Lsp4jClient
+@@ -8,47 +10,72 @@ import com.intellij.platform.lsp.api.LspServerNotificationsHandler
+ import com.intellij.platform.lsp.api.ProjectWideLspServerDescriptor
+ import org.eclipse.lsp4j.ConfigurationItem
+ import org.eclipse.lsp4j.services.LanguageServer
++import java.nio.file.Path
+ 
+ class EclLspServerDescriptor(project: Project) :
+     ProjectWideLspServerDescriptor(project, "ECL Language Server") {
+ 
++    companion object {
++        private const val PLUGIN_ID = "au.csiro.ecl.intellij"
++
++        fun getBundledServerPath(): Path? {
++            val plugin = PluginManagerCore.getPlugin(PluginId.getId(PLUGIN_ID)) ?: return null
++            return plugin.pluginPath.resolve("ecl-server").resolve("dist").resolve("server.js")
++        }
++
++        fun isSupportedFileExtension(extension: String?): Boolean {
++            return extension == "ecl"
++        }
++
++        fun buildWorkspaceConfiguration(section: String?, settings: EclSettings): Any? {
++            return when (section) {
++                "ecl.terminology" -> mapOf(
++                    "serverUrl" to settings.state.serverUrl,
++                    "timeout" to settings.state.timeout,
++                    "snomedVersion" to settings.state.snomedVersion,
++                )
++                "ecl.formatting" -> mapOf(
++                    "indentSize" to settings.state.indentSize,
++                    "indentStyle" to settings.state.indentStyle,
++                    "spaceAroundOperators" to settings.state.spaceAroundOperators,
++                    "maxLineLength" to settings.state.maxLineLength,
++                    "alignTerms" to settings.state.alignTerms,
++                    "wrapComments" to settings.state.wrapComments,
++                    "breakOnOperators" to settings.state.breakOnOperators,
++                    "breakOnRefinementComma" to settings.state.breakOnRefinementComma,
++                    "breakAfterColon" to settings.state.breakAfterColon,
++                )
++                "ecl.evaluation" -> mapOf(
++                    "resultLimit" to settings.state.resultLimit,
++                )
++                "ecl.semanticValidation" -> mapOf(
++                    "enabled" to settings.state.semanticValidationEnabled,
++                )
++                else -> null
++            }
++        }
++    }
++
+     override fun isSupportedFile(file: VirtualFile): Boolean {
+-        return file.extension == "ecl"
++        return isSupportedFileExtension(file.extension)
+     }
+ 
+     override fun createCommandLine(): GeneralCommandLine {
++        val serverJs = getBundledServerPath()
++        if (serverJs != null && serverJs.toFile().exists()) {
++            return GeneralCommandLine("node", serverJs.toString(), "--stdio").apply {
++                withParentEnvironmentType(GeneralCommandLine.ParentEnvironmentType.CONSOLE)
++                withEnvironment("NODE_PATH", serverJs.parent.parent.resolve("node_modules").toString())
++            }
++        }
++        // Fallback: try globally installed server
+         return GeneralCommandLine("ecl-lsp-server", "--stdio").apply {
+             withParentEnvironmentType(GeneralCommandLine.ParentEnvironmentType.CONSOLE)
+         }
+     }
+ 
+     override fun getWorkspaceConfiguration(item: ConfigurationItem): Any? {
+-        val settings = EclSettings.getInstance()
+-        return when (item.section) {
+-            "ecl.terminology" -> mapOf(
+-                "serverUrl" to settings.state.serverUrl,
+-                "timeout" to settings.state.timeout,
+-                "snomedVersion" to settings.state.snomedVersion,
+-            )
+-            "ecl.formatting" -> mapOf(
+-                "indentSize" to settings.state.indentSize,
+-                "indentStyle" to settings.state.indentStyle,
+-                "spaceAroundOperators" to settings.state.spaceAroundOperators,
+-                "maxLineLength" to settings.state.maxLineLength,
+-                "alignTerms" to settings.state.alignTerms,
+-                "wrapComments" to settings.state.wrapComments,
+-                "breakOnOperators" to settings.state.breakOnOperators,
+-                "breakOnRefinementComma" to settings.state.breakOnRefinementComma,
+-                "breakAfterColon" to settings.state.breakAfterColon,
+-            )
+-            "ecl.evaluation" -> mapOf(
+-                "resultLimit" to settings.state.resultLimit,
+-            )
+-            "ecl.semanticValidation" -> mapOf(
+-                "enabled" to settings.state.semanticValidationEnabled,
+-            )
+-            else -> null
+-        }
++        return buildWorkspaceConfiguration(item.section, EclSettings.getInstance())
+     }
+ 
+     override val lsp4jServerClass: Class<out LanguageServer>
+diff --git a/clients/intellij/src/main/kotlin/au/csiro/ecl/intellij/EclTextMateBundleProvider.kt b/clients/intellij/src/main/kotlin/au/csiro/ecl/intellij/EclTextMateBundleProvider.kt
+index f46cfd5..e4cdd9a 100644
+--- a/clients/intellij/src/main/kotlin/au/csiro/ecl/intellij/EclTextMateBundleProvider.kt
++++ b/clients/intellij/src/main/kotlin/au/csiro/ecl/intellij/EclTextMateBundleProvider.kt
+@@ -1,11 +1,22 @@
+ package au.csiro.ecl.intellij
+ 
++import com.intellij.ide.plugins.PluginManagerCore
++import com.intellij.openapi.diagnostic.Logger
++import com.intellij.openapi.extensions.PluginId
+ import org.jetbrains.plugins.textmate.api.TextMateBundleProvider
+-import java.nio.file.Path
+ 
+ class EclTextMateBundleProvider : TextMateBundleProvider {
++
++    private val log = Logger.getInstance(EclTextMateBundleProvider::class.java)
++
+     override fun getBundles(): List<TextMateBundleProvider.PluginBundle> {
+-        val bundlePath = Path.of(javaClass.getResource("/textmate/ecl")!!.toURI())
++        val plugin = PluginManagerCore.getPlugin(PluginId.getId("au.csiro.ecl.intellij"))
++        if (plugin == null) {
++            log.warn("ECL plugin not found via PluginManagerCore")
++            return emptyList()
++        }
++        val bundlePath = plugin.pluginPath.resolve("textmate").resolve("ecl")
++        log.info("ECL TextMate bundle path: $bundlePath (exists=${bundlePath.toFile().exists()})")
+         return listOf(TextMateBundleProvider.PluginBundle("ecl-textmate", bundlePath))
+     }
+ }
+diff --git a/clients/intellij/src/main/kotlin/au/csiro/ecl/intellij/SnomedEditionPicker.kt b/clients/intellij/src/main/kotlin/au/csiro/ecl/intellij/SnomedEditionPicker.kt
+index 42a6830..fdb7b48 100644
+--- a/clients/intellij/src/main/kotlin/au/csiro/ecl/intellij/SnomedEditionPicker.kt
++++ b/clients/intellij/src/main/kotlin/au/csiro/ecl/intellij/SnomedEditionPicker.kt
+@@ -6,49 +6,21 @@ import com.intellij.openapi.ui.Messages
+ import com.intellij.openapi.ui.popup.JBPopupFactory
+ import com.intellij.openapi.ui.popup.PopupStep
+ import com.intellij.openapi.ui.popup.util.BaseListPopupStep
+-import com.intellij.platform.lsp.api.LspServerManager
++import com.google.gson.Gson
++import com.google.gson.JsonObject
+ import java.awt.Component
++import java.net.URI
++import java.net.http.HttpClient
++import java.net.http.HttpRequest
++import java.net.http.HttpResponse
++import java.time.Duration
+ 
+ object SnomedEditionPicker {
+ 
+     fun show(project: Project, component: Component?, onComplete: () -> Unit) {
+-        // Try to get editions from the LSP server
+-        val eclServer = findEclServer(project)
+-        if (eclServer != null) {
+-            fetchAndShowEditions(project, component, eclServer, onComplete)
+-        } else {
+-            showManualInput(project, onComplete)
+-        }
+-    }
+-
+-    private fun findEclServer(project: Project): EclLanguageServer? {
+-        return try {
+-            @Suppress("UnstableApiUsage")
+-            val lspManager = LspServerManager.getInstance(project)
+-            val servers = lspManager.getServersForProvider(EclLspServerSupportProvider::class.java)
+-            val lspServer = servers.firstOrNull() ?: return null
+-            // Try to access the lsp4j server proxy
+-            try {
+-                val prop = lspServer.javaClass.getMethod("getLsp4jServer")
+-                prop.invoke(lspServer) as? EclLanguageServer
+-            } catch (_: Exception) {
+-                null
+-            }
+-        } catch (_: Exception) {
+-            null
+-        }
+-    }
+-
+-    private fun fetchAndShowEditions(
+-        project: Project,
+-        component: Component?,
+-        server: EclLanguageServer,
+-        onComplete: () -> Unit
+-    ) {
+         ApplicationManager.getApplication().executeOnPooledThread {
+             try {
+-                val response = server.getSnomedEditions().get()
+-                val editions = response.editions
++                val editions = fetchEditionsFromFhir()
+                 if (editions.isEmpty()) {
+                     ApplicationManager.getApplication().invokeLater {
+                         showManualInput(project, onComplete)
+@@ -67,13 +39,55 @@ object SnomedEditionPicker {
+         }
+     }
+ 
++    private fun fetchEditionsFromFhir(): List<SnomedEdition> {
++        val settings = EclSettings.getInstance()
++        val serverUrl = (settings.state.serverUrl ?: "https://tx.ontoserver.csiro.au/fhir").trimEnd('/')
++        val url = "$serverUrl/CodeSystem?url=http://snomed.info/sct"
++
++        val client = HttpClient.newBuilder()
++            .connectTimeout(Duration.ofSeconds(10))
++            .build()
++
++        val request = HttpRequest.newBuilder()
++            .uri(URI.create(url))
++            .header("Accept", "application/fhir+json")
++            .timeout(Duration.ofSeconds(15))
++            .GET()
++            .build()
++
++        val response = client.send(request, HttpResponse.BodyHandlers.ofString())
++        if (response.statusCode() != 200) return emptyList()
++
++        val json = Gson().fromJson(response.body(), JsonObject::class.java)
++        val entries = json.getAsJsonArray("entry") ?: return emptyList()
++
++        val versionRegex = Regex("""^http://snomed\.info/sct/(\d+)/version/(\d+)$""")
++        val editionMap = mutableMapOf<String, MutableList<SnomedVersion>>()
++
++        for (entry in entries) {
++            val resource = entry.asJsonObject?.getAsJsonObject("resource") ?: continue
++            val version = resource.get("version")?.asString ?: continue
++
++            val match = versionRegex.find(version) ?: continue
++            val moduleId = match.groupValues[1]
++            val date = match.groupValues[2]
++
++            editionMap.getOrPut(moduleId) { mutableListOf() }
++                .add(SnomedVersion(uri = version, date = date))
++        }
++
++        return editionMap.map { (moduleId, versions) ->
++            versions.sortByDescending { it.date }
++            SnomedEdition(moduleId = moduleId, versions = versions)
++        }
++    }
++
+     private fun showEditionPopup(
+         project: Project,
+         component: Component?,
+         editions: List<SnomedEdition>,
+         onComplete: () -> Unit
+     ) {
+-        // Build the list: (Server Default) first, International second, then alphabetical
+         data class EditionItem(val label: String, val edition: SnomedEdition?)
+ 
+         val items = mutableListOf<EditionItem>()
+@@ -96,23 +110,22 @@ object SnomedEditionPicker {
+ 
+             override fun onChosen(selectedValue: EditionItem, finalChoice: Boolean): PopupStep<*>? {
+                 if (selectedValue.edition == null) {
+-                    // Server Default selected -- clear the setting
+                     EclSettings.getInstance().state.snomedVersion = ""
++                    restartServer(project)
+                     onComplete()
+                     return PopupStep.FINAL_CHOICE
+                 }
+ 
+                 val edition = selectedValue.edition
+                 if (edition.versions.isEmpty()) {
+-                    // No version information, set edition-only URI
+                     EclSettings.getInstance().state.snomedVersion =
+                         "http://snomed.info/sct/${edition.moduleId}"
++                    restartServer(project)
+                     onComplete()
+                     return PopupStep.FINAL_CHOICE
+                 }
+ 
+-                // Show version picker as step 2
+-                return createVersionStep(edition, onComplete)
++                return createVersionStep(edition, project, onComplete)
+             }
+         }
+ 
+@@ -126,16 +139,14 @@ object SnomedEditionPicker {
+ 
+     private fun createVersionStep(
+         edition: SnomedEdition,
++        project: Project,
+         onComplete: () -> Unit
+     ): PopupStep<*> {
+         data class VersionItem(val label: String, val uri: String)
+ 
+         val items = mutableListOf<VersionItem>()
+-
+-        // "Latest" at the top -- edition-only URI
+         items.add(VersionItem("Latest", "http://snomed.info/sct/${edition.moduleId}"))
+ 
+-        // Available versions, most recent first (they should already come sorted but sort to be safe)
+         edition.versions
+             .sortedByDescending { it.date }
+             .forEach {
+@@ -148,12 +159,18 @@ object SnomedEditionPicker {
+ 
+             override fun onChosen(selectedValue: VersionItem, finalChoice: Boolean): PopupStep<*>? {
+                 EclSettings.getInstance().state.snomedVersion = selectedValue.uri
++                restartServer(project)
+                 onComplete()
+                 return PopupStep.FINAL_CHOICE
+             }
+         }
+     }
+ 
++    private fun restartServer(project: Project) {
++        com.intellij.platform.lsp.api.LspServerManager.getInstance(project)
++            .stopAndRestartIfNeeded(EclLspServerSupportProvider::class.java)
++    }
++
+     private fun showManualInput(project: Project, onComplete: () -> Unit) {
+         val currentUri = EclSettings.getInstance().state.snomedVersion ?: ""
+         val result = Messages.showInputDialog(
+@@ -168,6 +185,7 @@ object SnomedEditionPicker {
+ 
+         if (result != null) {
+             EclSettings.getInstance().state.snomedVersion = result
++            restartServer(project)
+             onComplete()
+         }
+     }
+diff --git a/clients/intellij/src/main/resources/META-INF/plugin.xml b/clients/intellij/src/main/resources/META-INF/plugin.xml
+index 469cf53..381693f 100644
+--- a/clients/intellij/src/main/resources/META-INF/plugin.xml
++++ b/clients/intellij/src/main/resources/META-INF/plugin.xml
+@@ -9,17 +9,10 @@
+     ]]></description>
+ 
+     <depends>com.intellij.modules.platform</depends>
+-    <depends>com.intellij.modules.lsp</depends>
++    <depends>com.intellij.modules.ultimate</depends>
+     <depends>org.jetbrains.plugins.textmate</depends>
+ 
+     <extensions defaultExtensionNs="com.intellij">
+-        <fileType
+-            name="ECL"
+-            implementationClass="au.csiro.ecl.intellij.EclFileType"
+-            fieldName="INSTANCE"
+-            language="ECL"
+-            extensions="ecl"/>
+-
+         <textmate.bundleProvider
+             implementation="au.csiro.ecl.intellij.EclTextMateBundleProvider"/>
+ 
+diff --git a/clients/intellij/src/main/resources/icons/ecl.svg b/clients/intellij/src/main/resources/icons/ecl.svg
+deleted file mode 100644
+index 17e56d3..0000000
+--- a/clients/intellij/src/main/resources/icons/ecl.svg
++++ /dev/null
+@@ -1,4 +0,0 @@
+-<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
+-  <rect x="1" y="1" width="14" height="14" rx="3" fill="#5B9BD5"/>
+-  <text x="8" y="12" font-family="Arial,sans-serif" font-size="11" font-weight="bold" fill="white" text-anchor="middle">E</text>
+-</svg>

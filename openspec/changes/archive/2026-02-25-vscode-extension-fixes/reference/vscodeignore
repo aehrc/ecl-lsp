@@ -1,0 +1,6 @@
+src/**
+tsconfig.json
+tsconfig.tsbuildinfo
+**/*.map
+.gitignore
+node_modules/**

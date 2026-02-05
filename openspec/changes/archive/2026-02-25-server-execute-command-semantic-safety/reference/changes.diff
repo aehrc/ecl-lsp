@@ -1,0 +1,255 @@
+diff --git a/server/bin/ecl-lsp-server.js b/server/bin/ecl-lsp-server.js
+old mode 100644
+new mode 100755
+diff --git a/server/src/semantic/ecl-text.ts b/server/src/semantic/ecl-text.ts
+index 509475f..fb14d9b 100644
+--- a/server/src/semantic/ecl-text.ts
++++ b/server/src/semantic/ecl-text.ts
+@@ -62,7 +62,7 @@ export function extractRefinementInfo(node: RefinedExpressionNode, sourceText: s
+  * Check if an attribute value is a wildcard (*).
+  */
+ function isWildcardAttributeValue(value: AttributeValueNode): boolean {
+-  return value.expression?.focus.type === NodeType.Wildcard;
++  return value.expression?.focus?.type === NodeType.Wildcard;
+ }
+ 
+ /**
+diff --git a/server/src/semantic/validator.ts b/server/src/semantic/validator.ts
+index 50cd97e..4603796 100644
+--- a/server/src/semantic/validator.ts
++++ b/server/src/semantic/validator.ts
+@@ -45,6 +45,7 @@ function walkExpression(
+   svc: ITerminologyService,
+   checks: Promise<SemanticDiagnostic[]>[],
+ ): void {
++  if (!node) return;
+   switch (node.type) {
+     case NodeType.RefinedExpression:
+       handleRefinedExpression(node, sourceText, svc, checks);
+@@ -54,13 +55,13 @@ function walkExpression(
+       break;
+     case NodeType.SubExpressionConstraint:
+       // A standalone sub-expression with a nested expression — recurse
+-      if (node.focus.type === NodeType.ExpressionConstraint) {
++      if (node.focus?.type === NodeType.ExpressionConstraint) {
+         walkExpression(node.focus.expression, sourceText, svc, checks);
+       }
+       break;
+     case NodeType.DottedExpression:
+       // Dotted expressions: check if source sub-expression has nested content
+-      if (node.source.focus.type === NodeType.ExpressionConstraint) {
++      if (node.source?.focus?.type === NodeType.ExpressionConstraint) {
+         walkExpression(node.source.focus.expression, sourceText, svc, checks);
+       }
+       break;
+@@ -98,7 +99,7 @@ function handleRefinedExpression(
+   checks.push(checkEmptyExpression(info.focusEcl, info.focusRange, svc));
+ 
+   // Recurse into focus if it contains nested expressions
+-  if (node.expression.focus.type === NodeType.ExpressionConstraint) {
++  if (node.expression?.focus?.type === NodeType.ExpressionConstraint) {
+     walkExpression(node.expression.focus.expression, sourceText, svc, checks);
+   }
+ }
+@@ -120,7 +121,7 @@ function handleCompoundExpression(
+ 
+   // Recurse into each operand for nested expressions
+   for (const operand of node.operands) {
+-    if (operand.focus.type === NodeType.ExpressionConstraint) {
++    if (operand.focus?.type === NodeType.ExpressionConstraint) {
+       walkExpression(operand.focus.expression, sourceText, svc, checks);
+     }
+   }
+diff --git a/server/src/server.ts b/server/src/server.ts
+index 1bc37b0..9808895 100644
+--- a/server/src/server.ts
++++ b/server/src/server.ts
+@@ -108,6 +108,7 @@ connection.onInitialize((_params: InitializeParams): InitializeResult => {
+       // Task 15.1: Add documentRangeFormattingProvider
+       documentRangeFormattingProvider: true,
+       codeLensProvider: { resolveProvider: false },
++      executeCommandProvider: { commands: ['ecl.evaluateExpression'] },
+       semanticTokensProvider: {
+         legend: tokenLegend,
+         full: true,
+@@ -271,7 +272,7 @@ function collectSyntaxDiagnostics(document: TextDocument) {
+       });
+     }
+ 
+-    if (result.ast) {
++    if (result.ast && result.errors.length === 0) {
+       const concepts = extractConceptIds(result.ast);
+       if (concepts.length > 0) {
+         conceptValidationTasks.push({ expr, concepts, lines });
+@@ -898,46 +899,75 @@ connection.onCodeLens((params: CodeLensParams): CodeLens[] => {
+   return buildCodeLenses(expressions, cache);
+ });
+ 
+-// Custom request handler for ECL expression evaluation
+-connection.onRequest(
+-  'ecl/evaluateExpression',
+-  async (params: { uri: string; expression?: string; line?: number; limit?: number }): Promise<EvaluationResponse> => {
+-    let expression = params.expression;
+-
+-    // If no expression provided, find the one at the given line
+-    if (!expression && params.uri && params.line !== undefined) {
+-      const cursorLine = params.line;
+-      const document = documents.get(params.uri);
+-      if (document) {
+-        const expressions = groupIntoExpressions(document.getText());
+-        const match = expressions.find((expr) => cursorLine >= expr.startLine && cursorLine <= expr.endLine);
+-        if (match) {
+-          expression = match.text.trim();
+-        }
++// Shared evaluation logic used by both executeCommand and custom request
++async function evaluateExpressionImpl(params: {
++  uri: string;
++  expression?: string;
++  line?: number;
++  limit?: number;
++}): Promise<EvaluationResponse> {
++  let expression = params.expression;
++
++  // If no expression provided, find the one at the given line
++  if (!expression && params.uri && params.line !== undefined) {
++    const cursorLine = params.line;
++    const document = documents.get(params.uri);
++    if (document) {
++      const expressions = groupIntoExpressions(document.getText());
++      const match = expressions.find((expr) => cursorLine >= expr.startLine && cursorLine <= expr.endLine);
++      if (match) {
++        expression = match.text.trim();
+       }
+     }
++  }
+ 
+-    if (!expression || expression.trim().length === 0) {
+-      throw new Error('No ECL expression found at cursor position');
++  if (!expression || expression.trim().length === 0) {
++    throw new Error('No ECL expression found at cursor position');
++  }
++
++  const result = await terminologyService.evaluateEcl(expression.trim(), params.limit);
++
++  // Cache the result count
++  if (params.uri) {
++    if (!evaluationCache.has(params.uri)) {
++      evaluationCache.set(params.uri, new Map());
++    }
++    evaluationCache.get(params.uri)?.set(expression.trim(), result.total);
++    // Request code lens refresh
++    try {
++      await connection.sendRequest('workspace/codeLens/refresh');
++    } catch {
++      // Client may not support codeLens/refresh — ignore
+     }
++  }
+ 
+-    const result = await terminologyService.evaluateEcl(expression.trim(), params.limit);
++  return result;
++}
+ 
+-    // Cache the result count
+-    if (params.uri) {
+-      if (!evaluationCache.has(params.uri)) {
+-        evaluationCache.set(params.uri, new Map());
+-      }
+-      evaluationCache.get(params.uri)?.set(expression.trim(), result.total);
+-      // Request code lens refresh
+-      try {
+-        await connection.sendRequest('workspace/codeLens/refresh');
+-      } catch {
+-        // Client may not support codeLens/refresh — ignore
++// workspace/executeCommand handler — bridges Code Lens commands for IntelliJ and other clients
++connection.onExecuteCommand(async (params) => {
++  if (params.command === 'ecl.evaluateExpression' && params.arguments) {
++    const [startLine, _endLine, expression] = params.arguments;
++    // Code lens arguments don't include URI — find the document that contains this expression
++    let uri: string | undefined;
++    for (const doc of documents.all()) {
++      const exprs = groupIntoExpressions(doc.getText());
++      if (exprs.some((e) => e.startLine === startLine && e.text.trim() === expression)) {
++        uri = doc.uri;
++        break;
+       }
+     }
++    if (uri) {
++      return evaluateExpressionImpl({ uri, expression, line: startLine });
++    }
++  }
++});
+ 
+-    return result;
++// Custom request handler for ECL expression evaluation (used by VSCode client)
++connection.onRequest(
++  'ecl/evaluateExpression',
++  async (params: { uri: string; expression?: string; line?: number; limit?: number }): Promise<EvaluationResponse> => {
++    return evaluateExpressionImpl(params);
+   },
+ );
+ 
+diff --git a/server/src/test/semantic-validation.test.ts b/server/src/test/semantic-validation.test.ts
+index fb17b75..57d3af9 100644
+--- a/server/src/test/semantic-validation.test.ts
++++ b/server/src/test/semantic-validation.test.ts
+@@ -348,3 +348,60 @@ describe('Simple Expressions (no refinement)', () => {
+     assert.strictEqual(diags.length, 0);
+   });
+ });
++
++describe('Partial AST Safety (syntax errors)', () => {
++  it('should not crash on duplicate operator expression', async () => {
++    const svc = new SemanticMockService();
++    const result = parseECL('< 404684003 AND AND < 19829001');
++    // This expression has syntax errors — AST may be partial or null
++    if (result.ast) {
++      const diags = await validateSemantics(result.ast, '< 404684003 AND AND < 19829001', svc);
++      assert.ok(Array.isArray(diags));
++    }
++  });
++
++  it('should not crash on incomplete expression', async () => {
++    const svc = new SemanticMockService();
++    const result = parseECL('< 404684003 AND');
++    if (result.ast) {
++      const diags = await validateSemantics(result.ast, '< 404684003 AND', svc);
++      assert.ok(Array.isArray(diags));
++    }
++  });
++
++  it('should not crash on missing operator expression', async () => {
++    const svc = new SemanticMockService();
++    const result = parseECL('< 404684003 < 19829001');
++    if (result.ast) {
++      const diags = await validateSemantics(result.ast, '< 404684003 < 19829001', svc);
++      assert.ok(Array.isArray(diags));
++    }
++  });
++
++  it('should not crash on empty expression', async () => {
++    const svc = new SemanticMockService();
++    const result = parseECL('');
++    if (result.ast) {
++      const diags = await validateSemantics(result.ast, '', svc);
++      assert.ok(Array.isArray(diags));
++    }
++  });
++
++  it('should not crash on incomplete refinement', async () => {
++    const svc = new SemanticMockService();
++    const result = parseECL('< 404684003 : 363698007 =');
++    if (result.ast) {
++      const diags = await validateSemantics(result.ast, '< 404684003 : 363698007 =', svc);
++      assert.ok(Array.isArray(diags));
++    }
++  });
++
++  it('should not crash on nested incomplete expression', async () => {
++    const svc = new SemanticMockService();
++    const result = parseECL('(< 404684003 AND) OR < 19829001');
++    if (result.ast) {
++      const diags = await validateSemantics(result.ast, '(< 404684003 AND) OR < 19829001', svc);
++      assert.ok(Array.isArray(diags));
++    }
++  });
++});

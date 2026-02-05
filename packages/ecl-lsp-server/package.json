@@ -1,0 +1,46 @@
+{
+  "name": "ecl-lsp-server",
+  "version": "1.0.0",
+  "license": "Apache-2.0",
+  "author": "Commonwealth Scientific and Industrial Research Organisation (CSIRO)",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/aehrc/ecl-lsp.git",
+    "directory": "packages/ecl-lsp-server"
+  },
+  "homepage": "https://github.com/aehrc/ecl-lsp/tree/main/packages/ecl-lsp-server#readme",
+  "bugs": {
+    "url": "https://github.com/aehrc/ecl-lsp/issues"
+  },
+  "description": "LSP server for SNOMED CT Expression Constraint Language",
+  "main": "dist/server.js",
+  "bin": {
+    "ecl-lsp-server": "bin/ecl-lsp-server.js"
+  },
+  "files": [
+    "dist/**",
+    "!dist/test/",
+    "bin/",
+    "LICENSE"
+  ],
+  "scripts": {
+    "prepack": "node -e \"require('fs').copyFileSync('../../LICENSE','LICENSE')\"",
+    "compile": "tsc -b",
+    "watch": "tsc -b --watch",
+    "clean": "rimraf dist",
+    "test": "npm run compile && node --test dist/test/*.test.js"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "ecl-core": "file:../ecl-core",
+    "vscode-languageserver": "^9.0.1",
+    "vscode-languageserver-textdocument": "^1.0.11"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.3",
+    "@types/node": "^20.10.6",
+    "rimraf": "^5.0.5"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "inputs": ["./package.json"],
+  "output": "./THIRD-PARTY-LICENSES.txt",
+  "exclude": [
+    "ecl-core",
+    "ecl-lsp-server",
+    "ecl-mcp-server",
+    "ecl-editor-core",
+    "ecl-editor-react",
+    "ecl-editor",
+    "ecl-lsp-client",
+    "ecl-textmate"
+  ]
+}

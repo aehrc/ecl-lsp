@@ -84,7 +84,7 @@ export function activate(context: ExtensionContext) {
   );
 
   // Server module path — try VSIX-bundled layout first, fallback to monorepo layout
-  const vsixPath = context.asAbsolutePath(path.join('server', 'dist', 'server.js'));
+  const vsixPath = context.asAbsolutePath(path.join('server', 'server.js'));
   const monorepoPath = context.asAbsolutePath(path.join('..', '..', 'packages', 'ecl-lsp-server', 'dist', 'server.js'));
   const serverModule = fs.existsSync(vsixPath) ? vsixPath : monorepoPath;
 

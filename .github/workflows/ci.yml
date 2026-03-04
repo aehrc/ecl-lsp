@@ -38,6 +38,23 @@ jobs:
       - name: Test
         run: npm test
 
+      # Upload compiled output from Node 22 run for downstream jobs
+      - name: Upload compiled output
+        if: matrix.node-version == 22
+        uses: actions/upload-artifact@v4
+        with:
+          name: compiled-output
+          retention-days: 1
+          path: |
+            packages/ecl-core/src/parser/generated/
+            packages/ecl-core/dist/
+            packages/ecl-lsp-server/dist/
+            packages/ecl-mcp-server/dist/
+            packages/ecl-editor-core/dist/
+            packages/ecl-editor-react/dist/
+            packages/ecl-editor/dist/
+            clients/vscode/dist/
+
   security:
     runs-on: ubuntu-latest
 
@@ -124,8 +141,10 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Compile
-        run: npm run compile
+      - name: Download compiled output
+        uses: actions/download-artifact@v4
+        with:
+          name: compiled-output
 
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
@@ -149,8 +168,10 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Compile server
-        run: npm run compile
+      - name: Download compiled output
+        uses: actions/download-artifact@v4
+        with:
+          name: compiled-output
 
       - name: Set up JDK 21
         uses: actions/setup-java@v4
@@ -164,6 +185,12 @@ jobs:
       - name: Build and test IntelliJ plugin
         working-directory: clients/intellij
         run: ./gradlew build
+
+      - name: Upload IntelliJ plugin
+        uses: actions/upload-artifact@v4
+        with:
+          name: intellij-plugin
+          path: clients/intellij/build/distributions/*.zip
 
   eclipse-plugin:
     runs-on: ubuntu-latest
@@ -181,8 +208,10 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Compile server
-        run: npm run compile
+      - name: Download compiled output
+        uses: actions/download-artifact@v4
+        with:
+          name: compiled-output
 
       - name: Set up JDK 21
         uses: actions/setup-java@v4
@@ -190,9 +219,22 @@ jobs:
           java-version: '21'
           distribution: temurin
 
+      - name: Cache Maven dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository
+          key: maven-${{ hashFiles('clients/eclipse/**/pom.xml', 'clients/eclipse/**/*.target') }}
+          restore-keys: maven-
+
       - name: Build and test Eclipse plugin
         working-directory: clients/eclipse
         run: xvfb-run mvn clean verify
+
+      - name: Upload Eclipse update site
+        uses: actions/upload-artifact@v4
+        with:
+          name: eclipse-updatesite
+          path: clients/eclipse/au.csiro.ecl.eclipse.updatesite/target/*.zip
 
   package:
     runs-on: ubuntu-latest
@@ -210,14 +252,10 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Compile
-        run: npm run compile
-
-      - name: Set up JDK 21
-        uses: actions/setup-java@v4
+      - name: Download compiled output
+        uses: actions/download-artifact@v4
         with:
-          java-version: '21'
-          distribution: temurin
+          name: compiled-output
 
       # npm packages
       - name: Pack ecl-core
@@ -249,20 +287,6 @@ jobs:
         working-directory: clients/vscode
         run: npm run build:vsix
 
-      # IntelliJ plugin
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
-
-      - name: Build IntelliJ plugin
-        working-directory: clients/intellij
-        run: ./gradlew buildPlugin
-
-      # Eclipse update site
-      - name: Build Eclipse update site
-        working-directory: clients/eclipse
-        run: mvn clean verify -DskipTests
-
-      # Upload artifacts
       - name: Collect npm tarballs
         run: |
           mkdir -p artifacts/npm-packages
@@ -279,15 +303,3 @@ jobs:
         with:
           name: vscode-extension
           path: clients/vscode/*.vsix
-
-      - name: Upload IntelliJ plugin
-        uses: actions/upload-artifact@v4
-        with:
-          name: intellij-plugin
-          path: clients/intellij/build/distributions/*.zip
-
-      - name: Upload Eclipse update site
-        uses: actions/upload-artifact@v4
-        with:
-          name: eclipse-updatesite
-          path: clients/eclipse/au.csiro.ecl.eclipse.updatesite/target/*.zip

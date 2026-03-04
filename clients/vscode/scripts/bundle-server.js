@@ -12,7 +12,7 @@
  * by the extension's own esbuild step.
  */
 
-const { execFileSync } = require('node:child_process');
+const esbuild = require('esbuild');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -26,23 +26,15 @@ if (fs.existsSync(OUT)) {
 fs.mkdirSync(OUT, { recursive: true });
 
 // Bundle server + all dependencies into a single file
-const entryPoint = path.join(ROOT, 'packages', 'ecl-lsp-server', 'dist', 'server.js');
-const outFile = path.join(OUT, 'server.js');
-
-execFileSync(
-  'npx',
-  [
-    'esbuild',
-    entryPoint,
-    '--bundle',
-    '--outfile=' + outFile,
-    '--format=cjs',
-    '--platform=node',
-    '--target=node20',
-    '--sourcemap',
-  ],
-  { stdio: 'inherit' },
-);
+esbuild.buildSync({
+  entryPoints: [path.join(ROOT, 'packages', 'ecl-lsp-server', 'dist', 'server.js')],
+  bundle: true,
+  outfile: path.join(OUT, 'server.js'),
+  format: 'cjs',
+  platform: 'node',
+  target: 'node20',
+  sourcemap: true,
+});
 
 // License files
 fs.copyFileSync(path.join(ROOT, 'LICENSE'), path.join(OUT, 'LICENSE'));

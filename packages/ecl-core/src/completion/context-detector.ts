@@ -303,7 +303,8 @@ function detectFromAST(
 
   // CompoundExpression — after AND/OR/MINUS
   if (inner.type === NodeType.CompoundExpression) {
-    const lastOperand = inner.operands.at(-1)!;
+    const lastOperand = inner.operands.at(-1);
+    if (!lastOperand) return { kind: 'unknown' };
     if (lastOperand.focus.type === NodeType.Wildcard) {
       const range = lastOperand.focus.range;
       if (range.start.offset === range.end.offset) {

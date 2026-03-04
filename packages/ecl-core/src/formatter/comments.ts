@@ -215,6 +215,7 @@ export function reinsertComments(formattedText: string, originalText: string, co
 
     // Detect whether the last before-comment was on the same line as the following code
     // in the original text (e.g. "/* comment */ << 123"). If so, join without a newline.
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- guaranteed by length > 0 guard above
     const lastBefore = beforeComments.at(-1)!;
     const afterLastComment = originalText.substring(lastBefore.endOffset);
     const sameLineAsCode = afterLastComment.length > 0 && !/^\s*\n/.test(afterLastComment);

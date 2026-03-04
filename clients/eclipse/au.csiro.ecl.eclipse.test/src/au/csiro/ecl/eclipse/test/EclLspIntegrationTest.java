@@ -190,7 +190,7 @@ public class EclLspIntegrationTest {
                         return true;
                     }
                 }
-            } catch (Exception _) {
+            } catch (Exception ignored) {
                 // Server not yet ready — retry
             }
             Thread.sleep(POLL_INTERVAL_MS);

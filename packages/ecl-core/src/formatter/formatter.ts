@@ -127,7 +127,7 @@ function findContinuationColumn(text: string): number {
   }
   if (stack.length === 0) return -1;
   // Skip consecutive open parens (e.g. "((" → align after both)
-  let col = stack.at(-1)!;
+  let col = stack.at(-1) ?? 0;
   while (col + 1 < text.length && text[col + 1] === '(') col++;
   return col + 1;
 }

@@ -77,7 +77,7 @@ export function refineParseError(ctx: ErrorContext): RefinedError {
   ].some(Boolean);
 
   if (isEOFError && lineOffsets.length > 0) {
-    docLineIndex = lineOffsets.at(-1)!;
+    docLineIndex = lineOffsets.at(-1) ?? 0;
     docLine = lines[docLineIndex] || '';
   }
 

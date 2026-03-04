@@ -3,7 +3,7 @@
 [![CI](https://github.com/aehrc/ecl-lsp/actions/workflows/ci.yml/badge.svg)](https://github.com/aehrc/ecl-lsp/actions/workflows/ci.yml)
 [![Security: Trivy + Semgrep](https://img.shields.io/badge/Security-Trivy%20%2B%20Semgrep-purple)](https://github.com/aehrc/ecl-lsp/actions/workflows/ci.yml)
 [![ECL 2.2](https://img.shields.io/badge/ECL-2.2-blue)](https://confluence.ihtsdotools.org/display/DOCECL)
-[![Node.js](https://img.shields.io/badge/Node.js-18%2B-green)](https://nodejs.org/)
+[![Node.js](https://img.shields.io/badge/Node.js-20%2B-green)](https://nodejs.org/)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue)](LICENSE)
 
 IDE support for **SNOMED CT Expression Constraint Language (ECL) 2.2** — parsing, validation, completion, formatting, refactoring, and terminology integration across 7 editors and the browser.
@@ -54,7 +54,7 @@ Full ECL 2.2 coverage: constraint operators, logical operators, refinements, dot
 ## Quick Start
 
 ```bash
-git clone <repo-url> && cd ecl-lsp
+git clone https://github.com/aehrc/ecl-lsp.git && cd ecl-lsp
 npm install          # Installs all workspace dependencies
 npm run compile      # Compiles all packages
 npm test             # Runs 1653+ tests

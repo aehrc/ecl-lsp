@@ -5,7 +5,13 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { workspace, ExtensionContext, commands, window, Range, Position, WorkspaceEdit } from 'vscode';
-import { LanguageClient, LanguageClientOptions, ServerOptions, TransportKind } from 'vscode-languageclient/node';
+import {
+  LanguageClient,
+  LanguageClientOptions,
+  ServerOptions,
+  TransportKind,
+  type ExecuteCommandSignature,
+} from 'vscode-languageclient/node';
 
 let client: LanguageClient;
 let evaluationOutput: vscode.OutputChannel;
@@ -109,7 +115,8 @@ export function activate(context: ExtensionContext) {
     },
   };
 
-  // Client options
+  // Client options — middleware intercepts ecl.evaluateExpression to show results client-side
+  // (the server also declares this command in executeCommandProvider for IntelliJ/Eclipse)
   const clientOptions: LanguageClientOptions = {
     documentSelector: [{ scheme: 'file', language: 'ecl' }],
     synchronize: {
@@ -117,6 +124,17 @@ export function activate(context: ExtensionContext) {
       fileEvents: workspace.createFileSystemWatcher('**/*.ecl'),
     },
     outputChannelName: 'ECL Language Server',
+    middleware: {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      executeCommand: async (command: string, args: any[], next: ExecuteCommandSignature) => {
+        if (command === 'ecl.evaluateExpression') {
+          const [startLine, , expression] = args as [number, number, string];
+          await evaluateExpression(client, startLine, expression);
+          return;
+        }
+        return next(command, args);
+      },
+    },
   };
 
   // Create the client
@@ -137,10 +155,6 @@ export function activate(context: ExtensionContext) {
 
   registerCommand('ecl.searchConcept', () => {
     searchAndInsertConcept(client);
-  });
-
-  registerCommand('ecl.evaluateExpression', async (startLine?: number, _endLine?: number, expression?: string) => {
-    await evaluateExpression(client, startLine, expression);
   });
 
   registerCommand('ecl.selectSnomedEdition', () => {

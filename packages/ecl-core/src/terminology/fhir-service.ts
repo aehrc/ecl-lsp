@@ -483,7 +483,7 @@ export class FhirTerminologyService implements ITerminologyService {
   private async lookupById(conceptId: string): Promise<SearchResponse> {
     const info = await this.getConceptInfo(conceptId);
 
-    if (!info) {
+    if (!info?.active) {
       return { results: [], hasMore: false };
     }
 
@@ -546,7 +546,7 @@ export class FhirTerminologyService implements ITerminologyService {
   }
 
   private async searchByFilter(filter: string): Promise<SearchResponse> {
-    const url = `${this.baseUrl}/ValueSet/$expand?url=${this.snomedSystemUrl}?fhir_vs&filter=${encodeURIComponent(filter)}&count=21&includeDesignations=true`;
+    const url = `${this.baseUrl}/ValueSet/$expand?url=${this.snomedSystemUrl}?fhir_vs&filter=${encodeURIComponent(filter)}&count=21&includeDesignations=true&activeOnly=true`;
 
     const response = await this.fetchWithTimeout(url, this.searchTimeout);
 

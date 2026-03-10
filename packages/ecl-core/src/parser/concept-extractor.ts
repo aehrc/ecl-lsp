@@ -54,15 +54,19 @@ export interface ConceptReference {
  * @param ast The root expression node
  * @returns Array of concept references with their positions
  */
-export function extractConceptIds(ast: ExpressionNode): ConceptReference[] {
+export function extractConceptIds(
+  ast: ExpressionNode,
+  options?: { deduplicate?: boolean },
+): ConceptReference[] {
   const concepts: ConceptReference[] = [];
+  const deduplicate = options?.deduplicate ?? true;
   const seenIds = new Set<string>();
 
   // eslint-disable-next-line sonarjs/cognitive-complexity -- exhaustive switch over AST node types
   function visitNode(node: EclAstNode): void {
     switch (node.type) {
       case NodeType.ConceptReference:
-        if (!seenIds.has(node.conceptId)) {
+        if (!deduplicate || !seenIds.has(node.conceptId)) {
           concepts.push({
             id: node.conceptId,
             range: node.range,
@@ -73,7 +77,7 @@ export function extractConceptIds(ast: ExpressionNode): ConceptReference[] {
         break;
 
       case NodeType.AttributeName:
-        if (node.conceptId && !seenIds.has(node.conceptId)) {
+        if (node.conceptId && (!deduplicate || !seenIds.has(node.conceptId))) {
           concepts.push({
             id: node.conceptId,
             range: node.range,

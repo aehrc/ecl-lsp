@@ -36,7 +36,8 @@ export function getAddDisplayTermsAction(ctx: RefactoringContext): CoreCodeActio
     return null;
   }
 
-  const concepts = extractConceptIds(ctx.ast);
+  // Get ALL concept references (including duplicates) so every occurrence gets a term
+  const concepts = extractConceptIds(ctx.ast, { deduplicate: false });
 
   // Find concepts that don't already have a display term
   const bareConcepts = concepts.filter((c) => !c.term || c.term.trim() === '');

@@ -24,6 +24,7 @@ const app = new App({
 // ── Shared handler logic ────────────────────────────────────────────────
 
 async function handleEcl(raw: string): Promise<{ text: string; isHelp: boolean; isError: boolean }> {
+  const start = Date.now();
   const parsed = parseInput(raw);
 
   if (parsed.help) {
@@ -33,6 +34,9 @@ async function handleEcl(raw: string): Promise<{ text: string; isHelp: boolean; 
   if (parsed.error) {
     return { text: `:red_circle: ${parsed.error}`, isHelp: false, isError: true };
   }
+
+  const eclPreview = parsed.ecl.length > 80 ? parsed.ecl.slice(0, 80) + '...' : parsed.ecl;
+  console.log(`[ECL] Processing: ${eclPreview}`);
 
   // Resolve edition
   let snomedEdition = config.snomedEdition;
@@ -53,7 +57,7 @@ async function handleEcl(raw: string): Promise<{ text: string; isHelp: boolean; 
 
   const terminologyService = new FhirTerminologyService(
     config.fhirServerUrl,
-    2000,
+    10_000, // 10s timeout — bot users expect a few seconds of latency
     'ecl-slack-bot/1.0.0',
     snomedEdition,
   );
@@ -64,6 +68,11 @@ async function handleEcl(raw: string): Promise<{ text: string; isHelp: boolean; 
     maxEvalResults: config.maxEvalResults,
   });
 
+  const elapsed = ((Date.now() - start) / 1000).toFixed(1);
+  console.log(
+    `[ECL] Done in ${elapsed}s — ${result.errors.length} errors, ${result.warnings.length} warnings`,
+  );
+
   return { text: buildMessage(result), isHelp: false, isError: false };
 }
 
@@ -71,6 +80,7 @@ async function handleEcl(raw: string): Promise<{ text: string; isHelp: boolean; 
 
 app.command('/ecl', async ({ command, ack, respond }) => {
   await ack();
+  console.log(`[ECL] /ecl command from ${command.user_name}`);
   try {
     const { text } = await handleEcl(command.text);
     await respond({ text, response_type: 'ephemeral' });
@@ -83,14 +93,34 @@ app.command('/ecl', async ({ command, ack, respond }) => {
 // ── @mention ────────────────────────────────────────────────────────────
 
 app.event('app_mention', async ({ event, say }) => {
+  console.log(`[ECL] @mention event received from ${event.user}`, JSON.stringify(event.text).slice(0, 120));
   // Strip the bot mention from the text
-  const raw = event.text.replace(/<@[A-Z0-9]+>/g, '').trim();
+  const raw = event.text.replace(/<@[A-Za-z0-9]+>/gi, '').trim();
   try {
     const { text } = await handleEcl(raw);
     await say({ text, thread_ts: event.ts });
   } catch (error) {
     console.error('Error handling @mention:', error);
     await say({ text: ':red_circle: An unexpected error occurred.', thread_ts: event.ts });
+  }
+});
+
+// ── Direct messages ─────────────────────────────────────────────────────
+
+app.message(async ({ message, say }) => {
+  // Only handle direct messages (im channel type)
+  if (message.channel_type !== 'im') return;
+  // Ignore bot messages to prevent loops
+  if (message.subtype === 'bot_message' || ('bot_id' in message && message.bot_id)) return;
+
+  const raw = ('text' in message && message.text) || '';
+  console.log(`[ECL] DM from ${('user' in message && message.user) || 'unknown'}`);
+  try {
+    const { text } = await handleEcl(raw);
+    await say(text);
+  } catch (error) {
+    console.error('Error handling DM:', error);
+    await say(':red_circle: An unexpected error occurred.');
   }
 });
 

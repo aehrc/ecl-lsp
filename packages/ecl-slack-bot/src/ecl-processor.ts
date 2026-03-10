@@ -141,24 +141,21 @@ export async function processEcl(
     });
   }
 
-  // Step 5: Add display terms (inject FSN for bare concept IDs)
-  // AST Position has { line, column, offset } where offset is the byte offset
-  // from the start of the input string. Process in reverse offset order to
-  // preserve earlier positions when inserting text.
+  // Step 5: Add display terms (inject FSN for ALL bare concept IDs)
+  // Use deduplicate: false to get every occurrence, not just the first per ID.
+  // Process in reverse offset order to preserve earlier positions when inserting.
   let withTerms = ecl;
   if (conceptMap.size > 0 && parseResult.ast) {
-    const refs = extractConceptIds(parseResult.ast);
-    const sortedRefs = [...refs].sort((a, b) => b.range.start.offset - a.range.start.offset);
-    for (const ref of sortedRefs) {
-      if (!ref.term) {
-        const info = conceptMap.get(ref.id);
-        if (info) {
-          // Replace bare concept ID with ID + display term
-          const startOffset = ref.range.start.offset;
-          const endOffset = ref.range.end.offset;
-          const replacement = `${ref.id} |${info.fsn}|`;
-          withTerms = withTerms.slice(0, startOffset) + replacement + withTerms.slice(endOffset);
-        }
+    const allRefs = extractConceptIds(parseResult.ast, { deduplicate: false });
+    const bareRefs = allRefs
+      .filter((ref) => !ref.term)
+      .sort((a, b) => b.range.start.offset - a.range.start.offset);
+    for (const ref of bareRefs) {
+      const info = conceptMap.get(ref.id);
+      if (info) {
+        const startOffset = ref.range.start.offset;
+        const endOffset = ref.range.end.offset;
+        withTerms = withTerms.slice(0, startOffset) + `${ref.id} |${info.fsn}|` + withTerms.slice(endOffset);
       }
     }
   }

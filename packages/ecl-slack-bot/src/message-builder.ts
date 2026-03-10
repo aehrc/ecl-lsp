@@ -4,6 +4,23 @@
 import type { ProcessResult } from './ecl-processor';
 
 const MAX_CODE_BLOCK_LENGTH = 2900;
+const SHRIMP_BASE = 'https://ontoserver.csiro.au/shrimp/';
+
+/** Build a Shrimp browser link for a concept, or return the code as-is if no edition URI. */
+function shrimpLink(code: string, editionUri?: string, fhirServerUrl?: string): string {
+  if (!editionUri) {
+    return `\`${code}\``;
+  }
+  // Extract edition base URI (without /version/...) for the valueset parameter
+  const editionBase = editionUri.replace(/\/version\/\d+$/, '');
+  const params = new URLSearchParams({
+    concept: code,
+    version: editionUri,
+    valueset: `${editionBase}?fhir_vs`,
+    fhir: fhirServerUrl ?? 'https://tx.ontoserver.csiro.au/fhir',
+  });
+  return `<${SHRIMP_BASE}?${params.toString()}|${code}>`;
+}
 
 export function buildMessage(result: ProcessResult): string {
   const sections: string[] = [];
@@ -35,10 +52,15 @@ export function buildMessage(result: ProcessResult): string {
   // Evaluation
   if (result.evaluation) {
     const count = result.evaluation.count.toLocaleString('en-US');
-    let evalText = `:bar_chart: *Evaluation* \u2014 ${count} concepts matched`;
-    if (result.evaluation.sample.length > 0) {
-      const samples = result.evaluation.sample.map((s) => `\`${s}\``).join(', ');
-      evalText += `\n  ${samples} \u2026`;
+    let evalText = `:bar_chart: *Evaluation* \u2014 ${count} concept${result.evaluation.count === 1 ? '' : 's'} matched`;
+    if (result.evaluation.concepts.length > 0) {
+      const rows = result.evaluation.concepts.map(
+        (c) => `${shrimpLink(c.code, result.editionUri, result.fhirServerUrl)}  ${c.display}`,
+      );
+      evalText += '\n' + rows.join('\n');
+      if (result.evaluation.count > result.evaluation.concepts.length) {
+        evalText += `\n\u2026 and ${(result.evaluation.count - result.evaluation.concepts.length).toLocaleString('en-US')} more`;
+      }
     }
     sections.push(evalText);
   }
@@ -54,17 +76,19 @@ export function buildHelpMessage(): string {
 
 *Slash command (private response):*
 \u2022 \`/ecl < 404684003 |Clinical finding|\`
-\u2022 \`/ecl --eval < 404684003\` \u2014 include evaluation
 \u2022 \`/ecl --edition au < 404684003\` \u2014 specify edition
 
 *@mention (thread reply):*
 \u2022 \`@ECL Bot < 404684003 AND < 19829001\`
-\u2022 \`@ECL Bot --eval --edition us < 404684003\`
+\u2022 \`@ECL Bot --edition us < 404684003\`
+
+*Direct message:*
+\u2022 Just send your ECL expression directly
 
 *Options:*
-\u2022 \`--eval\` \u2014 evaluate expression and show concept count
 \u2022 \`--edition <code|uri>\` \u2014 override SNOMED edition (au, us, uk, nz, int, or full URI)
 \u2022 \`help\` \u2014 show this message
 
+Valid expressions are automatically evaluated (up to 5 results shown).
 Shorthand editions: int, au, us, uk, nz`;
 }

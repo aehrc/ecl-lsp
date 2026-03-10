@@ -23,7 +23,7 @@ export interface Diagnostic {
 
 export interface EvaluationResult {
   count: number;
-  sample: string[];
+  concepts: { code: string; display: string }[];
 }
 
 export interface ProcessResult {
@@ -32,6 +32,10 @@ export interface ProcessResult {
   warnings: Diagnostic[];
   evaluation?: EvaluationResult;
   edition: string;
+  /** Raw resolved SNOMED CT version URI for building Shrimp links. */
+  editionUri?: string;
+  /** FHIR server base URL for building Shrimp links. */
+  fhirServerUrl?: string;
 }
 
 export interface ParsedInput {
@@ -87,6 +91,7 @@ export function parseInput(raw: string): ParsedInput {
 
 // ── Process pipeline ────────────────────────────────────────────────────
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- 9-step pipeline with graceful error handling at each step
 export async function processEcl(
   ecl: string,
   terminologyService: ITerminologyService,
@@ -147,9 +152,7 @@ export async function processEcl(
   let withTerms = ecl;
   if (conceptMap.size > 0 && parseResult.ast) {
     const allRefs = extractConceptIds(parseResult.ast, { deduplicate: false });
-    const bareRefs = allRefs
-      .filter((ref) => !ref.term)
-      .sort((a, b) => b.range.start.offset - a.range.start.offset);
+    const bareRefs = allRefs.filter((ref) => !ref.term).sort((a, b) => b.range.start.offset - a.range.start.offset);
     for (const ref of bareRefs) {
       const info = conceptMap.get(ref.id);
       if (info) {
@@ -172,7 +175,7 @@ export async function processEcl(
         line: ref.range.start.line,
         column: ref.range.start.column + 1,
         endColumn: ref.range.end.column + 1,
-        message: `${ref.id}${ref.term ? ` |${ref.term}|` : ''} — Inactive concept`,
+        message: `${ref.id}${ref.term ? ' |' + ref.term + '|' : ''} — Inactive concept`,
         severity: 'warning',
       });
     } else if (conceptMap.has(ref.id) && info === null) {
@@ -180,7 +183,7 @@ export async function processEcl(
         line: ref.range.start.line,
         column: ref.range.start.column + 1,
         endColumn: ref.range.end.column + 1,
-        message: `${ref.id}${ref.term ? ` |${ref.term}|` : ''} — Unknown concept`,
+        message: `${ref.id}${ref.term ? ' |' + ref.term + '|' : ''} — Unknown concept`,
         severity: 'warning',
       });
     }
@@ -204,14 +207,18 @@ export async function processEcl(
     }
   }
 
-  // Step 9: Evaluate (opt-in)
+  // Step 9: Evaluate (always for valid expressions)
   let evaluation: EvaluationResult | undefined;
-  if (options?.evaluate && parseResult.errors.length === 0) {
+  if (parseResult.errors.length === 0) {
     try {
-      const evalResponse = await terminologyService.evaluateEcl(ecl);
+      const limit = options?.maxEvalResults ?? 5;
+      const evalResponse = await terminologyService.evaluateEcl(ecl, limit);
       evaluation = {
         count: evalResponse.total,
-        sample: evalResponse.concepts.slice(0, options?.maxEvalResults ?? 5).map((c) => `${c.code} |${c.display}|`),
+        concepts: evalResponse.concepts.slice(0, limit).map((c) => ({
+          code: c.code,
+          display: c.display,
+        })),
       };
     } catch {
       warnings.push({

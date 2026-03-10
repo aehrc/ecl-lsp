@@ -1,7 +1,7 @@
 display_information:
   name: ECL Bot
   description: Formats, validates, and evaluates SNOMED CT Expression Constraint Language (ECL) expressions
-  background_color: "#2c3e50"
+  background_color: '#2c3e50'
 
 features:
   bot_user:
@@ -10,7 +10,7 @@ features:
   slash_commands:
     - command: /ecl
       description: Process an ECL expression
-      usage_hint: "< 404684003 |Clinical finding|"
+      usage_hint: '< 404684003 |Clinical finding|'
       should_escape: false
 
 oauth_config:

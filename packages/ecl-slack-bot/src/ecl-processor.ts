@@ -55,12 +55,16 @@ export function parseInput(raw: string): ParsedInput {
   let edition: string | undefined;
   let rest = trimmed;
 
-  // Consume flags from the beginning
+  // Consume flags from the beginning.
+  // Require word boundary after flag name to avoid prefix-matching
+  // (e.g. --evaluate should not match the evaluate flag).
+  const evalPattern = /^--eval(?:\s|$)/;
+  const editionPattern = /^--edition(?:\s|$)/;
   while (rest.startsWith('--')) {
-    if (rest.startsWith('--eval')) {
+    if (evalPattern.test(rest)) {
       evaluate = true;
       rest = rest.slice('--eval'.length).trimStart();
-    } else if (rest.startsWith('--edition')) {
+    } else if (editionPattern.test(rest)) {
       rest = rest.slice('--edition'.length).trimStart();
       if (!rest || rest.startsWith('--')) {
         return { ecl: '', evaluate: false, error: '--edition requires a value (e.g. --edition au)' };
@@ -68,7 +72,8 @@ export function parseInput(raw: string): ParsedInput {
       // Extract next word as edition value
       const spaceIdx = rest.search(/\s/);
       if (spaceIdx === -1) {
-        return { ecl: '', evaluate: false, error: '--edition requires a value (e.g. --edition au)' };
+        // Edition value is the only remaining text — no ECL expression
+        return { ecl: '', evaluate: false, error: 'No ECL expression provided after --edition' };
       }
       edition = rest.slice(0, spaceIdx);
       rest = rest.slice(spaceIdx).trimStart();
@@ -85,7 +90,7 @@ export function parseInput(raw: string): ParsedInput {
 export async function processEcl(
   ecl: string,
   terminologyService: ITerminologyService,
-  options?: { evaluate?: boolean; edition?: string },
+  options?: { evaluate?: boolean; edition?: string; maxEvalResults?: number },
 ): Promise<ProcessResult> {
   const errors: Diagnostic[] = [];
   const warnings: Diagnostic[] = [];
@@ -209,7 +214,7 @@ export async function processEcl(
       const evalResponse = await terminologyService.evaluateEcl(ecl);
       evaluation = {
         count: evalResponse.total,
-        sample: evalResponse.concepts.slice(0, 5).map((c) => `${c.code} |${c.display}|`),
+        sample: evalResponse.concepts.slice(0, options?.maxEvalResults ?? 5).map((c) => `${c.code} |${c.display}|`),
       };
     } catch {
       warnings.push({

@@ -61,6 +61,7 @@ async function handleEcl(raw: string): Promise<{ text: string; isHelp: boolean; 
   const result = await processEcl(parsed.ecl, terminologyService, {
     evaluate: parsed.evaluate,
     edition: editionLabel,
+    maxEvalResults: config.maxEvalResults,
   });
 
   return { text: buildMessage(result), isHelp: false, isError: false };

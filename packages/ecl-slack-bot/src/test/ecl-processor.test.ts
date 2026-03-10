@@ -62,6 +62,24 @@ describe('parseInput', () => {
     const result = parseInput('--edition');
     assert.strictEqual(result.error, '--edition requires a value (e.g. --edition au)');
   });
+
+  it('should return error when --edition has value but no ECL follows', () => {
+    const result = parseInput('--edition au');
+    assert.ok(result.error?.includes('No ECL expression'));
+  });
+
+  it('should not prefix-match --evaluate as the evaluate flag', () => {
+    const result = parseInput('--evaluate < 404684003');
+    // --evaluate is an unknown flag, so the whole thing becomes ECL
+    assert.strictEqual(result.ecl, '--evaluate < 404684003');
+    assert.strictEqual(result.evaluate, false);
+  });
+
+  it('should not prefix-match --editions as --edition', () => {
+    const result = parseInput('--editions au < 404684003');
+    assert.strictEqual(result.ecl, '--editions au < 404684003');
+    assert.strictEqual(result.edition, undefined);
+  });
 });
 
 // ── Mock terminology service ────────────────────────────────────────────

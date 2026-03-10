@@ -193,6 +193,7 @@ let snomedEditionLabel = 'server default';
 // Cached initializationOptions from the client (Eclipse sends config here)
 let cachedInitOptions: Record<string, unknown> = {};
 let clientSupportsCodeLensRefresh = false;
+let clientUserAgent: string | undefined;
 
 /**
  * Extract terminology config from a source object, handling both VSCode-style
@@ -220,6 +221,7 @@ function applyTerminologyConfig(cfg: { serverUrl?: string; timeout?: number; sno
   terminologyService = new FhirTerminologyService({
     baseUrl: cfg.serverUrl,
     timeout: cfg.timeout,
+    userAgent: clientUserAgent,
     snomedVersion: cfg.snomedVersion,
     onResolvedVersion: (versionUri) => {
       connection.console.log(`Resolved SNOMED version: ${versionUri}`);
@@ -278,6 +280,16 @@ async function initTerminologyService(): Promise<void> {
 connection.onInitialize((params: InitializeParams): InitializeResult => {
   // Track whether client supports workspace/codeLens/refresh (LSP 3.17+)
   clientSupportsCodeLensRefresh = !!params.capabilities.workspace?.codeLens?.refreshSupport;
+
+  // Build User-Agent from client info for FHIR request identification
+  const client = params.clientInfo;
+  if (client) {
+    const clientName = client.name === 'Visual Studio Code' ? 'VSCode' : client.name;
+    const clientVersion = client.version ? `/${client.version}` : '';
+    clientUserAgent = `ecl-lsp-server/1.0.0 (${clientName}${clientVersion})`;
+  } else {
+    clientUserAgent = 'ecl-lsp-server/1.0.0';
+  }
 
   // Cache initializationOptions for Eclipse and other clients that send config here
   if (params.initializationOptions && typeof params.initializationOptions === 'object') {

@@ -54,10 +54,7 @@ export interface ConceptReference {
  * @param ast The root expression node
  * @returns Array of concept references with their positions
  */
-export function extractConceptIds(
-  ast: ExpressionNode,
-  options?: { deduplicate?: boolean },
-): ConceptReference[] {
+export function extractConceptIds(ast: ExpressionNode, options?: { deduplicate?: boolean }): ConceptReference[] {
   const concepts: ConceptReference[] = [];
   const deduplicate = options?.deduplicate ?? true;
   const seenIds = new Set<string>();

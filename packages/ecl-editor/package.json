@@ -31,6 +31,7 @@
   "scripts": {
     "prepack": "node -e \"require('fs').copyFileSync('../../LICENSE','LICENSE')\"",
     "build": "vite build",
+    "build:standalone": "vite build --config vite.config.standalone.ts",
     "compile": "vite build",
     "dev": "vite build --watch",
     "typecheck": "tsc --noEmit",

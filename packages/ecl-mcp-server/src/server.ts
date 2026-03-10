@@ -35,11 +35,11 @@ function createTerminologyService(
   snomedVersion?: string,
   timeout?: number,
 ): FhirTerminologyService {
-  return new FhirTerminologyService(
-    fhirServer ?? config.fhirServer,
-    timeout ?? config.fhirTimeout,
-    snomedVersion ?? config.snomedVersion,
-  );
+  return new FhirTerminologyService({
+    baseUrl: fhirServer ?? config.fhirServer,
+    timeout: timeout ?? config.fhirTimeout,
+    snomedVersion: snomedVersion ?? config.snomedVersion,
+  });
 }
 
 // ── Per-call override schema (shared across tools) ──────────────────────

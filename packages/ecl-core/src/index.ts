@@ -32,6 +32,7 @@ export {
 
 // Terminology
 export { FhirTerminologyService } from './terminology/fhir-service';
+export type { FhirTerminologyServiceOptions } from './terminology/fhir-service';
 export type { ITerminologyService, ConceptInfo, EvaluationResponse } from './terminology/types';
 export { isValidSnomedId, isValidConceptId, isValidDescriptionId } from './terminology/verhoeff';
 

@@ -42,7 +42,11 @@ export class DiagnosticsEngine {
 
     if (!url) return null;
 
-    return new FhirTerminologyService(url, undefined, undefined, config.snomedVersion, config.onResolvedSnomedVersion);
+    return new FhirTerminologyService({
+      baseUrl: url,
+      snomedVersion: config.snomedVersion,
+      onResolvedVersion: config.onResolvedSnomedVersion,
+    });
   }
 
   /** Update configuration (e.g. switch SNOMED version, toggle semantic validation). */

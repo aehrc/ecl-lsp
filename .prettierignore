@@ -9,3 +9,5 @@ grammar/
 *.interp
 *.tokens
 package-lock.json
+docs/
+**/dist-standalone/

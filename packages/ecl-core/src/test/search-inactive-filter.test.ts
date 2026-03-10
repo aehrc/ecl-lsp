@@ -79,7 +79,7 @@ describe('FhirTerminologyService — searchByFilter excludes inactive concepts',
   });
 
   it('should include activeOnly=true in the $expand URL for text searches', async () => {
-    const svc = new FhirTerminologyService(baseUrl, 2000);
+    const svc = new FhirTerminologyService({ baseUrl, timeout: 2000 });
     mock.setResponse(200, {
       resourceType: 'ValueSet',
       expansion: { total: 0, contains: [] },
@@ -93,7 +93,7 @@ describe('FhirTerminologyService — searchByFilter excludes inactive concepts',
   });
 
   it('should return only active concepts from text search', async () => {
-    const svc = new FhirTerminologyService(baseUrl, 2000);
+    const svc = new FhirTerminologyService({ baseUrl, timeout: 2000 });
     mock.setResponse(200, {
       resourceType: 'ValueSet',
       expansion: {
@@ -117,7 +117,7 @@ describe('FhirTerminologyService — searchByFilter excludes inactive concepts',
   it('should handle server that ignores activeOnly by returning mix of active/inactive', async () => {
     // Even if a FHIR server ignores activeOnly=true, the parameter is still sent.
     // The server-side filtering is best-effort; the key protection is the request parameter.
-    const svc = new FhirTerminologyService(baseUrl, 2000);
+    const svc = new FhirTerminologyService({ baseUrl, timeout: 2000 });
     mock.setResponse(200, {
       resourceType: 'ValueSet',
       expansion: {
@@ -140,7 +140,7 @@ describe('FhirTerminologyService — searchByFilter excludes inactive concepts',
   });
 
   it('should preserve includeDesignations in the search URL', async () => {
-    const svc = new FhirTerminologyService(baseUrl, 2000);
+    const svc = new FhirTerminologyService({ baseUrl, timeout: 2000 });
     mock.setResponse(200, {
       resourceType: 'ValueSet',
       expansion: { total: 0, contains: [] },
@@ -155,7 +155,7 @@ describe('FhirTerminologyService — searchByFilter excludes inactive concepts',
   });
 
   it('should request at most 21 results and limit to 20', async () => {
-    const svc = new FhirTerminologyService(baseUrl, 2000);
+    const svc = new FhirTerminologyService({ baseUrl, timeout: 2000 });
     const contains = Array.from({ length: 21 }, (_, i) => ({
       code: `${100000000 + i}`,
       display: `Concept ${i}`,
@@ -188,7 +188,7 @@ describe('FhirTerminologyService — lookupById excludes inactive concepts', () 
   });
 
   it('should return empty results when looking up an inactive concept by ID', async () => {
-    const svc = new FhirTerminologyService(baseUrl, 2000);
+    const svc = new FhirTerminologyService({ baseUrl, timeout: 2000 });
     mock.setResponse(200, {
       resourceType: 'Parameters',
       parameter: [
@@ -210,7 +210,7 @@ describe('FhirTerminologyService — lookupById excludes inactive concepts', () 
   });
 
   it('should return results when looking up an active concept by ID', async () => {
-    const svc = new FhirTerminologyService(baseUrl, 2000);
+    const svc = new FhirTerminologyService({ baseUrl, timeout: 2000 });
     mock.setResponse(200, {
       resourceType: 'Parameters',
       parameter: [
@@ -233,7 +233,7 @@ describe('FhirTerminologyService — lookupById excludes inactive concepts', () 
   });
 
   it('should return results when concept has no inactive property (defaults to active)', async () => {
-    const svc = new FhirTerminologyService(baseUrl, 2000);
+    const svc = new FhirTerminologyService({ baseUrl, timeout: 2000 });
     mock.setResponse(200, {
       resourceType: 'Parameters',
       parameter: [{ name: 'display', valueString: 'Clinical finding (finding)' }],
@@ -247,7 +247,7 @@ describe('FhirTerminologyService — lookupById excludes inactive concepts', () 
 
   it('should return empty results when concept is not found', async () => {
     // 100000000 passes Verhoeff check digit validation, so searchConcepts routes to lookupById
-    const svc = new FhirTerminologyService(baseUrl, 2000);
+    const svc = new FhirTerminologyService({ baseUrl, timeout: 2000 });
     mock.setResponse(404, {
       resourceType: 'OperationOutcome',
       issue: [{ severity: 'error', code: 'not-found' }],
@@ -260,7 +260,7 @@ describe('FhirTerminologyService — lookupById excludes inactive concepts', () 
 
   it('should return empty results for inactive concept with nested SNOMED property structure', async () => {
     // Reproduces the exact FHIR response structure from SNOMED terminology servers
-    const svc = new FhirTerminologyService(baseUrl, 2000);
+    const svc = new FhirTerminologyService({ baseUrl, timeout: 2000 });
     mock.setResponse(200, {
       resourceType: 'Parameters',
       parameter: [
@@ -288,7 +288,7 @@ describe('FhirTerminologyService — lookupById excludes inactive concepts', () 
   });
 
   it('should use $lookup (not $expand) for valid SNOMED CT IDs', async () => {
-    const svc = new FhirTerminologyService(baseUrl, 2000);
+    const svc = new FhirTerminologyService({ baseUrl, timeout: 2000 });
     mock.setResponse(200, {
       resourceType: 'Parameters',
       parameter: [
@@ -312,7 +312,7 @@ describe('FhirTerminologyService — lookupById excludes inactive concepts', () 
   });
 
   it('should use $expand (not $lookup) for text queries', async () => {
-    const svc = new FhirTerminologyService(baseUrl, 2000);
+    const svc = new FhirTerminologyService({ baseUrl, timeout: 2000 });
     mock.setResponse(200, {
       resourceType: 'ValueSet',
       expansion: { total: 0, contains: [] },
@@ -343,7 +343,7 @@ describe('FhirTerminologyService — bug report: paracetamol inactive concepts',
   });
 
   it('should exclude 384977007 (inactive paracetamol) from ID lookup', async () => {
-    const svc = new FhirTerminologyService(baseUrl, 2000);
+    const svc = new FhirTerminologyService({ baseUrl, timeout: 2000 });
     mock.setResponse(200, {
       resourceType: 'Parameters',
       parameter: [
@@ -364,7 +364,7 @@ describe('FhirTerminologyService — bug report: paracetamol inactive concepts',
   });
 
   it('should exclude 2442011000036104 (inactive AU paracetamol) from ID lookup', async () => {
-    const svc = new FhirTerminologyService(baseUrl, 2000);
+    const svc = new FhirTerminologyService({ baseUrl, timeout: 2000 });
     mock.setResponse(200, {
       resourceType: 'Parameters',
       parameter: [
@@ -385,7 +385,7 @@ describe('FhirTerminologyService — bug report: paracetamol inactive concepts',
   });
 
   it('should include 387517004 (active paracetamol) from ID lookup', async () => {
-    const svc = new FhirTerminologyService(baseUrl, 2000);
+    const svc = new FhirTerminologyService({ baseUrl, timeout: 2000 });
     mock.setResponse(200, {
       resourceType: 'Parameters',
       parameter: [
@@ -407,7 +407,7 @@ describe('FhirTerminologyService — bug report: paracetamol inactive concepts',
   });
 
   it('should request activeOnly=true for text search "paracetamol"', async () => {
-    const svc = new FhirTerminologyService(baseUrl, 2000);
+    const svc = new FhirTerminologyService({ baseUrl, timeout: 2000 });
     mock.setResponse(200, {
       resourceType: 'ValueSet',
       expansion: {

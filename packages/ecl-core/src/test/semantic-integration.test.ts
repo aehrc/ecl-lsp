@@ -21,7 +21,7 @@ const TIMEOUT = 30_000;
  * Requires network access to https://tx.ontoserver.csiro.au/fhir
  */
 
-const svc = new FhirTerminologyService('https://tx.ontoserver.csiro.au/fhir', 15_000);
+const svc = new FhirTerminologyService({ baseUrl: 'https://tx.ontoserver.csiro.au/fhir', timeout: 15_000 });
 
 // ─── Concept Lookup ─────────────────────────────────────────────────────────
 

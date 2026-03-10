@@ -18,6 +18,7 @@ export default tseslint.config(
       'eslint.config.mjs',
       '**/.storybook/**',
       '**/vite.config.ts',
+      '**/vite.config.*.ts',
       '**/vitest.config.ts',
       '**/playwright.config.ts',
       '**/e2e/**',
@@ -80,6 +81,34 @@ export default tseslint.config(
       '@typescript-eslint/restrict-plus-operands': ['error', { allowNumberAndString: true }],
       '@typescript-eslint/prefer-nullish-coalescing': 'warn',
       '@typescript-eslint/no-non-null-assertion': 'warn',
+    },
+  },
+
+  // ecl-slack-bot source files
+  {
+    files: ['packages/ecl-slack-bot/src/**/*.ts'],
+    languageOptions: {
+      globals: globals.node,
+      parserOptions: {
+        projectService: true,
+        tsconfigRootDir: import.meta.dirname,
+      },
+    },
+    rules: {
+      'no-console': 'off',
+      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
+      '@typescript-eslint/restrict-template-expressions': ['error', { allowNumber: true, allowBoolean: true }],
+      '@typescript-eslint/restrict-plus-operands': ['error', { allowNumberAndString: true }],
+      '@typescript-eslint/prefer-nullish-coalescing': 'warn',
+      '@typescript-eslint/no-non-null-assertion': 'warn',
+    },
+  },
+
+  // ecl-slack-bot files with SNOMED URIs (http://snomed.info/sct/... is a FHIR system URI, not a network URL)
+  {
+    files: ['packages/ecl-slack-bot/src/config.ts', 'packages/ecl-slack-bot/src/ecl-processor.ts'],
+    rules: {
+      'sonarjs/no-clear-text-protocols': 'off',
     },
   },
 
@@ -154,6 +183,7 @@ export default tseslint.config(
       'packages/ecl-core/src/test/**/*.ts',
       'packages/ecl-lsp-server/src/test/**/*.ts',
       'packages/ecl-mcp-server/src/test/**/*.ts',
+      'packages/ecl-slack-bot/src/test/**/*.ts',
       'packages/ecl-editor-core/src/test/**/*.ts',
       'packages/ecl-editor-react/src/test/**/*.ts',
       'packages/ecl-editor/src/test/**/*.ts',
@@ -174,6 +204,8 @@ export default tseslint.config(
       'sonarjs/no-misleading-array-reverse': 'off',
       'sonarjs/no-unused-vars': 'off',
       'sonarjs/cognitive-complexity': 'off',
+      'sonarjs/no-clear-text-protocols': 'off',
+      '@typescript-eslint/no-dynamic-delete': 'off',
       'unicorn/no-negated-condition': 'off',
     },
   },

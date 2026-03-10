@@ -67,13 +67,11 @@ export function registerEclLanguage(
   // Create terminology service if not provided
   if (!terminologyService && config.fhirServerUrl !== undefined) {
     const url = config.corsProxy ? `${config.corsProxy}${config.fhirServerUrl}` : config.fhirServerUrl;
-    terminologyService = new FhirTerminologyService(
-      url,
-      undefined,
-      undefined,
-      config.snomedVersion,
-      config.onResolvedSnomedVersion,
-    );
+    terminologyService = new FhirTerminologyService({
+      baseUrl: url,
+      snomedVersion: config.snomedVersion,
+      onResolvedVersion: config.onResolvedSnomedVersion,
+    });
   }
 
   // Lazy accessors for providers
@@ -159,13 +157,11 @@ export function registerEclLanguage(
             ? `${newConfig.corsProxy ?? config.corsProxy}${newConfig.fhirServerUrl ?? config.fhirServerUrl ?? 'https://tx.ontoserver.csiro.au/fhir'}`
             : (newConfig.fhirServerUrl ?? config.fhirServerUrl);
         if (url) {
-          terminologyService = new FhirTerminologyService(
-            url,
-            undefined,
-            undefined,
-            newConfig.snomedVersion ?? config.snomedVersion,
-            newConfig.onResolvedSnomedVersion ?? config.onResolvedSnomedVersion,
-          );
+          terminologyService = new FhirTerminologyService({
+            baseUrl: url,
+            snomedVersion: newConfig.snomedVersion ?? config.snomedVersion,
+            onResolvedVersion: newConfig.onResolvedSnomedVersion ?? config.onResolvedSnomedVersion,
+          });
         }
       }
 

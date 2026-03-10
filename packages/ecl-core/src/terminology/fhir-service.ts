@@ -82,6 +82,14 @@ interface CacheEntry<T> {
   timestamp: number;
 }
 
+export interface FhirTerminologyServiceOptions {
+  baseUrl?: string;
+  timeout?: number;
+  userAgent?: string;
+  snomedVersion?: string;
+  onResolvedVersion?: (versionUri: string) => void;
+}
+
 /** A version of a SNOMED CT edition available on the server. */
 export interface SnomedVersion {
   uri: string;
@@ -107,21 +115,15 @@ export class FhirTerminologyService implements ITerminologyService {
   private readonly onResolvedVersion: ((versionUri: string) => void) | undefined;
   private resolvedVersion: string | null = null;
 
-  constructor(
-    baseUrl = 'https://tx.ontoserver.csiro.au/fhir',
-    timeout = 2000,
-    userAgent: string = DEFAULT_USER_AGENT,
-    snomedVersion?: string,
-    onResolvedVersion?: (versionUri: string) => void,
-  ) {
-    this.baseUrl = baseUrl;
-    this.timeout = timeout;
-    this.userAgent = userAgent;
+  constructor(options: FhirTerminologyServiceOptions = {}) {
+    this.baseUrl = options.baseUrl ?? 'https://tx.ontoserver.csiro.au/fhir';
+    this.timeout = options.timeout ?? 2000;
+    this.userAgent = options.userAgent ?? DEFAULT_USER_AGENT;
     this.evaluationTimeout = 15000; // 15 seconds for ECL evaluation
     this.searchTimeout = 5000; // 5 seconds for search queries
     this.searchCacheTTL = 5 * 60 * 1000; // 5 minutes
-    this.snomedVersion = snomedVersion?.trim() ? snomedVersion.trim() : undefined;
-    this.onResolvedVersion = onResolvedVersion;
+    this.snomedVersion = options.snomedVersion?.trim() ? options.snomedVersion.trim() : undefined;
+    this.onResolvedVersion = options.onResolvedVersion;
   }
 
   /** The SNOMED CT system URL base for implicit ValueSet URLs. */

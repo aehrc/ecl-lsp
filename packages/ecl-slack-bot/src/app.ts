@@ -4,7 +4,7 @@
 import 'dotenv/config';
 import { App } from '@slack/bolt';
 import { FhirTerminologyService } from 'ecl-core';
-import { loadConfig, resolveEdition } from './config';
+import { loadConfig, resolveEdition, formatResolvedVersion } from './config';
 import { parseInput, processEcl } from './ecl-processor';
 import { buildMessage, buildHelpMessage } from './message-builder';
 
@@ -20,6 +20,13 @@ const app = new App({
   appToken: config.slackAppToken,
   socketMode: true,
 });
+
+// ── Helpers ──────────────────────────────────────────────────────────────
+
+/** Slack HTML-encodes angle brackets in event text (but not slash command text). */
+function unescapeSlackHtml(text: string): string {
+  return text.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+}
 
 // ── Shared handler logic ────────────────────────────────────────────────
 
@@ -55,12 +62,12 @@ async function handleEcl(raw: string): Promise<{ text: string; isHelp: boolean; 
     editionLabel = `${parsed.edition} (${resolved})`;
   }
 
-  const terminologyService = new FhirTerminologyService(
-    config.fhirServerUrl,
-    10_000, // 10s timeout — bot users expect a few seconds of latency
-    'ecl-slack-bot/1.0.0',
-    snomedEdition,
-  );
+  const terminologyService = new FhirTerminologyService({
+    baseUrl: config.fhirServerUrl,
+    timeout: 10_000, // 10s timeout — bot users expect a few seconds of latency
+    userAgent: 'ecl-slack-bot/1.0.0',
+    snomedVersion: snomedEdition,
+  });
 
   const result = await processEcl(parsed.ecl, terminologyService, {
     evaluate: parsed.evaluate,
@@ -68,10 +75,16 @@ async function handleEcl(raw: string): Promise<{ text: string; isHelp: boolean; 
     maxEvalResults: config.maxEvalResults,
   });
 
+  // Use the actual resolved version from the FHIR response when available
+  const resolvedVersion = terminologyService.getResolvedVersion();
+  if (resolvedVersion) {
+    result.edition = formatResolvedVersion(resolvedVersion);
+    result.editionUri = resolvedVersion;
+    result.fhirServerUrl = config.fhirServerUrl;
+  }
+
   const elapsed = ((Date.now() - start) / 1000).toFixed(1);
-  console.log(
-    `[ECL] Done in ${elapsed}s — ${result.errors.length} errors, ${result.warnings.length} warnings`,
-  );
+  console.log(`[ECL] Done in ${elapsed}s — ${result.errors.length} errors, ${result.warnings.length} warnings`);
 
   return { text: buildMessage(result), isHelp: false, isError: false };
 }
@@ -93,9 +106,10 @@ app.command('/ecl', async ({ command, ack, respond }) => {
 // ── @mention ────────────────────────────────────────────────────────────
 
 app.event('app_mention', async ({ event, say }) => {
-  console.log(`[ECL] @mention event received from ${event.user}`, JSON.stringify(event.text).slice(0, 120));
-  // Strip the bot mention from the text
-  const raw = event.text.replace(/<@[A-Za-z0-9]+>/gi, '').trim();
+  console.log(`[ECL] @mention raw event.text:`, JSON.stringify(event.text));
+  // Strip the bot mention and unescape HTML entities Slack injects into event text
+  const raw = unescapeSlackHtml(event.text.replace(/<@\w+>/gi, '').trim());
+  console.log(`[ECL] @mention after stripping:`, JSON.stringify(raw).slice(0, 200));
   try {
     const { text } = await handleEcl(raw);
     await say({ text, thread_ts: event.ts });
@@ -113,7 +127,7 @@ app.message(async ({ message, say }) => {
   // Ignore bot messages to prevent loops
   if (message.subtype === 'bot_message' || ('bot_id' in message && message.bot_id)) return;
 
-  const raw = ('text' in message && message.text) || '';
+  const raw = unescapeSlackHtml(('text' in message && message.text) || ''); // eslint-disable-line @typescript-eslint/prefer-nullish-coalescing -- expression yields string|false
   console.log(`[ECL] DM from ${('user' in message && message.user) || 'unknown'}`);
   try {
     const { text } = await handleEcl(raw);
@@ -126,7 +140,7 @@ app.message(async ({ message, say }) => {
 
 // ── Start ───────────────────────────────────────────────────────────────
 
-(async () => {
+void (async () => {
   await app.start();
   console.log('ECL Slack Bot is running');
 })();

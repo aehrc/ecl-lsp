@@ -140,17 +140,16 @@ describe('FhirTerminologyService — SNOMED version threading', () => {
   // 9.1 Constructor stores snomedVersion field
   describe('constructor', () => {
     it('should store snomedVersion when provided', () => {
-      const svc = new FhirTerminologyService(
+      const svc = new FhirTerminologyService({
         baseUrl,
-        2000,
-        undefined,
-        'http://snomed.info/sct/32506021000036107/version/20260131',
-      );
+        timeout: 2000,
+        snomedVersion: 'http://snomed.info/sct/32506021000036107/version/20260131',
+      });
       assert.strictEqual(svc.getResolvedVersion(), null, 'resolved version starts null');
     });
 
     it('should treat empty string as no version', async () => {
-      const svc = new FhirTerminologyService(baseUrl, 2000, undefined, '');
+      const svc = new FhirTerminologyService({ baseUrl, timeout: 2000, snomedVersion: '' });
       mock.setResponse(200, MOCK_EXPAND_RESPONSE);
       await svc.evaluateEcl('<< 404684003');
       // URL should use default system URL (no version in path)
@@ -159,7 +158,11 @@ describe('FhirTerminologyService — SNOMED version threading', () => {
     });
 
     it('should trim whitespace from snomedVersion', async () => {
-      const svc = new FhirTerminologyService(baseUrl, 2000, undefined, '  http://snomed.info/sct/32506021000036107  ');
+      const svc = new FhirTerminologyService({
+        baseUrl,
+        timeout: 2000,
+        snomedVersion: '  http://snomed.info/sct/32506021000036107  ',
+      });
       mock.setResponse(200, MOCK_EXPAND_RESPONSE);
       await svc.evaluateEcl('<< 404684003');
       const url = mock.requests[0].url;
@@ -174,7 +177,7 @@ describe('FhirTerminologyService — SNOMED version threading', () => {
   describe('getConceptInfo — version threading', () => {
     it('should append version parameter when snomedVersion is set', async () => {
       const version = 'http://snomed.info/sct/32506021000036107/version/20260131';
-      const svc = new FhirTerminologyService(baseUrl, 2000, undefined, version);
+      const svc = new FhirTerminologyService({ baseUrl, timeout: 2000, snomedVersion: version });
       mock.setResponse(200, MOCK_LOOKUP_RESPONSE);
 
       await svc.getConceptInfo('404684003');
@@ -186,7 +189,7 @@ describe('FhirTerminologyService — SNOMED version threading', () => {
 
     // 9.6 Unversioned URL when no snomedVersion
     it('should not include version parameter when snomedVersion is not set', async () => {
-      const svc = new FhirTerminologyService(baseUrl, 2000);
+      const svc = new FhirTerminologyService({ baseUrl, timeout: 2000 });
       mock.setResponse(200, MOCK_LOOKUP_RESPONSE);
 
       await svc.getConceptInfo('404684003');
@@ -197,7 +200,11 @@ describe('FhirTerminologyService — SNOMED version threading', () => {
 
     // 9.7 Edition-only URI works
     it('should work with edition-only URI (no /version/ suffix)', async () => {
-      const svc = new FhirTerminologyService(baseUrl, 2000, undefined, 'http://snomed.info/sct/32506021000036107');
+      const svc = new FhirTerminologyService({
+        baseUrl,
+        timeout: 2000,
+        snomedVersion: 'http://snomed.info/sct/32506021000036107',
+      });
       mock.setResponse(200, MOCK_LOOKUP_RESPONSE);
 
       await svc.getConceptInfo('404684003');
@@ -214,7 +221,7 @@ describe('FhirTerminologyService — SNOMED version threading', () => {
   describe('evaluateEcl — version threading', () => {
     it('should use versioned implicit ValueSet URL when snomedVersion is set', async () => {
       const version = 'http://snomed.info/sct/32506021000036107/version/20260131';
-      const svc = new FhirTerminologyService(baseUrl, 2000, undefined, version);
+      const svc = new FhirTerminologyService({ baseUrl, timeout: 2000, snomedVersion: version });
       mock.setResponse(200, MOCK_EXPAND_RESPONSE);
 
       await svc.evaluateEcl('<< 404684003');
@@ -226,7 +233,7 @@ describe('FhirTerminologyService — SNOMED version threading', () => {
 
     // 9.6
     it('should use default system URL when snomedVersion is not set', async () => {
-      const svc = new FhirTerminologyService(baseUrl, 2000);
+      const svc = new FhirTerminologyService({ baseUrl, timeout: 2000 });
       mock.setResponse(200, MOCK_EXPAND_RESPONSE);
 
       await svc.evaluateEcl('<< 404684003');
@@ -240,7 +247,11 @@ describe('FhirTerminologyService — SNOMED version threading', () => {
 
     // 9.7
     it('should work with edition-only URI for evaluateEcl', async () => {
-      const svc = new FhirTerminologyService(baseUrl, 2000, undefined, 'http://snomed.info/sct/32506021000036107');
+      const svc = new FhirTerminologyService({
+        baseUrl,
+        timeout: 2000,
+        snomedVersion: 'http://snomed.info/sct/32506021000036107',
+      });
       mock.setResponse(200, MOCK_EXPAND_RESPONSE);
 
       await svc.evaluateEcl('<< 404684003');
@@ -257,7 +268,7 @@ describe('FhirTerminologyService — SNOMED version threading', () => {
   describe('bulkExpand — version threading', () => {
     it('should include version in compose include when snomedVersion is set', async () => {
       const version = 'http://snomed.info/sct/32506021000036107/version/20260131';
-      const svc = new FhirTerminologyService(baseUrl, 2000, undefined, version);
+      const svc = new FhirTerminologyService({ baseUrl, timeout: 2000, snomedVersion: version });
       mock.setResponse(200, {
         resourceType: 'ValueSet',
         expansion: { total: 1, contains: [{ code: '404684003', display: 'Clinical finding' }] },
@@ -275,7 +286,7 @@ describe('FhirTerminologyService — SNOMED version threading', () => {
 
     // 9.6
     it('should not include version in compose include when snomedVersion is not set', async () => {
-      const svc = new FhirTerminologyService(baseUrl, 2000);
+      const svc = new FhirTerminologyService({ baseUrl, timeout: 2000 });
       mock.setResponse(200, {
         resourceType: 'ValueSet',
         expansion: { total: 1, contains: [{ code: '404684003', display: 'Clinical finding' }] },
@@ -291,7 +302,11 @@ describe('FhirTerminologyService — SNOMED version threading', () => {
 
     // 9.7
     it('should work with edition-only URI in bulkExpand', async () => {
-      const svc = new FhirTerminologyService(baseUrl, 2000, undefined, 'http://snomed.info/sct/32506021000036107');
+      const svc = new FhirTerminologyService({
+        baseUrl,
+        timeout: 2000,
+        snomedVersion: 'http://snomed.info/sct/32506021000036107',
+      });
       mock.setResponse(200, {
         resourceType: 'ValueSet',
         expansion: { total: 1, contains: [{ code: '404684003', display: 'Clinical finding' }] },
@@ -314,7 +329,7 @@ describe('FhirTerminologyService — SNOMED version threading', () => {
   describe('searchByFilter — version threading', () => {
     it('should use versioned implicit ValueSet URL when snomedVersion is set', async () => {
       const version = 'http://snomed.info/sct/32506021000036107/version/20260131';
-      const svc = new FhirTerminologyService(baseUrl, 2000, undefined, version);
+      const svc = new FhirTerminologyService({ baseUrl, timeout: 2000, snomedVersion: version });
       mock.setResponse(200, {
         resourceType: 'ValueSet',
         expansion: { total: 1, contains: [{ code: '404684003', display: 'Clinical finding' }] },
@@ -329,7 +344,7 @@ describe('FhirTerminologyService — SNOMED version threading', () => {
 
     // 9.6
     it('should use default system URL when snomedVersion is not set', async () => {
-      const svc = new FhirTerminologyService(baseUrl, 2000);
+      const svc = new FhirTerminologyService({ baseUrl, timeout: 2000 });
       mock.setResponse(200, {
         resourceType: 'ValueSet',
         expansion: { total: 1, contains: [{ code: '404684003', display: 'Clinical finding' }] },
@@ -358,7 +373,7 @@ describe('FhirTerminologyService — edition discovery', () => {
 
   // 9.8 getSnomedEditions parses a mock FHIR Bundle
   it('should parse FHIR Bundle into grouped editions', async () => {
-    const svc = new FhirTerminologyService(baseUrl, 2000);
+    const svc = new FhirTerminologyService({ baseUrl, timeout: 2000 });
     mock.setResponse(200, MOCK_EDITION_BUNDLE);
 
     const editions = await svc.getSnomedEditions();
@@ -382,7 +397,7 @@ describe('FhirTerminologyService — edition discovery', () => {
   });
 
   it('should request the correct URL for edition discovery', async () => {
-    const svc = new FhirTerminologyService(baseUrl, 2000);
+    const svc = new FhirTerminologyService({ baseUrl, timeout: 2000 });
     mock.setResponse(200, { resourceType: 'Bundle', entry: [] });
 
     await svc.getSnomedEditions();
@@ -396,7 +411,7 @@ describe('FhirTerminologyService — edition discovery', () => {
 
   // 9.9 Empty bundle and error responses
   it('should return empty array for empty Bundle', async () => {
-    const svc = new FhirTerminologyService(baseUrl, 2000);
+    const svc = new FhirTerminologyService({ baseUrl, timeout: 2000 });
     mock.setResponse(200, { resourceType: 'Bundle', entry: [] });
 
     const editions = await svc.getSnomedEditions();
@@ -404,7 +419,7 @@ describe('FhirTerminologyService — edition discovery', () => {
   });
 
   it('should return empty array for Bundle with no entry field', async () => {
-    const svc = new FhirTerminologyService(baseUrl, 2000);
+    const svc = new FhirTerminologyService({ baseUrl, timeout: 2000 });
     mock.setResponse(200, { resourceType: 'Bundle' });
 
     const editions = await svc.getSnomedEditions();
@@ -412,14 +427,14 @@ describe('FhirTerminologyService — edition discovery', () => {
   });
 
   it('should throw on HTTP error response', async () => {
-    const svc = new FhirTerminologyService(baseUrl, 2000);
+    const svc = new FhirTerminologyService({ baseUrl, timeout: 2000 });
     mock.setResponse(500, { resourceType: 'OperationOutcome' });
 
     await assert.rejects(() => svc.getSnomedEditions(), /HTTP 500/);
   });
 
   it('should skip entries without version field', async () => {
-    const svc = new FhirTerminologyService(baseUrl, 2000);
+    const svc = new FhirTerminologyService({ baseUrl, timeout: 2000 });
     mock.setResponse(200, {
       resourceType: 'Bundle',
       entry: [
@@ -454,7 +469,7 @@ describe('FhirTerminologyService — resolved version extraction', () => {
 
   // 9.10 Resolved version extraction from $expand response
   it('should capture resolved version from $expand parameter array', async () => {
-    const svc = new FhirTerminologyService(baseUrl, 2000);
+    const svc = new FhirTerminologyService({ baseUrl, timeout: 2000 });
     mock.setResponse(200, MOCK_EXPAND_RESPONSE);
 
     await svc.evaluateEcl('<< 404684003');
@@ -468,7 +483,7 @@ describe('FhirTerminologyService — resolved version extraction', () => {
 
   // 9.11 Resolved version extraction from $lookup response
   it('should capture resolved version from $lookup parameter array', async () => {
-    const svc = new FhirTerminologyService(baseUrl, 2000);
+    const svc = new FhirTerminologyService({ baseUrl, timeout: 2000 });
     mock.setResponse(200, MOCK_LOOKUP_RESPONSE);
 
     await svc.getConceptInfo('404684003');
@@ -481,7 +496,7 @@ describe('FhirTerminologyService — resolved version extraction', () => {
   });
 
   it('should not capture version when response has no parameter array', async () => {
-    const svc = new FhirTerminologyService(baseUrl, 2000);
+    const svc = new FhirTerminologyService({ baseUrl, timeout: 2000 });
     mock.setResponse(200, {
       resourceType: 'ValueSet',
       expansion: { total: 1, contains: [{ code: '404684003', display: 'Clinical finding' }] },
@@ -494,7 +509,7 @@ describe('FhirTerminologyService — resolved version extraction', () => {
 
   // 9.12 Resolved version is only captured once
   it('should only capture resolved version once per service lifetime', async () => {
-    const svc = new FhirTerminologyService(baseUrl, 2000);
+    const svc = new FhirTerminologyService({ baseUrl, timeout: 2000 });
 
     // First call — captures version from expand
     mock.setResponse(200, MOCK_EXPAND_RESPONSE);
@@ -521,8 +536,12 @@ describe('FhirTerminologyService — resolved version extraction', () => {
   // 9.13 Resolved version callback is invoked on first capture
   it('should invoke onResolvedVersion callback on first capture', async () => {
     const capturedVersions: string[] = [];
-    const svc = new FhirTerminologyService(baseUrl, 2000, undefined, undefined, (uri) => {
-      capturedVersions.push(uri);
+    const svc = new FhirTerminologyService({
+      baseUrl,
+      timeout: 2000,
+      onResolvedVersion: (uri) => {
+        capturedVersions.push(uri);
+      },
     });
 
     mock.setResponse(200, MOCK_EXPAND_RESPONSE);
@@ -534,8 +553,12 @@ describe('FhirTerminologyService — resolved version extraction', () => {
 
   it('should not invoke callback on subsequent responses', async () => {
     const capturedVersions: string[] = [];
-    const svc = new FhirTerminologyService(baseUrl, 2000, undefined, undefined, (uri) => {
-      capturedVersions.push(uri);
+    const svc = new FhirTerminologyService({
+      baseUrl,
+      timeout: 2000,
+      onResolvedVersion: (uri) => {
+        capturedVersions.push(uri);
+      },
     });
 
     // First call
@@ -558,8 +581,12 @@ describe('FhirTerminologyService — resolved version extraction', () => {
 
   it('should capture resolved version from searchByFilter via searchConcepts', async () => {
     const capturedVersions: string[] = [];
-    const svc = new FhirTerminologyService(baseUrl, 2000, undefined, undefined, (uri) => {
-      capturedVersions.push(uri);
+    const svc = new FhirTerminologyService({
+      baseUrl,
+      timeout: 2000,
+      onResolvedVersion: (uri) => {
+        capturedVersions.push(uri);
+      },
     });
 
     mock.setResponse(200, {
@@ -579,8 +606,12 @@ describe('FhirTerminologyService — resolved version extraction', () => {
 
   it('should capture resolved version from bulkExpand via validateConcepts', async () => {
     const capturedVersions: string[] = [];
-    const svc = new FhirTerminologyService(baseUrl, 2000, undefined, undefined, (uri) => {
-      capturedVersions.push(uri);
+    const svc = new FhirTerminologyService({
+      baseUrl,
+      timeout: 2000,
+      onResolvedVersion: (uri) => {
+        capturedVersions.push(uri);
+      },
     });
 
     mock.setResponse(200, {
@@ -601,7 +632,7 @@ describe('FhirTerminologyService — resolved version extraction', () => {
   // ── FHIR response format variations ──
 
   it('should capture version from used-codesystem parameter (FHIR R4 standard)', async () => {
-    const svc = new FhirTerminologyService(baseUrl, 2000);
+    const svc = new FhirTerminologyService({ baseUrl, timeout: 2000 });
     mock.setResponse(200, {
       resourceType: 'ValueSet',
       expansion: {
@@ -626,7 +657,7 @@ describe('FhirTerminologyService — resolved version extraction', () => {
   });
 
   it('should capture version from valueString (instead of valueUri)', async () => {
-    const svc = new FhirTerminologyService(baseUrl, 2000);
+    const svc = new FhirTerminologyService({ baseUrl, timeout: 2000 });
     mock.setResponse(200, {
       resourceType: 'ValueSet',
       expansion: {
@@ -647,7 +678,7 @@ describe('FhirTerminologyService — resolved version extraction', () => {
   });
 
   it('should capture version from $lookup valueString', async () => {
-    const svc = new FhirTerminologyService(baseUrl, 2000);
+    const svc = new FhirTerminologyService({ baseUrl, timeout: 2000 });
     mock.setResponse(200, {
       resourceType: 'Parameters',
       parameter: [
@@ -662,7 +693,7 @@ describe('FhirTerminologyService — resolved version extraction', () => {
   });
 
   it('should prefer version parameter over used-codesystem', async () => {
-    const svc = new FhirTerminologyService(baseUrl, 2000);
+    const svc = new FhirTerminologyService({ baseUrl, timeout: 2000 });
     mock.setResponse(200, {
       resourceType: 'ValueSet',
       expansion: {
@@ -688,7 +719,7 @@ describe('FhirTerminologyService — resolved version extraction', () => {
   });
 
   it('should ignore non-SNOMED used-codesystem entries', async () => {
-    const svc = new FhirTerminologyService(baseUrl, 2000);
+    const svc = new FhirTerminologyService({ baseUrl, timeout: 2000 });
     mock.setResponse(200, {
       resourceType: 'ValueSet',
       expansion: {

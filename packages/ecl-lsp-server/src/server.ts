@@ -217,17 +217,16 @@ function extractTerminologyConfig(config: Record<string, unknown> | null | undef
 
 function applyTerminologyConfig(cfg: { serverUrl?: string; timeout?: number; snomedVersion?: string }): void {
   snomedEditionLabel = cfg.snomedVersion ?? 'server default';
-  terminologyService = new FhirTerminologyService(
-    cfg.serverUrl,
-    cfg.timeout,
-    undefined,
-    cfg.snomedVersion,
-    (versionUri) => {
+  terminologyService = new FhirTerminologyService({
+    baseUrl: cfg.serverUrl,
+    timeout: cfg.timeout,
+    snomedVersion: cfg.snomedVersion,
+    onResolvedVersion: (versionUri) => {
       connection.console.log(`Resolved SNOMED version: ${versionUri}`);
       snomedEditionLabel = versionUri;
       void connection.sendNotification('ecl/resolvedSnomedVersion', { versionUri });
     },
-  );
+  });
   connection.console.log(
     `Terminology server: ${cfg.serverUrl ?? 'https://tx.ontoserver.csiro.au/fhir'} (timeout: ${cfg.timeout ?? 2000}ms)` +
       (cfg.snomedVersion ? ` (SNOMED version: ${cfg.snomedVersion})` : ''),

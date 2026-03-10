@@ -29,6 +29,8 @@ export class EclEditorElement extends HTMLElement {
   }
 
   private container: HTMLDivElement | null = null;
+  private hintsBar: HTMLDivElement | null = null;
+  private resizeHandle: HTMLDivElement | null = null;
   private editor: import('monaco-editor').editor.IStandaloneCodeEditor | null = null;
   private registration: EclEditorDisposable | null = null;
   private monacoInstance: typeof import('monaco-editor') | null = null;
@@ -40,15 +42,37 @@ export class EclEditorElement extends HTMLElement {
     if (!this.container) {
       this.container = document.createElement('div');
       this.container.style.width = '100%';
-      this.container.style.height = '100%';
+      this.container.style.height = 'calc(100% - 24px)';
+
+      // Hints bar with keyboard shortcuts
+      const isMac = /Macintosh|iPhone|iPad/.test(navigator.userAgent);
+      const mod = isMac ? '\u2318' : 'Ctrl';
+      const alt = isMac ? '\u2325' : 'Alt';
+      this.hintsBar = document.createElement('div');
+      this.hintsBar.style.cssText =
+        'height:18px;line-height:18px;font-size:11px;font-family:system-ui,sans-serif;' +
+        'padding:0 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;' +
+        'color:#999;background:#fafafa;border-top:1px solid #eee;';
+      this.hintsBar.textContent = `${mod}+Space autocomplete \u00B7 Shift+${alt}+F format \u00B7 ${mod}+. quick fix \u00B7 Hover over concepts for info`;
+
+      // Drag handle for vertical resizing (works cross-browser)
+      this.resizeHandle = document.createElement('div');
+      this.resizeHandle.style.cssText =
+        'height:6px;cursor:ns-resize;background:#e0e0e0;' +
+        'border-bottom-left-radius:3px;border-bottom-right-radius:3px;' +
+        'user-select:none;-webkit-user-select:none;';
+      this.setupResizeHandle(this.resizeHandle);
 
       // Default host element styles
       this.style.display = 'block';
       this.style.width = '100%';
       this.style.height = '300px';
-      this.style.overflow = 'hidden';
+      this.style.minHeight = '80px';
+      this.style.position = 'relative';
 
       this.appendChild(this.container);
+      this.appendChild(this.hintsBar);
+      this.appendChild(this.resizeHandle);
     }
 
     // Defer initialization to allow Monaco to load
@@ -140,6 +164,34 @@ export class EclEditorElement extends HTMLElement {
     });
   }
 
+  private setupResizeHandle(handle: HTMLDivElement): void {
+    let startY = 0;
+    let startHeight = 0;
+
+    const onMouseMove = (e: MouseEvent) => {
+      const newHeight = Math.max(80, startHeight + (e.clientY - startY));
+      this.style.height = newHeight + 'px';
+      this.editor?.layout();
+    };
+
+    const onMouseUp = () => {
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+
+    handle.addEventListener('mousedown', (e: MouseEvent) => {
+      e.preventDefault();
+      startY = e.clientY;
+      startHeight = this.offsetHeight;
+      document.body.style.cursor = 'ns-resize';
+      document.body.style.userSelect = 'none';
+      document.addEventListener('mousemove', onMouseMove);
+      document.addEventListener('mouseup', onMouseUp);
+    });
+  }
+
   private async initEditor(): Promise<void> {
     // Guard against rAF firing after element is disconnected
     if (!this.isConnected) return;
@@ -188,9 +240,11 @@ export class EclEditorElement extends HTMLElement {
       wordWrap: 'on',
       automaticLayout: true,
       scrollBeyondLastLine: false,
+      fixedOverflowWidgets: true,
       fontSize: 14,
       tabSize: 2,
       glyphMargin: true,
+      hover: { above: false },
       // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-explicit-any
       lightbulb: { enabled: 'on' as any },
     });
@@ -211,13 +265,26 @@ export class EclEditorElement extends HTMLElement {
   }
 
   private async resolveMonaco(): Promise<typeof import('monaco-editor') | null> {
-    // Check global
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const g: any = globalThis;
+
+    // Check global immediately
     // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return
     if (g.monaco) return g.monaco;
 
-    // Try dynamic import
+    // Poll for Monaco (e.g. loading async via AMD loader from CDN).
+    // Wait up to 30 seconds with increasing intervals.
+    const maxWait = 30_000;
+    const start = Date.now();
+    let delay = 50;
+    while (Date.now() - start < maxWait) {
+      await new Promise((resolve) => setTimeout(resolve, delay));
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return
+      if (g.monaco) return g.monaco;
+      delay = Math.min(delay * 1.5, 500);
+    }
+
+    // Last resort: try dynamic import (works in bundled ES module environments)
     try {
       const mod = await import('monaco-editor');
       return mod;

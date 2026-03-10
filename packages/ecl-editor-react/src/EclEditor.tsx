@@ -154,25 +154,51 @@ export function EclEditor({
     wordWrap: 'on',
     automaticLayout: true,
     scrollBeyondLastLine: false,
+    fixedOverflowWidgets: true,
     fontSize: 14,
     tabSize: 2,
     glyphMargin: true,
+    hover: { above: false },
     // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-explicit-any
     lightbulb: { enabled: 'on' as any },
     ...options,
   };
 
+  const isMac = typeof navigator !== 'undefined' && /Macintosh|iPhone|iPad/.test(navigator.userAgent);
+  const mod = isMac ? '\u2318' : 'Ctrl';
+  const alt = isMac ? '\u2325' : 'Alt';
+
   return (
-    <Editor
-      height={height}
-      width={width}
-      language={ECL_LANGUAGE_ID}
-      theme={theme}
-      value={value}
-      defaultValue={defaultValue}
-      onChange={handleChange}
-      onMount={handleMount}
-      options={mergedOptions}
-    />
+    <div style={{ width, height: 'auto' }}>
+      <Editor
+        height={height}
+        width="100%"
+        language={ECL_LANGUAGE_ID}
+        theme={theme}
+        value={value}
+        defaultValue={defaultValue}
+        onChange={handleChange}
+        onMount={handleMount}
+        options={mergedOptions}
+      />
+      <div
+        style={{
+          height: 18,
+          lineHeight: '18px',
+          fontSize: 11,
+          fontFamily: 'system-ui, sans-serif',
+          padding: '0 6px',
+          whiteSpace: 'nowrap',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          color: '#999',
+          background: '#fafafa',
+          borderTop: '1px solid #eee',
+        }}
+      >
+        {mod}+Space autocomplete &middot; Shift+{alt}+F format &middot; {mod}+. quick fix &middot; Hover over concepts
+        for info
+      </div>
+    </div>
   );
 }

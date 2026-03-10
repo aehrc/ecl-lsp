@@ -6,7 +6,7 @@ Thank you for your interest in contributing! This guide covers how to set up the
 
 ### Prerequisites
 
-- Node.js 18+
+- Node.js 20+
 - npm 7+ (for workspace support)
 - VSCode (for testing the VSCode extension)
 - IntelliJ IDEA Ultimate 2024.2+ (for IntelliJ plugin development)
@@ -170,6 +170,28 @@ npm test            # Verify nothing broke
 - ESLint with SonarJS rules
 - No explicit return types needed for test functions
 - Prefer pure functions where possible (formatter rules, error refinement, code lens builder)
+
+## Security
+
+### Before Committing
+
+The pre-commit hook automatically runs secret scanning. If it flags a false positive (e.g. a test fixture that looks like a token), commit with `git commit --no-verify` — but double-check first.
+
+### Guidelines
+
+- **Never commit credentials** — use environment variables. See `.env.example` files for the expected format.
+- **Validate external input** — all user-facing entry points (MCP tool parameters, LSP settings, FHIR responses) must validate input before processing.
+- **Use `encodeURIComponent`** for any user-provided values interpolated into URLs.
+- **Report vulnerabilities** responsibly via the process in [SECURITY.md](SECURITY.md).
+
+### CI Security Checks
+
+Every PR runs:
+
+- **npm audit** — known dependency vulnerabilities
+- **Trivy** — dependency scanning, secret detection, license compliance
+- **Semgrep** — static analysis (OWASP Top 10, security audit rules)
+- **ESLint + SonarJS** — code quality and security patterns
 
 ## Reporting Issues
 

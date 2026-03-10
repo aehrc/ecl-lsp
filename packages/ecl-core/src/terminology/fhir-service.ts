@@ -243,7 +243,7 @@ export class FhirTerminologyService implements ITerminologyService {
     }
 
     try {
-      let url = `${this.baseUrl}/CodeSystem/$lookup?system=http://snomed.info/sct&code=${conceptId}`;
+      let url = `${this.baseUrl}/CodeSystem/$lookup?system=http://snomed.info/sct&code=${encodeURIComponent(conceptId)}`;
       if (this.snomedVersion) {
         url += `&version=${encodeURIComponent(this.snomedVersion)}`;
       }

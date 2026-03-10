@@ -42,7 +42,7 @@ const PERMUTATION_TABLE = [
  * @returns true if the check digit is valid, false otherwise
  */
 export function verhoeffCheck(num: string): boolean {
-  if (!num || !/^\d+$/.test(num)) {
+  if (typeof num !== 'string' || !num || !/^\d+$/.test(num)) {
     return false;
   }
 
@@ -68,8 +68,8 @@ export function verhoeffCheck(num: string): boolean {
  * @returns true if the ID is a valid SNOMED CT identifier, false otherwise
  */
 export function isValidSnomedId(conceptId: string): boolean {
-  // Must be a string of digits only
-  if (!conceptId || !/^\d+$/.test(conceptId)) {
+  // Must be a string of digits only (type guard for runtime safety)
+  if (typeof conceptId !== 'string' || !conceptId || !/^\d+$/.test(conceptId)) {
     return false;
   }
 

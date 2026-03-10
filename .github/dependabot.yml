@@ -1,0 +1,49 @@
+version: 2
+
+updates:
+  # npm — root workspace covers all packages
+  - package-ecosystem: 'npm'
+    directory: '/'
+    schedule:
+      interval: 'weekly'
+    open-pull-requests-limit: 10
+    groups:
+      npm-minor-patch:
+        update-types:
+          - 'minor'
+          - 'patch'
+
+  # Gradle — IntelliJ plugin
+  - package-ecosystem: 'gradle'
+    directory: '/clients/intellij'
+    schedule:
+      interval: 'weekly'
+    open-pull-requests-limit: 10
+    groups:
+      gradle-minor-patch:
+        update-types:
+          - 'minor'
+          - 'patch'
+
+  # Maven — Eclipse plugin
+  - package-ecosystem: 'maven'
+    directory: '/clients/eclipse'
+    schedule:
+      interval: 'weekly'
+    open-pull-requests-limit: 10
+    groups:
+      maven-minor-patch:
+        update-types:
+          - 'minor'
+          - 'patch'
+
+  # GitHub Actions
+  - package-ecosystem: 'github-actions'
+    directory: '/'
+    schedule:
+      interval: 'weekly'
+    open-pull-requests-limit: 10
+    groups:
+      github-actions:
+        patterns:
+          - '*'

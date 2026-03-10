@@ -29,6 +29,12 @@ SECRET_PATTERNS=(
   'npm_[A-Za-z0-9]{36}'
   # Slack tokens
   'xox[bporas]-[0-9a-zA-Z-]+'
+  # Google API keys
+  'AIza[0-9A-Za-z_-]{35}'
+  # Google OAuth client secrets
+  'GOCSPX-[A-Za-z0-9_-]{28}'
+  # Azure/Microsoft tokens
+  'eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}'
   # Generic high-entropy secret assignments (key="...." or secret: "....")
   '(SECRET|PASSWORD|PASSWD|TOKEN|API_KEY|APIKEY|AUTH_TOKEN|ACCESS_KEY|PRIVATE_KEY)[_[:space:]]*[:=][[:space:]]*["\x27][^\x27"]{8,}'
   # Bearer tokens

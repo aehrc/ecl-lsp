@@ -99,6 +99,10 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # npm audit — check for known vulnerabilities in production dependencies
+      - name: npm audit
+        run: npm audit --omit=dev --audit-level=high
+
       # Dependency vulnerability scan (npm + Gradle lockfiles)
       - name: Trivy dependency scan
         uses: aquasecurity/trivy-action@master

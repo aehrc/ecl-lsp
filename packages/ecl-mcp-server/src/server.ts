@@ -38,6 +38,7 @@ function createTerminologyService(
   return new FhirTerminologyService({
     baseUrl: fhirServer ?? config.fhirServer,
     timeout: timeout ?? config.fhirTimeout,
+    userAgent: mcpClientUserAgent,
     snomedVersion: snomedVersion ?? config.snomedVersion,
   });
 }
@@ -55,6 +56,16 @@ const server = new McpServer({
   name: 'ecl-mcp-server',
   version: '1.0.0',
 });
+
+let mcpClientUserAgent = 'ecl-mcp-server/1.0.0';
+
+server.server.oninitialized = () => {
+  const client = server.server.getClientVersion();
+  if (client?.name) {
+    const clientVersion = client.version ? `/${client.version}` : '';
+    mcpClientUserAgent = `ecl-mcp-server/1.0.0 (${client.name}${clientVersion})`;
+  }
+};
 
 // ── Tool: validate_ecl ──────────────────────────────────────────────────
 

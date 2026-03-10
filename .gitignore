@@ -30,6 +30,7 @@ coverage/
 # Secrets and credentials
 .env
 .env.*
+!.env.example
 .npmrc
 *.pem
 *.key

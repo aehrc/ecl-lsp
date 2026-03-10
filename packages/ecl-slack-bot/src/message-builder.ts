@@ -17,17 +17,13 @@ export function buildMessage(result: ProcessResult): string {
 
   // Errors
   if (result.errors.length > 0) {
-    const lines = result.errors.map(
-      (e) => `\u2022 Line ${e.line}:${e.column} \u2014 ${e.message}`,
-    );
+    const lines = result.errors.map((e) => `\u2022 Line ${e.line}:${e.column} \u2014 ${e.message}`);
     sections.push(`:red_circle: *Errors*\n${lines.join('\n')}`);
   }
 
   // Warnings
   if (result.warnings.length > 0) {
-    const lines = result.warnings.map(
-      (w) => `\u2022 ${w.message}`,
-    );
+    const lines = result.warnings.map((w) => `\u2022 ${w.message}`);
     sections.push(`:warning: *Warnings*\n${lines.join('\n')}`);
   }
 

@@ -47,7 +47,15 @@ describe('buildMessage', () => {
     const result: ProcessResult = {
       formatted: '< 399144008 |Bronze diabetes|',
       errors: [],
-      warnings: [{ line: 1, column: 3, endColumn: 12, message: '399144008 |Bronze diabetes| — Inactive concept', severity: 'warning' }],
+      warnings: [
+        {
+          line: 1,
+          column: 3,
+          endColumn: 12,
+          message: '399144008 |Bronze diabetes| — Inactive concept',
+          severity: 'warning',
+        },
+      ],
       edition: 'Server default',
     };
     const msg = buildMessage(result);

@@ -110,7 +110,12 @@ describe('processEcl', () => {
       validateConcepts: async (ids: string[]) => {
         const map = new Map<string, ConceptInfo | null>();
         if (ids.includes('404684003')) {
-          map.set('404684003', { id: '404684003', fsn: 'Clinical finding (finding)', pt: 'Clinical finding', active: true });
+          map.set('404684003', {
+            id: '404684003',
+            fsn: 'Clinical finding (finding)',
+            pt: 'Clinical finding',
+            active: true,
+          });
         }
         return map;
       },
@@ -123,7 +128,12 @@ describe('processEcl', () => {
     const service = createMockService({
       validateConcepts: async () => {
         const map = new Map<string, ConceptInfo | null>();
-        map.set('399144008', { id: '399144008', fsn: 'Bronze diabetes (disorder)', pt: 'Bronze diabetes', active: false });
+        map.set('399144008', {
+          id: '399144008',
+          fsn: 'Bronze diabetes (disorder)',
+          pt: 'Bronze diabetes',
+          active: false,
+        });
         return map;
       },
     });
@@ -133,7 +143,9 @@ describe('processEcl', () => {
 
   it('should degrade gracefully when FHIR is unavailable', async () => {
     const service = createMockService({
-      validateConcepts: async () => { throw new Error('Connection refused'); },
+      validateConcepts: async () => {
+        throw new Error('Connection refused');
+      },
     });
     const result = await processEcl('< 404684003', service);
     // Still formats successfully
@@ -162,7 +174,9 @@ describe('processEcl', () => {
 
   it('should not evaluate when there are syntax errors', async () => {
     const service = createMockService({
-      evaluateEcl: async () => { throw new Error('should not be called'); },
+      evaluateEcl: async () => {
+        throw new Error('should not be called');
+      },
     });
     const result = await processEcl('< 404684003 AND AND', service, { evaluate: true });
     assert.ok(result.errors.length > 0);

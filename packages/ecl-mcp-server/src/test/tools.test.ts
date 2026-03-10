@@ -493,7 +493,7 @@ describe('list_snomed_editions tool logic', () => {
 
   it('should format editions response as expected by tool', () => {
     // Simulate the response format the tool produces
-    const snomedBase = 'http://snomed.info/sct'; // eslint-disable-line sonarjs/no-clear-text-protocols -- FHIR system URI, not a network URL
+    const snomedBase = 'http://snomed.info/sct';
     const mockEditions = [
       {
         moduleId: '900000000000207008',

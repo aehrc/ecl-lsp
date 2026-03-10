@@ -1,0 +1,43 @@
+# Dependencies (rebuilt in container)
+node_modules/
+packages/*/node_modules/
+
+# Build outputs (rebuilt in container)
+packages/*/dist/
+dist/
+
+# IDE and OS
+.vscode/
+.idea/
+.DS_Store
+
+# Git
+.git/
+.github/
+.githooks/
+
+# Tests and docs
+**/test/
+**/e2e/
+docs/
+examples/
+coverage/
+test-results/
+
+# Clients (not needed for slack bot)
+clients/
+
+# Other packages not needed
+packages/ecl-lsp-server/
+packages/ecl-mcp-server/
+packages/ecl-editor/
+packages/ecl-editor-core/
+packages/ecl-editor-react/
+
+# Misc
+*.vsix
+*.tsbuildinfo
+*.log
+.env
+.env.*
+!.env.example

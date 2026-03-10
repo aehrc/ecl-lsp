@@ -94,14 +94,18 @@ describe('EclEditor', () => {
   it('should apply width prop', () => {
     render(<EclEditor width="80%" />);
     const editor = screen.getByTestId('monaco-editor');
-    expect(editor.style.width).toBe('80%');
+    // Width is applied to the outer wrapper div, not the inner Editor (which is always 100%)
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    expect(editor.parentElement!.style.width).toBe('80%');
   });
 
   it('should use default height and width', () => {
     render(<EclEditor />);
     const editor = screen.getByTestId('monaco-editor');
     expect(editor.style.height).toBe('300px');
-    expect(editor.style.width).toBe('100%');
+    // Width is on the outer wrapper div
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    expect(editor.parentElement!.style.width).toBe('100%');
   });
 
   it('should apply theme prop', () => {

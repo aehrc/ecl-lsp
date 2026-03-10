@@ -3,7 +3,8 @@
 
 import { describe, it } from 'node:test';
 import * as assert from 'node:assert';
-import { parseInput } from '../ecl-processor';
+import { parseInput, processEcl } from '../ecl-processor';
+import type { ITerminologyService, ConceptInfo, EvaluationResponse } from 'ecl-core';
 
 describe('parseInput', () => {
   it('should extract bare ECL with no flags', () => {
@@ -60,5 +61,47 @@ describe('parseInput', () => {
   it('should return error when --edition has no value', () => {
     const result = parseInput('--edition');
     assert.strictEqual(result.error, '--edition requires a value (e.g. --edition au)');
+  });
+});
+
+// ── Mock terminology service ────────────────────────────────────────────
+
+function createMockService(overrides?: Partial<ITerminologyService>): ITerminologyService {
+  return {
+    getConceptInfo: async () => null,
+    validateConcepts: async () => new Map(),
+    searchConcepts: async () => ({ results: [], hasMore: false }),
+    evaluateEcl: async (): Promise<EvaluationResponse> => ({ total: 0, concepts: [], truncated: false }),
+    ...overrides,
+  };
+}
+
+describe('processEcl', () => {
+  it('should format valid ECL and return no errors', async () => {
+    const service = createMockService();
+    const result = await processEcl('< 404684003', service);
+    assert.strictEqual(result.errors.length, 0);
+    assert.ok(result.formatted.includes('404684003'));
+  });
+
+  it('should return syntax errors for invalid ECL', async () => {
+    const service = createMockService();
+    const result = await processEcl('< 404684003 AND AND < 19829001', service);
+    assert.ok(result.errors.length > 0);
+    assert.strictEqual(result.errors[0].severity, 'error');
+  });
+
+  it('should format multi-line ECL', async () => {
+    const service = createMockService();
+    const result = await processEcl('< 404684003\n  AND < 19829001', service);
+    assert.strictEqual(result.errors.length, 0);
+    assert.ok(result.formatted.includes('404684003'));
+    assert.ok(result.formatted.includes('19829001'));
+  });
+
+  it('should include default edition label', async () => {
+    const service = createMockService();
+    const result = await processEcl('< 404684003', service);
+    assert.strictEqual(result.edition, 'Server default');
   });
 });

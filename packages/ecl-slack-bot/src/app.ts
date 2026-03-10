@@ -21,6 +21,8 @@ const app = new App({
   socketMode: true,
 });
 
+let slackTeamName = 'unknown';
+
 // ── Helpers ──────────────────────────────────────────────────────────────
 
 /** Slack HTML-encodes angle brackets in event text (but not slash command text). */
@@ -65,7 +67,7 @@ async function handleEcl(raw: string): Promise<{ text: string; isHelp: boolean; 
   const terminologyService = new FhirTerminologyService({
     baseUrl: config.fhirServerUrl,
     timeout: 10_000, // 10s timeout — bot users expect a few seconds of latency
-    userAgent: 'ecl-slack-bot/1.0.0',
+    userAgent: `ecl-slack-bot/1.0.0 (team:${slackTeamName})`,
     snomedVersion: snomedEdition,
   });
 
@@ -141,6 +143,19 @@ app.message(async ({ message, say }) => {
 // ── Start ───────────────────────────────────────────────────────────────
 
 void (async () => {
-  await app.start();
-  console.log('ECL Slack Bot is running');
+  try {
+    await app.start();
+    // Capture workspace name for User-Agent
+    try {
+      const authResult = await app.client.auth.test();
+      slackTeamName = authResult.team ?? 'unknown';
+      console.log(`[ECL] Connected to workspace: ${slackTeamName}`);
+    } catch {
+      console.warn('[ECL] Could not retrieve workspace name from auth.test');
+    }
+    console.log('[ECL] ECL Slack Bot is running');
+  } catch (error) {
+    console.error('Failed to start:', error);
+    process.exit(1);
+  }
 })();

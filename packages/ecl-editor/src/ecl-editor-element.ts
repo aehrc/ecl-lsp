@@ -51,16 +51,18 @@ export class EclEditorElement extends HTMLElement {
       this.hintsBar = document.createElement('div');
       this.hintsBar.style.cssText =
         'height:18px;line-height:18px;font-size:11px;font-family:system-ui,sans-serif;' +
-        'padding:0 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;' +
-        'color:#999;background:#fafafa;border-top:1px solid #eee;';
+        'padding:0 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
       this.hintsBar.textContent = `${mod}+Space autocomplete \u00B7 Shift+${alt}+F format \u00B7 ${mod}+. quick fix \u00B7 Hover over concepts for info`;
 
       // Drag handle for vertical resizing (works cross-browser)
       this.resizeHandle = document.createElement('div');
       this.resizeHandle.style.cssText =
-        'height:6px;cursor:ns-resize;background:#e0e0e0;' +
+        'height:6px;cursor:ns-resize;' +
         'border-bottom-left-radius:3px;border-bottom-right-radius:3px;' +
         'user-select:none;-webkit-user-select:none;';
+
+      // Apply theme-appropriate colors
+      this.applyThemeColors(this.getAttribute('theme'));
       this.setupResizeHandle(this.resizeHandle);
 
       // Default host element styles
@@ -94,6 +96,7 @@ export class EclEditorElement extends HTMLElement {
       }
     } else if (name === 'theme' && this.monacoInstance && newValue) {
       this.monacoInstance.editor.setTheme(newValue);
+      this.applyThemeColors(newValue);
     } else if (name === 'read-only' && this.editor) {
       this.editor.updateOptions({ readOnly: newValue !== null && newValue !== 'false' });
     } else if (name === 'height') {
@@ -162,6 +165,18 @@ export class EclEditorElement extends HTMLElement {
         source: m.source ?? undefined,
       };
     });
+  }
+
+  private applyThemeColors(theme: string | null): void {
+    const isDark = theme?.includes('dark') ?? false;
+    if (this.hintsBar) {
+      this.hintsBar.style.color = isDark ? '#858585' : '#999';
+      this.hintsBar.style.background = isDark ? '#1e1e1e' : '#fafafa';
+      this.hintsBar.style.borderTop = isDark ? '1px solid #333' : '1px solid #eee';
+    }
+    if (this.resizeHandle) {
+      this.resizeHandle.style.background = isDark ? '#333' : '#e0e0e0';
+    }
   }
 
   private setupResizeHandle(handle: HTMLDivElement): void {

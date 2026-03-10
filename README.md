@@ -8,6 +8,20 @@
 
 IDE support for **SNOMED CT Expression Constraint Language (ECL) 2.2** — parsing, validation, completion, formatting, refactoring, and terminology integration across 7 editors and the browser.
 
+## Screenshots
+
+| Syntax Highlighting                                         | Error Diagnostics                                       |
+| ----------------------------------------------------------- | ------------------------------------------------------- |
+| ![Syntax Highlighting](docs/images/syntax-highlighting.png) | ![Error Diagnostics](docs/images/error-diagnostics.png) |
+
+| Autocompletion                                    | Hover Information                                |
+| ------------------------------------------------- | ------------------------------------------------ |
+| ![Autocompletion](docs/images/autocompletion.png) | ![Hover Information](docs/images/hover-info.png) |
+
+| Dark Theme                                |
+| ----------------------------------------- |
+| ![Dark Theme](docs/images/dark-theme.png) |
+
 ## What is ECL?
 
 Expression Constraint Language (ECL) is the standard query language for [SNOMED CT](https://www.snomed.org/), the world's most comprehensive clinical terminology. ECL expressions define sets of clinical concepts — for use in value sets, clinical decision support, analytics, and data validation. See the [ECL Specification](https://confluence.ihtsdotools.org/display/DOCECL).

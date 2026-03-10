@@ -234,9 +234,9 @@ describe('EclEditorElement', () => {
       document.body.appendChild(el);
       const secondContainer = el.querySelector('div');
 
-      // Should be the same container, not a duplicate
+      // Should be the same container, not a duplicate (3 divs: container + hintsBar + resizeHandle)
       expect(secondContainer).toBe(firstContainer);
-      expect(el.querySelectorAll('div').length).toBe(1);
+      expect(el.querySelectorAll('div').length).toBe(3);
     });
   });
 

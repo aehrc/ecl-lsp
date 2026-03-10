@@ -167,6 +167,7 @@ export function EclEditor({
   const isMac = typeof navigator !== 'undefined' && /Macintosh|iPhone|iPad/.test(navigator.userAgent);
   const mod = isMac ? '\u2318' : 'Ctrl';
   const alt = isMac ? '\u2325' : 'Alt';
+  const isDark = theme.includes('dark');
 
   return (
     <div style={{ width, height: 'auto' }}>
@@ -191,9 +192,9 @@ export function EclEditor({
           whiteSpace: 'nowrap',
           overflow: 'hidden',
           textOverflow: 'ellipsis',
-          color: '#999',
-          background: '#fafafa',
-          borderTop: '1px solid #eee',
+          color: isDark ? '#858585' : '#999',
+          background: isDark ? '#1e1e1e' : '#fafafa',
+          borderTop: isDark ? '1px solid #333' : '1px solid #eee',
         }}
       >
         {mod}+Space autocomplete &middot; Shift+{alt}+F format &middot; {mod}+. quick fix &middot; Hover over concepts

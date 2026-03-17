@@ -9,7 +9,7 @@ plugins {
 group = providers.gradleProperty("pluginGroup").get()
 version = providers.gradleProperty("pluginVersion").get()
 
-val junitJupiterVersion = "5.11.4"
+val junitJupiterVersion = "6.0.3"
 val opentest4jVersion = "1.3.0"
 val junitLegacyVersion = "4.13.2"
 

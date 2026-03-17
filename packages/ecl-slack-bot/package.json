@@ -24,7 +24,7 @@
   "dependencies": {
     "ecl-core": "file:../ecl-core",
     "@slack/bolt": "^4.3.0",
-    "dotenv": "^16.4.7"
+    "dotenv": "^17.3.1"
   },
   "devDependencies": {
     "typescript": "^5.3.3",

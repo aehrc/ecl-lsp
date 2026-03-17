@@ -64,7 +64,7 @@
     "@types/react-dom": "^19.1.5",
     "@vitejs/plugin-react": "^4.5.2",
     "jsdom": "^26.1.0",
-    "monaco-editor": "^0.52.2",
+    "monaco-editor": "^0.55.1",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "storybook": "^9.0.4",

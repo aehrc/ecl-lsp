@@ -51,7 +51,7 @@
     "@playwright/test": "^1.58.2",
     "@storybook/web-components-vite": "^9.0.4",
     "lit": "^3.3.0",
-    "monaco-editor": "^0.52.2",
+    "monaco-editor": "^0.55.1",
     "storybook": "^9.0.4",
     "typescript": "^5.3.3",
     "vite": "^6.3.5",

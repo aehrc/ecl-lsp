@@ -66,15 +66,15 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "eslint": "^10.0.2",
+    "eslint": "^10.0.3",
     "eslint-config-prettier": "^10.1.8",
-    "eslint-plugin-sonarjs": "^4.0.0",
+    "eslint-plugin-sonarjs": "^4.0.2",
     "eslint-plugin-unicorn": "^63.0.0",
     "generate-license-file": "^4.1.1",
     "globals": "^17.3.0",
     "prettier": "^3.8.1",
-    "sonarqube-scanner": "^4.3.4",
-    "typescript-eslint": "^8.56.0"
+    "sonarqube-scanner": "^4.3.5",
+    "typescript-eslint": "^8.57.1"
   },
   "overrides": {
     "axios": "^1.13.5",

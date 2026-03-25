@@ -170,7 +170,7 @@ function collectFiltersFromEntry(entry: unknown, text: string, out: StringLocati
   if (!isObject(entry)) return;
   for (const filter of asArray(entry.filter)) {
     if (!isEclFilter(filter)) continue;
-    const searchFrom = out.length > 0 ? out.at(-1)!.end : 0;
+    const searchFrom = out.length > 0 ? (out.at(-1)?.end ?? 0) : 0;
     const loc = findStringValueInText(text, 'value', filter.value, searchFrom);
     if (loc) out.push(loc);
   }
@@ -181,7 +181,7 @@ function collectExpansionParameterLocations(root: Record<string, unknown>, text:
   if (!expansion) return;
   for (const param of asArray(expansion.parameter)) {
     if (!isEclParameter(param)) continue;
-    const searchFrom = out.length > 0 ? out.at(-1)!.end : 0;
+    const searchFrom = out.length > 0 ? (out.at(-1)?.end ?? 0) : 0;
     const loc = findStringValueInText(text, 'valueString', param.valueString, searchFrom);
     if (loc) out.push(loc);
   }

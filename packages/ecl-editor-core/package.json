@@ -1,0 +1,58 @@
+{
+  "name": "@aehrc/ecl-editor-core",
+  "version": "1.0.0",
+  "license": "Apache-2.0",
+  "author": "Commonwealth Scientific and Industrial Research Organisation (CSIRO)",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/aehrc/ecl-lsp.git",
+    "directory": "packages/ecl-editor-core"
+  },
+  "homepage": "https://github.com/aehrc/ecl-lsp/tree/main/packages/ecl-editor-core#readme",
+  "bugs": {
+    "url": "https://github.com/aehrc/ecl-lsp/issues"
+  },
+  "description": "Headless ECL editor integration for Monaco and CodeMirror",
+  "type": "module",
+  "main": "dist/index.cjs",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist/**",
+    "LICENSE"
+  ],
+  "scripts": {
+    "prepack": "node -e \"require('fs').copyFileSync('../../LICENSE','LICENSE')\"",
+    "build": "vite build",
+    "compile": "vite build",
+    "dev": "vite build --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@aehrc/ecl-core": "file:../ecl-core"
+  },
+  "peerDependencies": {
+    "monaco-editor": ">=0.40.0"
+  },
+  "peerDependenciesMeta": {
+    "monaco-editor": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "monaco-editor": "^0.52.2",
+    "typescript": "^5.3.3",
+    "vite": "^6.3.5",
+    "vite-plugin-dts": "^4.5.4",
+    "vitest": "^3.2.1"
+  }
+}

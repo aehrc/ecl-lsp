@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feature
+      id="au.csiro.ecl.eclipse.feature"
+      label="ECL Language Support"
+      version="1.0.0.qualifier"
+      provider-name="CSIRO Australian e-Health Research Centre">
+
+   <description>
+      SNOMED CT Expression Constraint Language (ECL) support for Eclipse IDE
+      with syntax highlighting, code completion, diagnostics, formatting,
+      code actions, hover documentation, and semantic validation.
+   </description>
+
+   <license url="https://www.apache.org/licenses/LICENSE-2.0">
+      Apache License, Version 2.0
+   </license>
+
+   <requires>
+      <import plugin="org.eclipse.lsp4e" version="0.18.0" match="greaterOrEqual"/>
+      <import plugin="org.eclipse.tm4e.registry" version="0.9.0" match="greaterOrEqual"/>
+      <import plugin="org.eclipse.tm4e.languageconfiguration" version="0.9.0" match="greaterOrEqual"/>
+   </requires>
+
+   <plugin
+         id="au.csiro.ecl.eclipse"
+         download-size="0"
+         install-size="0"
+         version="0.0.0"
+         unpack="true"/>
+</feature>

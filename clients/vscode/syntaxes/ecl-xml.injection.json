@@ -1,0 +1,17 @@
+{
+  "fileTypes": [],
+  "injectionSelector": "L:text.xml",
+  "scopeName": "ecl.injection.xml",
+  "patterns": [
+    {
+      "comment": "Coarse match: XML attribute values that look like ECL. Structural precision is handled by the virtual document layer.",
+      "match": "value=\"((?:[<>^!]|\\d{6,18}|\\b(?:AND|OR|MINUS|NOT)\\b)[^\"]*)\"",
+      "captures": {
+        "1": {
+          "name": "meta.embedded.ecl",
+          "patterns": [{ "include": "source.ecl" }]
+        }
+      }
+    }
+  ]
+}

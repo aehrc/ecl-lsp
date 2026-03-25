@@ -1,0 +1,120 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- ─── Embedded ECL in FHIR XML ──────────────────────────────────────────────
+     Try: hover over concept IDs, Ctrl+Space for completions inside value="..."
+     attributes, and check for red squiggles on error expressions.
+
+     Note: ECL operators < and > are XML-encoded as &lt; and &gt; in attribute
+     values. The extension decodes these automatically with precise position
+     mapping, so hover and completions work at the correct character positions.
+-->
+<ValueSet xmlns="http://hl7.org/fhir">
+  <id value="embedded-ecl-xml-test"/>
+  <url value="http://example.org/fhir/ValueSet/embedded-ecl-xml-test"/>
+  <name value="EmbeddedEclXmlTest"/>
+  <title value="Embedded ECL XML Test"/>
+  <status value="active"/>
+
+  <compose>
+    <!-- VALID: property=constraint triggers ECL injection -->
+    <include>
+      <system value="http://snomed.info/sct"/>
+      <filter>
+        <property value="constraint"/>
+        <op value="="/>
+        <value value="&lt;&lt; 404684003 |Clinical finding|"/>
+      </filter>
+    </include>
+
+    <!-- VALID: property=expression triggers ECL injection -->
+    <include>
+      <system value="http://snomed.info/sct"/>
+      <filter>
+        <property value="expression"/>
+        <op value="="/>
+        <value value="&lt;&lt; 71388002 |Procedure|"/>
+      </filter>
+    </include>
+
+    <!-- VALID: refined expression with attribute -->
+    <include>
+      <system value="http://snomed.info/sct"/>
+      <filter>
+        <property value="constraint"/>
+        <op value="="/>
+        <value value="&lt;&lt; 404684003 : 363698007 = &lt;&lt; 39057004"/>
+      </filter>
+    </include>
+
+    <!-- NOT ECL: property=concept does NOT trigger injection -->
+    <include>
+      <system value="http://snomed.info/sct"/>
+      <filter>
+        <property value="concept"/>
+        <op value="is-a"/>
+        <value value="404684003"/>
+      </filter>
+    </include>
+
+    <!-- VALID: member-of refset -->
+    <include>
+      <system value="http://snomed.info/sct"/>
+      <filter>
+        <property value="constraint"/>
+        <op value="="/>
+        <value value="^ 816080008 |International Patient Summary|"/>
+      </filter>
+    </include>
+
+    <!-- VALID: compound expression OR -->
+    <include>
+      <system value="http://snomed.info/sct"/>
+      <filter>
+        <property value="constraint"/>
+        <op value="="/>
+        <value value="&lt;&lt; 404684003 OR &lt;&lt; 71388002"/>
+      </filter>
+    </include>
+
+    <!-- ERROR: duplicate operator — should show diagnostic -->
+    <include>
+      <system value="http://snomed.info/sct"/>
+      <filter>
+        <property value="constraint"/>
+        <op value="="/>
+        <value value="&lt;&lt; AND &lt;&lt; 404684003"/>
+      </filter>
+    </include>
+
+    <!-- VALID: exclude filter -->
+    <exclude>
+      <system value="http://snomed.info/sct"/>
+      <filter>
+        <property value="constraint"/>
+        <op value="="/>
+        <value value="&lt;&lt; 64572001 |Disease|"/>
+      </filter>
+    </exclude>
+  </compose>
+
+  <expansion>
+    <timestamp value="2024-01-01T00:00:00Z"/>
+
+    <!-- VALID: name=used-ecl triggers ECL injection -->
+    <parameter>
+      <name value="used-ecl"/>
+      <valueString value="&lt;&lt; 404684003 |Clinical finding|"/>
+    </parameter>
+
+    <!-- VALID: name=ecl triggers ECL injection -->
+    <parameter>
+      <name value="ecl"/>
+      <valueString value="&lt;&lt; 71388002 |Procedure|"/>
+    </parameter>
+
+    <!-- NOT ECL: name=version does NOT trigger injection -->
+    <parameter>
+      <name value="version"/>
+      <valueString value="http://snomed.info/sct/900000000000207008/version/20240101"/>
+    </parameter>
+  </expansion>
+</ValueSet>

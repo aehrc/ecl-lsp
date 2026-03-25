@@ -1,0 +1,26 @@
+{
+  "fileTypes": [],
+  "injectionSelector": "L:source.java, L:source.ts, L:source.tsx",
+  "scopeName": "ecl.injection.comment-trigger",
+  "patterns": [
+    {
+      "comment": "Matches // ecl or /* ecl */ on a line, followed by a string literal on the next line. Captures the string content as ECL.",
+      "begin": "^(\\s*)(?://\\s*ecl\\s*|/\\*\\s*ecl\\s*\\*/)\\s*$\\n\\1.*?(?:\"([^\"]*)\"|'([^']*)'|`([^`]*)`)(?:;|\\s|$)",
+      "end": "(?<=[\";'`])",
+      "beginCaptures": {
+        "2": {
+          "name": "meta.embedded.ecl",
+          "patterns": [{ "include": "source.ecl" }]
+        },
+        "3": {
+          "name": "meta.embedded.ecl",
+          "patterns": [{ "include": "source.ecl" }]
+        },
+        "4": {
+          "name": "meta.embedded.ecl",
+          "patterns": [{ "include": "source.ecl" }]
+        }
+      }
+    }
+  ]
+}

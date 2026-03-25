@@ -1,0 +1,71 @@
+{
+  "resourceType": "ValueSet",
+  "id": "ecl-embedded-test",
+  "url": "http://example.org/fhir/ValueSet/ecl-embedded-test",
+  "name": "EclEmbeddedTest",
+  "title": "ECL Embedded Language Test",
+  "status": "active",
+  "compose": {
+    "include": [
+      {
+        "system": "http://snomed.info/sct",
+        "filter": [
+          {
+            "property": "constraint",
+            "op": "=",
+            "value": "<< 404684003 |Clinical finding|"
+          }
+        ]
+      },
+      {
+        "system": "http://snomed.info/sct",
+        "filter": [
+          {
+            "property": "expression",
+            "op": "=",
+            "value": "<< 71388002 |Procedure|"
+          }
+        ]
+      },
+      {
+        "system": "http://snomed.info/sct",
+        "filter": [
+          {
+            "property": "concept",
+            "op": "is-a",
+            "value": "404684003"
+          }
+        ]
+      }
+    ],
+    "exclude": [
+      {
+        "system": "http://snomed.info/sct",
+        "filter": [
+          {
+            "property": "constraint",
+            "op": "=",
+            "value": "<< 64572001 |Disease|"
+          }
+        ]
+      }
+    ]
+  },
+  "expansion": {
+    "timestamp": "2024-01-01T00:00:00Z",
+    "parameter": [
+      {
+        "name": "used-ecl",
+        "valueString": "<< 404684003 |Clinical finding|"
+      },
+      {
+        "name": "ecl",
+        "valueString": "<< 71388002 |Procedure|"
+      },
+      {
+        "name": "version",
+        "valueString": "http://snomed.info/sct|http://snomed.info/sct/900000000000207008/version/20240101"
+      }
+    ]
+  }
+}

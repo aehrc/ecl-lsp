@@ -1,0 +1,32 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "ecl-lsp-marketplace",
+  "description": "ECL Language Server plugin for Claude Code",
+  "owner": {
+    "name": "CSIRO",
+    "email": "support@csiro.au"
+  },
+  "plugins": [
+    {
+      "name": "ecl-lsp",
+      "description": "SNOMED CT Expression Constraint Language (ECL) language server — syntax validation, concept lookup, semantic analysis, and FHIR integration for .ecl files",
+      "version": "1.0.0",
+      "author": {
+        "name": "CSIRO",
+        "email": "support@csiro.au"
+      },
+      "source": "./plugins/ecl-lsp",
+      "category": "development",
+      "strict": false,
+      "lspServers": {
+        "ecl": {
+          "command": "ecl-lsp-server",
+          "args": ["--stdio"],
+          "extensionToLanguage": {
+            ".ecl": "ecl"
+          }
+        }
+      }
+    }
+  ]
+}

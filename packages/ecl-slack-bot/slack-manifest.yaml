@@ -1,0 +1,33 @@
+display_information:
+  name: ECL Bot
+  description: Formats, validates, and evaluates SNOMED CT Expression Constraint Language (ECL) expressions
+  background_color: '#2c3e50'
+
+features:
+  bot_user:
+    display_name: ECL Bot
+    always_online: true
+  slash_commands:
+    - command: /ecl
+      description: Process an ECL expression
+      usage_hint: '< 404684003 |Clinical finding|'
+      should_escape: false
+
+oauth_config:
+  scopes:
+    bot:
+      - chat:write
+      - commands
+      - app_mentions:read
+      - im:history
+
+settings:
+  event_subscriptions:
+    bot_events:
+      - app_mention
+      - message.im
+  interactivity:
+    is_enabled: false
+  org_deploy_enabled: false
+  socket_mode_enabled: true
+  token_rotation_enabled: false

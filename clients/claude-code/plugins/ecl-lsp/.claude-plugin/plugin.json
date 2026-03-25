@@ -1,0 +1,52 @@
+{
+  "name": "ecl-lsp",
+  "description": "SNOMED CT Expression Constraint Language (ECL) language server providing diagnostics, completion, hover, formatting, code actions, and FHIR terminology integration",
+  "version": "1.0.0",
+  "author": {
+    "name": "CSIRO Australian e-Health Research Centre",
+    "email": "ontoserver-support@csiro.au"
+  },
+  "homepage": "https://github.com/AuDigitalHealth/ecl-lsp",
+  "license": "Apache-2.0",
+  "keywords": ["snomed", "ecl", "fhir", "terminology", "healthcare"],
+  "category": "development",
+  "strict": false,
+  "lspServers": {
+    "ecl": {
+      "command": "ecl-lsp-server",
+      "args": ["--stdio"],
+      "extensionToLanguage": {
+        ".ecl": "ecl"
+      },
+      "settings": {
+        "ecl": {
+          "terminology": {
+            "serverUrl": "https://tx.ontoserver.csiro.au/fhir",
+            "timeout": 2000,
+            "snomedVersion": ""
+          },
+          "formatting": {
+            "indentSize": 2,
+            "indentStyle": "space",
+            "spaceAroundOperators": true,
+            "maxLineLength": 80,
+            "alignTerms": true,
+            "wrapComments": false,
+            "breakOnOperators": false,
+            "breakOnRefinementComma": false,
+            "breakAfterColon": false
+          },
+          "evaluation": {
+            "resultLimit": 200
+          },
+          "semanticValidation": {
+            "enabled": true
+          }
+        }
+      },
+      "startupTimeout": 10000,
+      "shutdownTimeout": 5000,
+      "maxRestarts": 3
+    }
+  }
+}

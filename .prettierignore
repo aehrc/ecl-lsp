@@ -1,0 +1,13 @@
+node_modules
+dist
+build
+server/src/parser/generated/
+clients/vscode/server/
+grammar/
+*.ecl
+*.g4
+*.interp
+*.tokens
+package-lock.json
+docs/
+**/dist-standalone/

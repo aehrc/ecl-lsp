@@ -1,0 +1,19 @@
+{
+  "fileTypes": [],
+  "injectionSelector": "L:source.fsh",
+  "scopeName": "ecl.injection.fsh",
+  "patterns": [
+    {
+      "begin": "where\\s+constraint\\s*=\\s*\"",
+      "end": "\"",
+      "beginCaptures": {
+        "0": { "name": "meta.ecl-injection.begin.fsh" }
+      },
+      "endCaptures": {
+        "0": { "name": "punctuation.definition.string.end.ecl-embedded" }
+      },
+      "contentName": "meta.embedded.ecl",
+      "patterns": [{ "include": "source.ecl" }]
+    }
+  ]
+}

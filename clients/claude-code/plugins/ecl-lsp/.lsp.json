@@ -1,0 +1,38 @@
+{
+  "ecl": {
+    "command": "ecl-lsp-server",
+    "args": ["--stdio"],
+    "extensionToLanguage": {
+      ".ecl": "ecl"
+    },
+    "settings": {
+      "ecl": {
+        "terminology": {
+          "serverUrl": "https://tx.ontoserver.csiro.au/fhir",
+          "timeout": 2000,
+          "snomedVersion": ""
+        },
+        "formatting": {
+          "indentSize": 2,
+          "indentStyle": "space",
+          "spaceAroundOperators": true,
+          "maxLineLength": 80,
+          "alignTerms": true,
+          "wrapComments": false,
+          "breakOnOperators": false,
+          "breakOnRefinementComma": false,
+          "breakAfterColon": false
+        },
+        "evaluation": {
+          "resultLimit": 200
+        },
+        "semanticValidation": {
+          "enabled": true
+        }
+      }
+    },
+    "startupTimeout": 10000,
+    "shutdownTimeout": 5000,
+    "maxRestarts": 3
+  }
+}

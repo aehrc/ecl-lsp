@@ -1,0 +1,17 @@
+{
+  "fileTypes": [],
+  "injectionSelector": "L:source.json",
+  "scopeName": "ecl.injection.json",
+  "patterns": [
+    {
+      "comment": "Coarse match: string values in JSON that look like ECL (contain SNOMED operators/concepts). Structural precision is handled by the virtual document layer.",
+      "match": "\"((?:[<>^!]|\\d{6,18}|\\b(?:AND|OR|MINUS|NOT)\\b)[^\"]*)\"",
+      "captures": {
+        "1": {
+          "name": "meta.embedded.ecl",
+          "patterns": [{ "include": "source.ecl" }]
+        }
+      }
+    }
+  ]
+}

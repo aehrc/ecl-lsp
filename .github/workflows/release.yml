@@ -1,0 +1,144 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: temurin
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Compile
+        run: npm run compile
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm test
+
+      - name: Check third-party licenses
+        run: npm run licenses:check
+
+      # -- Extract version from tag --
+      - name: Extract version
+        id: version
+        run: |
+          TAG="${GITHUB_REF#refs/tags/v}"
+          echo "version=$TAG" >> "$GITHUB_OUTPUT"
+
+      # -- npm packages --
+      # Publish npm packages via GitHub OIDC (no NPM_TOKEN needed).
+      # Requires: npm org linked to GitHub repo in npmjs.com settings.
+      # Uses --provenance for supply chain attestation.
+      # Continues on error so a single failed publish doesn't block the release.
+      - name: Publish ecl-core to npm
+        working-directory: packages/ecl-core
+        run: npm publish --access public --provenance
+        continue-on-error: true
+
+      - name: Publish ecl-lsp-server to npm
+        working-directory: packages/ecl-lsp-server
+        run: npm publish --access public --provenance
+        continue-on-error: true
+
+      - name: Publish ecl-editor-core to npm
+        working-directory: packages/ecl-editor-core
+        run: npm publish --access public --provenance
+        continue-on-error: true
+
+      - name: Publish ecl-editor-react to npm
+        working-directory: packages/ecl-editor-react
+        run: npm publish --access public --provenance
+        continue-on-error: true
+
+      - name: Publish ecl-editor to npm
+        working-directory: packages/ecl-editor
+        run: npm publish --access public --provenance
+        continue-on-error: true
+
+      # -- npm package tarballs (for release assets) --
+      - name: Pack npm packages
+        run: |
+          mkdir -p release-artifacts
+          for pkg in ecl-core ecl-lsp-server ecl-editor-core ecl-editor-react ecl-editor; do
+            (cd packages/$pkg && npm pack --pack-destination ../../release-artifacts/)
+          done
+
+      # -- VSCode extension --
+      - name: Build VSCode VSIX
+        working-directory: clients/vscode
+        run: npm run build:vsix
+
+      # -- IntelliJ plugin --
+      - name: Build IntelliJ plugin
+        working-directory: clients/intellij
+        run: ./gradlew buildPlugin
+
+      # -- Eclipse update site --
+      - name: Build Eclipse update site
+        working-directory: clients/eclipse
+        run: xvfb-run mvn clean verify -DskipTests
+
+      # -- Slack bot Docker image --
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Azure Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ontoserver.azurecr.io
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      - name: Build and push Slack bot Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: packages/ecl-slack-bot/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ontoserver.azurecr.io/ecl-slack-bot:${{ steps.version.outputs.version }}
+            ontoserver.azurecr.io/ecl-slack-bot:latest
+
+      # -- Collect all release artifacts --
+      - name: Collect release artifacts
+        run: |
+          cp clients/vscode/*.vsix release-artifacts/
+          cp clients/intellij/build/distributions/*.zip release-artifacts/
+          cp clients/eclipse/au.csiro.ecl.eclipse.updatesite/target/*.zip release-artifacts/ || true
+
+      # -- GitHub Release with all downloadable assets --
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: release-artifacts/*

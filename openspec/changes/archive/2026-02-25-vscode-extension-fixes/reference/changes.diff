@@ -1,0 +1,101 @@
+diff --git a/clients/vscode/package.json b/clients/vscode/package.json
+index 7499037..971d8d3 100644
+--- a/clients/vscode/package.json
++++ b/clients/vscode/package.json
+@@ -11,8 +11,7 @@
+     "Programming Languages"
+   ],
+   "activationEvents": [
+-    "onLanguage:ecl",
+-    "*"
++    "onLanguage:ecl"
+   ],
+   "main": "./dist/extension.js",
+   "contributes": {
+@@ -34,7 +33,7 @@
+       {
+         "language": "ecl",
+         "scopeName": "source.ecl",
+-        "path": "../../shared/syntaxes/ecl.tmLanguage.json"
++        "path": "./syntaxes/ecl.tmLanguage.json"
+       }
+     ],
+     "snippets": [
+diff --git a/clients/vscode/src/extension.ts b/clients/vscode/src/extension.ts
+index 84a4c8f..c63386b 100644
+--- a/clients/vscode/src/extension.ts
++++ b/clients/vscode/src/extension.ts
+@@ -82,8 +82,10 @@ export function activate(context: ExtensionContext) {
+     }),
+   );
+ 
+-  // Server module path
+-  const serverModule = context.asAbsolutePath(path.join('..', '..', 'server', 'dist', 'server.js'));
++  // Server module path — try bundled location first (VSIX), then monorepo location
++  const bundledServer = context.asAbsolutePath(path.join('server', 'dist', 'server.js'));
++  const monorepoServer = context.asAbsolutePath(path.join('..', '..', 'server', 'dist', 'server.js'));
++  const serverModule = fs.existsSync(bundledServer) ? bundledServer : monorepoServer;
+ 
+   console.log('Server module path:', serverModule);
+ 
+@@ -120,6 +122,26 @@ export function activate(context: ExtensionContext) {
+ 
+   console.log('Starting language client...');
+ 
++  // Register commands BEFORE client.start() — the server advertises ecl.evaluateExpression
++  // in executeCommandProvider (for IntelliJ), and vscode-languageclient auto-registers
++  // server-side commands, so registering here first prevents the "already exists" error.
++  const searchCommand = commands.registerCommand('ecl.searchConcept', () => {
++    searchAndInsertConcept(client);
++  });
++
++  const evaluateCommand = commands.registerCommand(
++    'ecl.evaluateExpression',
++    async (startLine?: number, endLine?: number, expression?: string) => {
++      await evaluateExpression(client, startLine, expression);
++    },
++  );
++
++  const editionCommand = commands.registerCommand('ecl.selectSnomedEdition', () => {
++    void selectSnomedEdition(client);
++  });
++
++  context.subscriptions.push(searchCommand, evaluateCommand, editionCommand);
++
+   // Add error handlers
+   client.onDidChangeState((event) => {
+     console.log('Client state changed:', event);
+@@ -131,24 +153,6 @@ export function activate(context: ExtensionContext) {
+       console.log('Language client started successfully');
+       console.log('Client state:', client.state);
+ 
+-      // Register concept search command
+-      const searchCommand = commands.registerCommand('ecl.searchConcept', () => {
+-        searchAndInsertConcept(client);
+-      });
+-
+-      // Register evaluation command (called from Code Lens or Command Palette)
+-      const evaluateCommand = commands.registerCommand(
+-        'ecl.evaluateExpression',
+-        async (startLine?: number, endLine?: number, expression?: string) => {
+-          await evaluateExpression(client, startLine, expression);
+-        },
+-      );
+-
+-      // Register SNOMED edition picker command
+-      const editionCommand = commands.registerCommand('ecl.selectSnomedEdition', () => {
+-        void selectSnomedEdition(client);
+-      });
+-
+       // Listen for resolved version notifications from server
+       client.onNotification('ecl/resolvedSnomedVersion', (params: { versionUri: string }) => {
+         const setting = workspace.getConfiguration('ecl.terminology').get<string>('snomedVersion', '');
+@@ -158,8 +162,6 @@ export function activate(context: ExtensionContext) {
+           updateStatusBar();
+         }
+       });
+-
+-      context.subscriptions.push(searchCommand, evaluateCommand, editionCommand);
+     })
+     .catch((error: unknown) => {
+       console.error('Failed to start language client:', error);

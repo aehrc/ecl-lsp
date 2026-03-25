@@ -1,0 +1,10 @@
+.vscode/**
+src/**
+scripts/**
+node_modules/**
+tsconfig.json
+tsconfig.tsbuildinfo
+**/*.ts
+**/*.map
+dist/test/**
+icon-source.png

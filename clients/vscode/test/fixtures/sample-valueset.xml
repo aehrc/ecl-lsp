@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Sample FHIR ValueSet XML demonstrating embedded ECL support.
+
+     Both syntax highlighting (Layer 1) and full LSP features (Layer 2)
+     are active within the ECL expressions in value="..." attributes below:
+
+       - Completions: Place cursor inside a value attribute and trigger (Ctrl+Space)
+       - Diagnostics: Syntax errors in ECL expressions show as red squiggles
+       - Hover: Hover over ECL operators or concept IDs for documentation
+
+     Only filter elements where property/@value is "constraint" or "expression"
+     are treated as ECL, and only parameter elements where name/@value is
+     "used-ecl" or "ecl". -->
+<ValueSet xmlns="http://hl7.org/fhir">
+  <id value="ecl-embedded-xml-test"/>
+  <url value="http://example.org/fhir/ValueSet/ecl-embedded-xml-test"/>
+  <name value="EclEmbeddedXmlTest"/>
+  <status value="active"/>
+
+  <compose>
+    <include>
+      <system value="http://snomed.info/sct"/>
+      <filter>
+        <property value="constraint"/>
+        <op value="="/>
+        <value value="&lt;&lt; 404684003 |Clinical finding|"/>
+      </filter>
+    </include>
+    <include>
+      <system value="http://snomed.info/sct"/>
+      <filter>
+        <property value="expression"/>
+        <op value="="/>
+        <value value="&lt;&lt; 71388002 |Procedure|"/>
+      </filter>
+    </include>
+    <!-- This filter should NOT trigger ECL injection (property is "concept", not "constraint") -->
+    <include>
+      <system value="http://snomed.info/sct"/>
+      <filter>
+        <property value="concept"/>
+        <op value="is-a"/>
+        <value value="404684003"/>
+      </filter>
+    </include>
+    <exclude>
+      <system value="http://snomed.info/sct"/>
+      <filter>
+        <property value="constraint"/>
+        <op value="="/>
+        <value value="&lt;&lt; 64572001 |Disease|"/>
+      </filter>
+    </exclude>
+  </compose>
+
+  <expansion>
+    <timestamp value="2024-01-01T00:00:00Z"/>
+    <parameter>
+      <name value="used-ecl"/>
+      <valueString value="&lt;&lt; 404684003 |Clinical finding|"/>
+    </parameter>
+    <parameter>
+      <name value="ecl"/>
+      <valueString value="&lt;&lt; 71388002 |Procedure|"/>
+    </parameter>
+    <!-- This parameter should NOT trigger ECL injection (name is "version") -->
+    <parameter>
+      <name value="version"/>
+      <valueString value="http://snomed.info/sct/900000000000207008/version/20240101"/>
+    </parameter>
+  </expansion>
+</ValueSet>

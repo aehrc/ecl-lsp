@@ -1,0 +1,112 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+                             http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>au.csiro.ecl</groupId>
+        <artifactId>ecl-eclipse-parent</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>au.csiro.ecl.eclipse</artifactId>
+    <version>1.0.0-SNAPSHOT</version>
+    <packaging>eclipse-plugin</packaging>
+
+    <build>
+        <plugins>
+            <!-- Bundle the ECL LSP server into the plugin -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-resources-plugin</artifactId>
+                <version>3.3.1</version>
+                <executions>
+                    <!-- Project license + third-party notices -->
+                    <execution>
+                        <id>copy-license-files</id>
+                        <phase>generate-resources</phase>
+                        <goals><goal>copy-resources</goal></goals>
+                        <configuration>
+                            <outputDirectory>${project.basedir}/server</outputDirectory>
+                            <resources>
+                                <resource>
+                                    <directory>${project.basedir}/../../..</directory>
+                                    <includes>
+                                        <include>LICENSE</include>
+                                        <include>THIRD-PARTY-LICENSES.txt</include>
+                                    </includes>
+                                </resource>
+                            </resources>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>copy-lsp-server</id>
+                        <phase>generate-resources</phase>
+                        <goals><goal>copy-resources</goal></goals>
+                        <configuration>
+                            <outputDirectory>${project.basedir}/server</outputDirectory>
+                            <resources>
+                                <resource>
+                                    <directory>${project.basedir}/../../../packages/ecl-lsp-server</directory>
+                                    <includes>
+                                        <include>bin/**</include>
+                                        <include>dist/**</include>
+                                        <include>package.json</include>
+                                    </includes>
+                                </resource>
+                            </resources>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>copy-ecl-core</id>
+                        <phase>generate-resources</phase>
+                        <goals><goal>copy-resources</goal></goals>
+                        <configuration>
+                            <outputDirectory>${project.basedir}/server/node_modules/ecl-core</outputDirectory>
+                            <resources>
+                                <resource>
+                                    <directory>${project.basedir}/../../../packages/ecl-core</directory>
+                                    <includes>
+                                        <include>dist/**</include>
+                                        <include>package.json</include>
+                                    </includes>
+                                </resource>
+                            </resources>
+                        </configuration>
+                    </execution>
+                    <!-- Bundle LSP protocol dependencies from root node_modules -->
+                    <execution>
+                        <id>copy-node-modules</id>
+                        <phase>generate-resources</phase>
+                        <goals><goal>copy-resources</goal></goals>
+                        <configuration>
+                            <outputDirectory>${project.basedir}/server/node_modules</outputDirectory>
+                            <resources>
+                                <resource>
+                                    <directory>${project.basedir}/../../../node_modules</directory>
+                                    <includes>
+                                        <!-- LSP protocol -->
+                                        <include>vscode-languageserver/**</include>
+                                        <include>vscode-languageserver-protocol/**</include>
+                                        <include>vscode-languageserver-types/**</include>
+                                        <include>vscode-languageserver-textdocument/**</include>
+                                        <include>vscode-jsonrpc/**</include>
+                                        <!-- ecl-core runtime dependency -->
+                                        <include>antlr4ts/**</include>
+                                        <!-- FHIR integration (node-fetch + transitive deps) -->
+                                        <include>node-fetch/**</include>
+                                        <include>whatwg-url/**</include>
+                                        <include>tr46/**</include>
+                                        <include>webidl-conversions/**</include>
+                                    </includes>
+                                </resource>
+                            </resources>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>

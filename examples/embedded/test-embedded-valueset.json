@@ -1,0 +1,127 @@
+{
+  "resourceType": "ValueSet",
+  "id": "embedded-ecl-test",
+  "url": "http://example.org/fhir/ValueSet/embedded-ecl-test",
+  "name": "EmbeddedEclTest",
+  "title": "Embedded ECL Test ValueSet",
+  "status": "active",
+  "description": "Test file for embedded ECL support in FHIR JSON. Try: hover over concept IDs, Ctrl+Space for completions, and check for red squiggles on errors.",
+
+  "compose": {
+    "include": [
+      {
+        "_comment": "VALID: property=constraint triggers ECL — hover over 404684003, try completions",
+        "system": "http://snomed.info/sct",
+        "filter": [
+          {
+            "property": "constraint",
+            "op": "=",
+            "value": "<< 404684003 |Clinical finding|"
+          }
+        ]
+      },
+      {
+        "_comment": "VALID: property=expression also triggers ECL",
+        "system": "http://snomed.info/sct",
+        "filter": [
+          {
+            "property": "expression",
+            "op": "=",
+            "value": "<< 71388002 |Procedure|"
+          }
+        ]
+      },
+      {
+        "_comment": "VALID: refined expression with attribute",
+        "system": "http://snomed.info/sct",
+        "filter": [
+          {
+            "property": "constraint",
+            "op": "=",
+            "value": "<< 404684003 : 363698007 = << 39057004"
+          }
+        ]
+      },
+      {
+        "_comment": "NOT ECL: property=concept does NOT trigger ECL injection",
+        "system": "http://snomed.info/sct",
+        "filter": [
+          {
+            "property": "concept",
+            "op": "is-a",
+            "value": "404684003"
+          }
+        ]
+      },
+      {
+        "_comment": "ERROR: duplicate operator — should show red squiggles",
+        "system": "http://snomed.info/sct",
+        "filter": [
+          {
+            "property": "constraint",
+            "op": "=",
+            "value": "<< AND << 404684003"
+          }
+        ]
+      },
+      {
+        "_comment": "VALID: member-of with refset",
+        "system": "http://snomed.info/sct",
+        "filter": [
+          {
+            "property": "constraint",
+            "op": "=",
+            "value": "^ 816080008 |International Patient Summary|"
+          }
+        ]
+      },
+      {
+        "_comment": "VALID: compound expression with OR",
+        "system": "http://snomed.info/sct",
+        "filter": [
+          {
+            "property": "constraint",
+            "op": "=",
+            "value": "<< 404684003 OR << 71388002"
+          }
+        ]
+      }
+    ],
+    "exclude": [
+      {
+        "_comment": "VALID: exclude filter with constraint",
+        "system": "http://snomed.info/sct",
+        "filter": [
+          {
+            "property": "constraint",
+            "op": "=",
+            "value": "<< 64572001 |Disease|"
+          }
+        ]
+      }
+    ]
+  },
+
+  "expansion": {
+    "identifier": "urn:uuid:test-expansion",
+    "timestamp": "2024-01-01T00:00:00Z",
+    "total": 0,
+    "parameter": [
+      {
+        "_comment": "VALID: name=used-ecl triggers ECL",
+        "name": "used-ecl",
+        "valueString": "<< 404684003 |Clinical finding|"
+      },
+      {
+        "_comment": "VALID: name=ecl triggers ECL",
+        "name": "ecl",
+        "valueString": "<< 71388002 |Procedure|"
+      },
+      {
+        "_comment": "NOT ECL: name=version does NOT trigger ECL injection",
+        "name": "version",
+        "valueString": "http://snomed.info/sct|http://snomed.info/sct/900000000000207008/version/20240101"
+      }
+    ]
+  }
+}

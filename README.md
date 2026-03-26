@@ -1,8 +1,9 @@
+
 <p align="center">
   <img src="icon.png" alt="ECL Language Tools" width="128">
 </p>
 
-# ECL Language Tools
+<h1 align="center">ECL Language Tools</h1>
 
 [![CI](https://github.com/aehrc/ecl-lsp/actions/workflows/ci.yml/badge.svg)](https://github.com/aehrc/ecl-lsp/actions/workflows/ci.yml)
 [![Security: Trivy + Semgrep](https://img.shields.io/badge/Security-Trivy%20%2B%20Semgrep-purple)](https://github.com/aehrc/ecl-lsp/actions/workflows/ci.yml)

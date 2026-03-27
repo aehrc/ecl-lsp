@@ -63,6 +63,9 @@ jobs:
   npm-publish:
     needs: validate
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@v4
 
@@ -80,8 +83,6 @@ jobs:
           name: compiled-output
 
       - name: Publish npm packages
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           for pkg in ecl-core ecl-lsp-server ecl-editor-core ecl-editor-react ecl-editor; do
             (cd packages/$pkg && npm publish --access public --provenance) || true

@@ -1,0 +1,59 @@
+name: Deploy Site
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+      - run: npm run compile
+
+      - name: Build React Storybook
+        working-directory: packages/ecl-editor-react
+        run: npm run build-storybook
+
+      - name: Build Web Component Storybook
+        working-directory: packages/ecl-editor
+        run: npm run build-storybook
+
+      - name: Combine into single site
+        run: |
+          mkdir -p _site/images _site/react _site/web-component
+          cp docs/site/index.html _site/
+          cp icon.png _site/
+          cp docs/images/* _site/images/
+          cp -r packages/ecl-editor-react/storybook-static/* _site/react/
+          cp -r packages/ecl-editor/storybook-static/* _site/web-component/
+
+      - uses: actions/upload-pages-artifact@v3
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

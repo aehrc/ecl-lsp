@@ -180,7 +180,7 @@ export function extractConceptSearchQuery(textBeforeCursor: string): string | nu
   //   grouping: (, {
   // Capture the trailing word(s) that the user is typing
   // eslint-disable-next-line sonarjs/slow-regex -- bounded to single-line cursor context; no ReDoS risk
-  let match = /.*(?:<<|>>|[<>^]|\bAND\b|\bOR\b|\bMINUS\b|[(:={,])\s+(.+)$/i.exec(textBeforeCursor);
+  let match = /.*(?:<<|>>|[<>^]|\bAND\b|\bOR\b|\bMINUS\b|[(:={,])\s*(.+)$/i.exec(textBeforeCursor);
 
   // Fallback: bare text at the start of a line (no preceding operator)
   // Allows concept search when typing a term without an operator prefix
@@ -264,9 +264,8 @@ export async function getCompletionItemsWithSearch(
       return baseItems;
     }
 
-    // Calculate the column where the query text starts
-    const textUpToCursor = currentLine.substring(0, cursorColumn);
-    const queryStartCol = textUpToCursor.lastIndexOf(query);
+    // Replace exactly the typed query text (immediately before cursor)
+    const queryStartCol = cursorColumn - query.length;
 
     const conceptItems: CoreCompletionItem[] = response.results.map((result, index) => {
       // Extract semantic tag from FSN (e.g., "Has active ingredient (attribute)" -> "(attribute)")

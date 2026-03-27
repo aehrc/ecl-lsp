@@ -18,6 +18,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Shared language registration**: Web component now shares a single `registerEclLanguage` call across multiple `<ecl-editor>` instances, preventing duplicate hover tooltips and completions
 - **Line highlight disabled**: `renderLineHighlight: 'none'` for cleaner embedded appearance
 
+## [1.0.1] - 2026-03-27
+
+### Fixed
+
+- **Concept search completion overwrites surrounding text**: Selecting a concept from autocomplete could delete preceding brackets, operators, or other content. The edit range now replaces exactly the typed search query instead of using `lastIndexOf` which could match text earlier in the line.
+- **Concept search not triggering without space after grouping operators**: Typing a search term directly after `(`, `{`, or `,` without a space (e.g., `(food`) would not trigger concept search. The query extraction now accepts zero or more whitespace after these operators.
+
 ## [1.0.0] - 2026-03-04
 
 Initial release with full ECL 2.2 support across five IDE platforms.

@@ -57,8 +57,16 @@ describe('extractConceptSearchQuery', () => {
     assert.strictEqual(extractConceptSearchQuery('= lung str'), 'lung str');
   });
 
-  it('extracts query after ( operator', () => {
+  it('extracts query after ( operator with space', () => {
     assert.strictEqual(extractConceptSearchQuery('( disorder'), 'disorder');
+  });
+
+  it('extracts query after ( operator without space', () => {
+    assert.strictEqual(extractConceptSearchQuery('(disorder'), 'disorder');
+  });
+
+  it('extracts query after ( operator with preceding content', () => {
+    assert.strictEqual(extractConceptSearchQuery('255620007 |Food| OR (clinical'), 'clinical');
   });
 
   it('extracts multi-word query', () => {

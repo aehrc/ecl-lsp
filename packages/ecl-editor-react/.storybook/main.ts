@@ -1,5 +1,6 @@
 import type { StorybookConfig } from '@storybook/react-vite';
 import { nodePolyfills } from 'vite-plugin-node-polyfills';
+import path from 'path';
 
 const config: StorybookConfig = {
   stories: ['../src/**/*.stories.@(ts|tsx)'],
@@ -7,9 +8,13 @@ const config: StorybookConfig = {
   addons: [],
   viteFinal: (config) => {
     config.plugins = [...(config.plugins ?? []), nodePolyfills({ include: ['util'] })];
-    config.optimizeDeps = {
-      ...config.optimizeDeps,
-      include: [...(config.optimizeDeps?.include ?? []), '@aehrc/ecl-core', '@aehrc/ecl-editor-core'],
+    config.resolve = {
+      ...config.resolve,
+      alias: {
+        ...config.resolve?.alias,
+        '@aehrc/ecl-core': path.resolve(__dirname, '../../ecl-core/src/index.ts'),
+        '@aehrc/ecl-editor-core': path.resolve(__dirname, '../../ecl-editor-core/src/index.ts'),
+      },
     };
     return config;
   },

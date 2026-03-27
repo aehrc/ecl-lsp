@@ -1,4 +1,3 @@
-
 <p align="center">
   <img src="icon.png" alt="ECL Language Tools" width="128">
 </p>

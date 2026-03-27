@@ -42,6 +42,7 @@ jobs:
           cp docs/site/index.html _site/
           cp icon.png _site/
           cp docs/images/* _site/images/
+          cp packages/ecl-editor/dist-standalone/ecl-editor.standalone.js _site/
           cp -r packages/ecl-editor-react/storybook-static/* _site/react/
           cp -r packages/ecl-editor/storybook-static/* _site/web-component/
 

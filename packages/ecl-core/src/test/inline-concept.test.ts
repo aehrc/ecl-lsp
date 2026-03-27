@@ -22,59 +22,73 @@ describe('extractConceptSearchQuery', () => {
   // ── Valid extractions ──────────────────────────────────────────────
 
   it('extracts query after << operator', () => {
-    assert.strictEqual(extractConceptSearchQuery('<< diab'), 'diab');
+    const r = extractConceptSearchQuery('<< diab');
+    assert.deepStrictEqual(r, { query: 'diab', startOffset: 3 });
   });
 
   it('extracts query after < operator', () => {
-    assert.strictEqual(extractConceptSearchQuery('< clinical f'), 'clinical f');
+    const r = extractConceptSearchQuery('< clinical f');
+    assert.deepStrictEqual(r, { query: 'clinical f', startOffset: 2 });
   });
 
   it('extracts query after > operator', () => {
-    assert.strictEqual(extractConceptSearchQuery('> disorder'), 'disorder');
+    const r = extractConceptSearchQuery('> disorder');
+    assert.deepStrictEqual(r, { query: 'disorder', startOffset: 2 });
   });
 
   it('extracts query after >> operator', () => {
-    assert.strictEqual(extractConceptSearchQuery('>> finding'), 'finding');
+    const r = extractConceptSearchQuery('>> finding');
+    assert.deepStrictEqual(r, { query: 'finding', startOffset: 3 });
   });
 
   it('extracts query after AND operator', () => {
-    assert.strictEqual(extractConceptSearchQuery('AND disorder'), 'disorder');
+    const r = extractConceptSearchQuery('AND disorder');
+    assert.deepStrictEqual(r, { query: 'disorder', startOffset: 4 });
   });
 
   it('extracts query after OR operator', () => {
-    assert.strictEqual(extractConceptSearchQuery('OR disease'), 'disease');
+    const r = extractConceptSearchQuery('OR disease');
+    assert.deepStrictEqual(r, { query: 'disease', startOffset: 3 });
   });
 
   it('extracts query after MINUS operator', () => {
-    assert.strictEqual(extractConceptSearchQuery('MINUS edema'), 'edema');
+    const r = extractConceptSearchQuery('MINUS edema');
+    assert.deepStrictEqual(r, { query: 'edema', startOffset: 6 });
   });
 
   it('extracts query after : operator', () => {
-    assert.strictEqual(extractConceptSearchQuery(': finding'), 'finding');
+    const r = extractConceptSearchQuery(': finding');
+    assert.deepStrictEqual(r, { query: 'finding', startOffset: 2 });
   });
 
   it('extracts query after = operator', () => {
-    assert.strictEqual(extractConceptSearchQuery('= lung str'), 'lung str');
+    const r = extractConceptSearchQuery('= lung str');
+    assert.deepStrictEqual(r, { query: 'lung str', startOffset: 2 });
   });
 
   it('extracts query after ( operator with space', () => {
-    assert.strictEqual(extractConceptSearchQuery('( disorder'), 'disorder');
+    const r = extractConceptSearchQuery('( disorder');
+    assert.deepStrictEqual(r, { query: 'disorder', startOffset: 2 });
   });
 
   it('extracts query after ( operator without space', () => {
-    assert.strictEqual(extractConceptSearchQuery('(disorder'), 'disorder');
+    const r = extractConceptSearchQuery('(disorder');
+    assert.deepStrictEqual(r, { query: 'disorder', startOffset: 1 });
   });
 
   it('extracts query after ( operator with preceding content', () => {
-    assert.strictEqual(extractConceptSearchQuery('255620007 |Food| OR (clinical'), 'clinical');
+    const r = extractConceptSearchQuery('255620007 |Food| OR (clinical');
+    assert.deepStrictEqual(r, { query: 'clinical', startOffset: 21 });
   });
 
   it('extracts multi-word query', () => {
-    assert.strictEqual(extractConceptSearchQuery('<< disorder of lung'), 'disorder of lung');
+    const r = extractConceptSearchQuery('<< disorder of lung');
+    assert.deepStrictEqual(r, { query: 'disorder of lung', startOffset: 3 });
   });
 
   it('extracts query in a longer line context', () => {
-    assert.strictEqual(extractConceptSearchQuery('< 404684003 AND << clinical'), 'clinical');
+    const r = extractConceptSearchQuery('< 404684003 AND << clinical');
+    assert.deepStrictEqual(r, { query: 'clinical', startOffset: 19 });
   });
 
   // ── Null returns ───────────────────────────────────────────────────
@@ -84,7 +98,8 @@ describe('extractConceptSearchQuery', () => {
   });
 
   it('returns query for bare text without operator (fallback search)', () => {
-    assert.strictEqual(extractConceptSearchQuery('diabetes'), 'diabetes');
+    const r = extractConceptSearchQuery('diabetes');
+    assert.deepStrictEqual(r, { query: 'diabetes', startOffset: 0 });
   });
 
   it('returns null for query shorter than 3 characters', () => {

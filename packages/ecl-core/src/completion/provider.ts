@@ -172,7 +172,12 @@ const OPERATOR_KEYWORDS = new Set(['AND', 'OR', 'MINUS', 'NOT']);
  * - Not purely numeric (concept IDs are not term searches)
  * - Not an ECL operator keyword
  */
-export function extractConceptSearchQuery(textBeforeCursor: string): string | null {
+export interface ConceptSearchQuery {
+  query: string;
+  startOffset: number;
+}
+
+export function extractConceptSearchQuery(textBeforeCursor: string): ConceptSearchQuery | null {
   // Match text after an operator followed by whitespace:
   //   constraint operators: <<, <, >>, >, ^
   //   logical operators: AND, OR, MINUS
@@ -188,7 +193,8 @@ export function extractConceptSearchQuery(textBeforeCursor: string): string | nu
   match ??= /^\s*(.+)$/i.exec(textBeforeCursor);
   if (!match) return null;
 
-  const query = match[1].trim();
+  const raw = match[1];
+  const query = raw.trim();
 
   // Must be at least 3 characters
   if (query.length < 3) return null;
@@ -199,7 +205,10 @@ export function extractConceptSearchQuery(textBeforeCursor: string): string | nu
   // Must not be an operator keyword
   if (OPERATOR_KEYWORDS.has(query.toUpperCase())) return null;
 
-  return query;
+  // Start offset: where the captured group begins in the input, plus any leading whitespace trimmed
+  const captureStart = match.index + match[0].length - raw.length;
+  const leadingSpaces = raw.length - raw.trimStart().length;
+  return { query, startOffset: captureStart + leadingSpaces };
 }
 
 // ── Async wrapper with concept search ────────────────────────────────────
@@ -253,19 +262,18 @@ export async function getCompletionItemsWithSearch(
     }
   }
 
-  const query = extractConceptSearchQuery(currentLine.substring(0, cursorColumn));
-  if (!query) {
+  const searchResult = extractConceptSearchQuery(currentLine.substring(0, cursorColumn));
+  if (!searchResult) {
     return baseItems;
   }
 
   try {
-    const response = await terminologyService.searchConcepts(query);
+    const response = await terminologyService.searchConcepts(searchResult.query);
     if (response.results.length === 0) {
       return baseItems;
     }
 
-    // Replace exactly the typed query text (immediately before cursor)
-    const queryStartCol = cursorColumn - query.length;
+    const queryStartCol = searchResult.startOffset;
 
     const conceptItems: CoreCompletionItem[] = response.results.map((result, index) => {
       // Extract semantic tag from FSN (e.g., "Has active ingredient (attribute)" -> "(attribute)")

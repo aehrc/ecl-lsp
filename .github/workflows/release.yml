@@ -63,6 +63,7 @@ jobs:
   npm-publish:
     needs: validate
     runs-on: ubuntu-latest
+    environment: npm
     permissions:
       contents: read
       id-token: write

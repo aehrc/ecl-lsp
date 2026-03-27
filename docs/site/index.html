@@ -797,7 +797,7 @@
       <img src="icon.png" alt="ECL Language Tools logo" class="hero-logo" width="128" height="128">
       <h1>ECL Language Tools</h1>
       <p class="hero-tagline">
-        Parse, validate, format, and query SNOMED CT &mdash; in any editor, in the browser, or from Slack.
+        A Language Server for SNOMED CT Expression Constraint Language &mdash; bringing diagnostics, completion, formatting, and terminology integration to every editor through a single LSP.
       </p>
 
       <!-- Live Editor -->
@@ -852,10 +852,11 @@
           filters.
         </p>
         <p style="margin-top: 16px;">
-          ECL Language Tools gives you a full language stack for ECL 2.2: an ANTLR4-based parser, rich
-          diagnostics, intelligent completions, formatting, refactoring, semantic validation against
-          FHIR terminology servers, and ready-to-use integrations for seven editors, the browser, and
-          Slack.
+          At the core is a <strong>Language Server</strong> implementing the
+          <a href="https://microsoft.github.io/language-server-protocol/" target="_blank" rel="noopener" style="color: var(--accent);">Language Server Protocol (LSP)</a>,
+          built on an ANTLR4-based parser with FHIR terminology integration. One server powers plugins for
+          VS Code, IntelliJ, Eclipse, Neovim, Sublime, Emacs, and Claude Code &mdash; plus embeddable web
+          editors and a Slack bot.
         </p>
         <p style="margin-top: 16px;">
           <a href="https://confluence.ihtsdotools.org/display/DOCECL" target="_blank" rel="noopener">
@@ -949,7 +950,7 @@
   <section id="editors">
     <div class="container">
       <h2 class="section-title">Editor &amp; IDE Support</h2>
-      <p class="section-subtitle">First-class ECL support for the editors you already use.</p>
+      <p class="section-subtitle">One Language Server, seven editor plugins. Install the plugin and get full ECL support instantly.</p>
       <div class="ide-clients-row">
 
         <!-- VSCode -->

@@ -149,8 +149,8 @@
     }
 
     .hero-logo {
-      width: 64px;
-      height: 64px;
+      width: 128px;
+      height: 128px;
       border-radius: 14px;
       margin: 0 auto 20px;
       box-shadow: 0 0 40px rgba(56, 189, 248, 0.15);
@@ -238,10 +238,26 @@
     ecl-editor {
       display: block;
       height: 350px;
+      text-align: left;
     }
 
     .ecl-editor-hidden {
       display: none !important;
+    }
+
+    .editor-hint {
+      margin-top: 12px;
+      font-size: 0.85rem;
+      color: var(--text-secondary);
+    }
+
+    .editor-hint kbd {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      padding: 1px 5px;
+      font-family: var(--font-mono);
+      font-size: 0.8em;
     }
 
     .fhir-fallback-banner {
@@ -363,7 +379,7 @@
       border-radius: 10px;
       padding: 20px 16px;
       text-align: center;
-      width: 115px;
+      width: 130px;
       transition: border-color 0.2s, transform 0.2s;
     }
 
@@ -778,7 +794,7 @@
        ═══════════════════════════════════════════════════════════ -->
   <section class="hero" role="region" aria-label="Live ECL editor demo">
     <div class="container">
-      <img src="icon.png" alt="ECL Language Tools logo" class="hero-logo" width="64" height="64">
+      <img src="icon.png" alt="ECL Language Tools logo" class="hero-logo" width="128" height="128">
       <h1>ECL Language Tools</h1>
       <p class="hero-tagline">
         Parse, validate, format, and query SNOMED CT &mdash; in any editor, in the browser, or from Slack.
@@ -799,11 +815,13 @@
         <ecl-editor
           class="ecl-editor-hidden"
           theme="vs-dark"
-          fhir-url="https://tx.ontoserver.csiro.au/fhir"
+          fhir-server-url="https://tx.ontoserver.csiro.au/fhir"
           semantic-validation
-        >&lt; 404684003 |Clinical finding| :
-  363698007 |Finding site| = &lt;&lt; 39057004 |Pulmonary valve structure|</ecl-editor>
+          value="(<< 404684003 |Clinical finding| :&#10;  363698007 |Finding site| = << 39057004 |Pulmonary valve structure|)&#10;AND&#10;(<< 71388002 |Procedure| :&#10;  405813007 |Procedure device| = << 63653004 |Biomedical device|)"
+        ></ecl-editor>
       </div>
+
+      <p class="editor-hint">Try it — click the lightbulb to add display terms, or just start typing a concept name to search</p>
 
       <div id="fhir-fallback" class="fhir-fallback-banner">
         Terminology server is currently unavailable. The editor is running in offline mode &mdash; syntax checking is still active.
@@ -943,58 +961,58 @@
           <span class="ide-type">Extension</span>
         </a>
 
-        <!-- IntelliJ -->
+        <!-- IntelliJ IDEA — official JetBrains icon -->
         <a href="https://github.com/aehrc/ecl-lsp/tree/main/clients/intellij" class="ide-card" target="_blank" rel="noopener">
           <div class="ide-card-icon">
-            <svg viewBox="0 0 70 70"><defs><linearGradient id="ij1" x1="0" y1="35" x2="70" y2="35" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#f97a12"/><stop offset=".46" stop-color="#b07b58"/><stop offset=".72" stop-color="#577bae"/><stop offset="1" stop-color="#1e7ce6"/></linearGradient></defs><rect width="70" height="70" rx="8" fill="url(#ij1)"/><rect x="11" y="11" width="48" height="48" fill="#000"/><text x="17" y="44" fill="#fff" font-family="sans-serif" font-weight="700" font-size="22">IJ</text></svg>
+            <img src="https://resources.jetbrains.com/storage/products/company/brand/logos/IntelliJ_IDEA_icon.svg" alt="IntelliJ IDEA" width="48" height="48">
           </div>
           <h3>IntelliJ</h3>
           <span class="ide-type">Plugin</span>
         </a>
 
-        <!-- Eclipse -->
+        <!-- Eclipse — official Eclipse Foundation icon -->
         <a href="https://github.com/aehrc/ecl-lsp/tree/main/clients/eclipse" class="ide-card" target="_blank" rel="noopener">
           <div class="ide-card-icon">
-            <svg viewBox="0 0 70 70"><circle cx="35" cy="35" r="30" fill="#2c2255"/><ellipse cx="35" cy="35" rx="26" ry="10" fill="none" stroke="#f7941e" stroke-width="3"/><ellipse cx="35" cy="35" rx="16" ry="16" fill="none" stroke="#f7941e" stroke-width="3"/></svg>
+            <img src="https://raw.githubusercontent.com/eclipse-platform/eclipse.platform/master/platform/org.eclipse.platform/eclipse256.png" alt="Eclipse IDE" width="48" height="48">
           </div>
           <h3>Eclipse</h3>
           <span class="ide-type">Plugin</span>
         </a>
 
-        <!-- Neovim -->
+        <!-- Claude Code — Anthropic Claude sparkle -->
+        <a href="https://github.com/aehrc/ecl-lsp/tree/main/clients/claude-code" class="ide-card" target="_blank" rel="noopener">
+          <div class="ide-card-icon">
+            <svg viewBox="0 0 256 256" width="48" height="48"><rect width="256" height="256" rx="48" fill="#D4A27F"/><path d="M147.2 68l-8.8 27.6-27.6 8.8 27.6 8.8 8.8 27.6 8.8-27.6 27.6-8.8-27.6-8.8L147.2 68zm-38.4 57.6l-5.6 17.6-17.6 5.6 17.6 5.6 5.6 17.6 5.6-17.6 17.6-5.6-17.6-5.6-5.6-17.6zm48 38.4l-4 12.8-12.8 4 12.8 4 4 12.8 4-12.8 12.8-4-12.8-4-4-12.8z" fill="#fff"/></svg>
+          </div>
+          <h3>Claude Code</h3>
+          <span class="ide-type">Plugin</span>
+        </a>
+
+        <!-- Neovim — green angular N mark -->
         <a href="https://github.com/aehrc/ecl-lsp/tree/main/clients/neovim" class="ide-card" target="_blank" rel="noopener">
           <div class="ide-card-icon">
-            <svg viewBox="0 0 70 70"><rect width="70" height="70" rx="8" fill="#57a143"/><text x="35" y="46" fill="#fff" font-family="sans-serif" font-weight="700" font-size="24" text-anchor="middle">N</text></svg>
+            <svg viewBox="0 0 742 886" width="48" height="48"><path d="M0 886V0l287.2 357.5V0h176.8v886l-287.2-357V886H0z" fill="#57A143"/><path d="M464 0l278 886V0H464z" fill="#57A143"/><path d="M0 0l287.2 357.5L0 886V0z" fill="#009431"/></svg>
           </div>
           <h3>Neovim</h3>
           <span class="ide-type">Config</span>
         </a>
 
-        <!-- Sublime -->
+        <!-- Sublime Text — official icon -->
         <a href="https://github.com/aehrc/ecl-lsp/tree/main/clients/sublime" class="ide-card" target="_blank" rel="noopener">
           <div class="ide-card-icon">
-            <svg viewBox="0 0 70 70"><rect width="70" height="70" rx="8" fill="#ff9800"/><text x="35" y="46" fill="#fff" font-family="sans-serif" font-weight="700" font-size="24" text-anchor="middle">S</text></svg>
+            <img src="https://www.sublimehq.com/images/sublime_text.png" alt="Sublime Text" width="48" height="48">
           </div>
           <h3>Sublime</h3>
           <span class="ide-type">Config</span>
         </a>
 
-        <!-- Emacs -->
+        <!-- Emacs — official GNU Emacs icon -->
         <a href="https://github.com/aehrc/ecl-lsp/tree/main/clients/emacs" class="ide-card" target="_blank" rel="noopener">
           <div class="ide-card-icon">
-            <svg viewBox="0 0 70 70"><rect width="70" height="70" rx="8" fill="#7f5ab6"/><text x="35" y="46" fill="#fff" font-family="sans-serif" font-weight="700" font-size="24" text-anchor="middle">E</text></svg>
+            <img src="https://www.gnu.org/software/emacs/images/emacs.png" alt="GNU Emacs" width="48" height="48">
           </div>
           <h3>Emacs</h3>
           <span class="ide-type">Config</span>
-        </a>
-
-        <!-- Claude Code -->
-        <a href="https://github.com/aehrc/ecl-lsp/tree/main/clients/claude-code" class="ide-card" target="_blank" rel="noopener">
-          <div class="ide-card-icon">
-            <svg viewBox="0 0 70 70"><rect width="70" height="70" rx="8" fill="#d97706"/><text x="35" y="46" fill="#fff" font-family="sans-serif" font-weight="700" font-size="20" text-anchor="middle">CC</text></svg>
-          </div>
-          <h3>Claude Code</h3>
-          <span class="ide-type">Plugin</span>
         </a>
 
       </div>
@@ -1240,7 +1258,7 @@
        SCRIPTS
        ═══════════════════════════════════════════════════════════ -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.52.2/min/vs/loader.min.js"></script>
-  <script src="https://unpkg.com/@aehrc/ecl-editor@^1.0.0/dist-standalone/ecl-editor.standalone.js"></script>
+  <script src="ecl-editor.standalone.js"></script>
 
   <script>
     /* ── Monaco AMD Loader ────────────────────────────────── */

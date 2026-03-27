@@ -31,6 +31,9 @@ coverage/
 # Claude Code plugin config (personal workflow, not project-level)
 .claude/
 
+# Superpowers brainstorm artifacts
+.superpowers/
+
 # Secrets and credentials
 .env
 .env.*

@@ -28,6 +28,10 @@ jobs:
       - run: npm ci
       - run: npm run compile
 
+      - name: Build standalone web component
+        working-directory: packages/ecl-editor
+        run: npm run build:standalone
+
       - name: Build React Storybook
         working-directory: packages/ecl-editor-react
         run: npm run build-storybook

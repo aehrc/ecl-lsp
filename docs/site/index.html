@@ -1,0 +1,1316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ECL Language Tools — Parse, validate, format &amp; query SNOMED CT</title>
+  <meta name="description" content="Open-source language tooling for SNOMED CT Expression Constraint Language (ECL) 2.2. LSP server, web editors, IDE plugins, and FHIR integration.">
+
+  <!-- Social Meta Tags -->
+  <meta property="og:title" content="ECL Language Tools">
+  <meta property="og:description" content="Parse, validate, format, and query SNOMED CT Expression Constraint Language — in any editor, in the browser, or from Slack.">
+  <meta property="og:image" content="images/social-preview.png">
+  <meta property="og:url" content="https://aehrc.github.io/ecl-lsp/">
+  <meta property="og:type" content="website">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="ECL Language Tools">
+  <meta name="twitter:description" content="Parse, validate, format, and query SNOMED CT Expression Constraint Language — in any editor, in the browser, or from Slack.">
+  <meta name="twitter:image" content="images/social-preview.png">
+
+  <link rel="icon" href="icon.png" type="image/png">
+
+  <!-- =========================================================
+       INLINE STYLES
+       ========================================================= -->
+  <style>
+    /* ── Design Tokens ──────────────────────────────────────── */
+    :root {
+      --bg-primary: #0f172a;
+      --bg-secondary: #1e293b;
+      --bg-card: #1e293b;
+      --text-primary: #e2e8f0;
+      --text-secondary: #94a3b8;
+      --accent: #38bdf8;
+      --accent-hover: #7dd3fc;
+      --border: #334155;
+      --font-mono: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+      --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      --max-width: 900px;
+    }
+
+    /* ── Reset & Base ───────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
+
+    body {
+      font-family: var(--font-sans);
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      line-height: 1.7;
+      overflow-x: hidden;
+    }
+
+    a { color: var(--accent); text-decoration: none; transition: color 0.2s; }
+    a:hover { color: var(--accent-hover); }
+
+    img { max-width: 100%; height: auto; display: block; }
+    code { font-family: var(--font-mono); font-size: 0.9em; }
+
+    .container {
+      max-width: var(--max-width);
+      margin: 0 auto;
+      padding: 0 24px;
+    }
+
+    /* ── Section Spacing ────────────────────────────────────── */
+    section {
+      padding: 80px 0;
+    }
+
+    .section-title {
+      font-size: 1.75rem;
+      font-weight: 700;
+      margin-bottom: 12px;
+      color: var(--text-primary);
+    }
+
+    .section-subtitle {
+      color: var(--text-secondary);
+      font-size: 1.05rem;
+      margin-bottom: 40px;
+      line-height: 1.6;
+    }
+
+    /* ═══════════════════════════════════════════════════════════
+       1. NAV BAR
+       ═══════════════════════════════════════════════════════════ */
+    .navbar {
+      position: sticky;
+      top: 0;
+      z-index: 1000;
+      background: var(--bg-primary);
+      border-bottom: 1px solid var(--border);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+    }
+
+    .navbar .container {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 56px;
+    }
+
+    .navbar-brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 700;
+      font-size: 1rem;
+      color: var(--text-primary);
+    }
+
+    .navbar-brand img {
+      width: 28px;
+      height: 28px;
+      border-radius: 6px;
+    }
+
+    .navbar-links {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .navbar-links a {
+      color: var(--text-secondary);
+      display: flex;
+      align-items: center;
+      transition: color 0.2s;
+    }
+
+    .navbar-links a:hover {
+      color: var(--text-primary);
+    }
+
+    .navbar-links svg {
+      width: 22px;
+      height: 22px;
+      fill: currentColor;
+    }
+
+    /* ═══════════════════════════════════════════════════════════
+       2. HERO
+       ═══════════════════════════════════════════════════════════ */
+    .hero {
+      background: linear-gradient(180deg, #0f172a 0%, #162033 50%, #0f172a 100%);
+      padding: 72px 0 64px;
+      text-align: center;
+    }
+
+    .hero-logo {
+      width: 64px;
+      height: 64px;
+      border-radius: 14px;
+      margin: 0 auto 20px;
+      box-shadow: 0 0 40px rgba(56, 189, 248, 0.15);
+    }
+
+    .hero h1 {
+      font-size: 2.5rem;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      margin-bottom: 12px;
+      background: linear-gradient(135deg, #e2e8f0, #38bdf8);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .hero-tagline {
+      color: var(--text-secondary);
+      font-size: 1.15rem;
+      max-width: 600px;
+      margin: 0 auto 36px;
+      line-height: 1.6;
+    }
+
+    /* Editor container */
+    .editor-wrapper {
+      max-width: 720px;
+      margin: 0 auto 32px;
+      border-radius: 12px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      background: #1e1e1e;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+    }
+
+    .editor-titlebar {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 10px 14px;
+      background: #2d2d2d;
+      border-bottom: 1px solid #404040;
+    }
+
+    .editor-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+    }
+
+    .editor-dot--red { background: #ff5f57; }
+    .editor-dot--yellow { background: #febc2e; }
+    .editor-dot--green { background: #28c840; }
+
+    .editor-titlebar-text {
+      font-size: 0.75rem;
+      color: #808080;
+      margin-left: 8px;
+      font-family: var(--font-sans);
+    }
+
+    #editor-loading {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 350px;
+      color: var(--text-secondary);
+      font-size: 0.9rem;
+      gap: 10px;
+    }
+
+    #editor-loading .spinner {
+      width: 18px;
+      height: 18px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    ecl-editor {
+      display: block;
+      height: 350px;
+    }
+
+    .ecl-editor-hidden {
+      display: none !important;
+    }
+
+    .fhir-fallback-banner {
+      display: none;
+      background: #422006;
+      border: 1px solid #92400e;
+      color: #fbbf24;
+      padding: 8px 16px;
+      border-radius: 8px;
+      font-size: 0.85rem;
+      margin: 12px auto 0;
+      max-width: 720px;
+      text-align: center;
+    }
+
+    .fhir-fallback-banner.visible {
+      display: block;
+    }
+
+    /* Badge row */
+    .badge-row {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 8px;
+      margin-top: 28px;
+    }
+
+    .badge-row img {
+      height: 22px;
+    }
+
+    /* ═══════════════════════════════════════════════════════════
+       3. WHAT IS ECL?
+       ═══════════════════════════════════════════════════════════ */
+    .what-is-ecl {
+      padding: 64px 0;
+    }
+
+    .explainer-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 36px 40px;
+      line-height: 1.8;
+      color: var(--text-secondary);
+      font-size: 1.05rem;
+    }
+
+    .explainer-card strong {
+      color: var(--text-primary);
+    }
+
+    .explainer-card a {
+      font-weight: 500;
+    }
+
+    /* ═══════════════════════════════════════════════════════════
+       4. FEATURES GRID
+       ═══════════════════════════════════════════════════════════ */
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 16px;
+    }
+
+    .feature-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 24px 20px;
+      transition: border-color 0.2s, transform 0.2s;
+    }
+
+    .feature-card:hover {
+      border-color: var(--accent);
+      transform: translateY(-2px);
+    }
+
+    .feature-icon {
+      font-size: 1.5rem;
+      margin-bottom: 10px;
+      width: 40px;
+      height: 40px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(56, 189, 248, 0.1);
+      border-radius: 8px;
+      color: var(--accent);
+    }
+
+    .feature-card h3 {
+      font-size: 0.95rem;
+      font-weight: 600;
+      margin-bottom: 6px;
+      color: var(--text-primary);
+    }
+
+    .feature-card p {
+      font-size: 0.85rem;
+      color: var(--text-secondary);
+      line-height: 1.5;
+    }
+
+    /* ═══════════════════════════════════════════════════════════
+       5. IDE CLIENTS
+       ═══════════════════════════════════════════════════════════ */
+    .ide-clients-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 16px;
+      justify-content: center;
+    }
+
+    .ide-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 20px 16px;
+      text-align: center;
+      width: 115px;
+      transition: border-color 0.2s, transform 0.2s;
+    }
+
+    .ide-card:hover {
+      border-color: var(--accent);
+      transform: translateY(-2px);
+    }
+
+    .ide-card-icon {
+      width: 40px;
+      height: 40px;
+      margin: 0 auto 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.6rem;
+    }
+
+    .ide-card-icon svg {
+      width: 36px;
+      height: 36px;
+    }
+
+    .ide-card h3 {
+      font-size: 0.85rem;
+      font-weight: 600;
+      margin-bottom: 2px;
+      color: var(--text-primary);
+    }
+
+    .ide-card .ide-type {
+      font-size: 0.72rem;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    /* ═══════════════════════════════════════════════════════════
+       6. SCREENSHOTS
+       ═══════════════════════════════════════════════════════════ */
+    .screenshots-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+
+    .screenshot-card {
+      border-radius: 10px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      background: var(--bg-card);
+      transition: border-color 0.2s;
+    }
+
+    .screenshot-card:hover {
+      border-color: var(--accent);
+    }
+
+    .screenshot-card img {
+      width: 100%;
+      display: block;
+    }
+
+    .screenshot-card figcaption {
+      padding: 10px 14px;
+      font-size: 0.85rem;
+      color: var(--text-secondary);
+      font-weight: 500;
+    }
+
+    .screenshot-full {
+      grid-column: 1 / -1;
+    }
+
+    /* ═══════════════════════════════════════════════════════════
+       7. NPM PACKAGES
+       ═══════════════════════════════════════════════════════════ */
+    .packages-table-wrapper {
+      overflow-x: auto;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+    }
+
+    .packages-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.9rem;
+    }
+
+    .packages-table thead {
+      background: var(--bg-secondary);
+    }
+
+    .packages-table th {
+      text-align: left;
+      padding: 12px 16px;
+      font-weight: 600;
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-secondary);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .packages-table td {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: middle;
+    }
+
+    .packages-table tr:last-child td {
+      border-bottom: none;
+    }
+
+    .packages-table tbody tr {
+      transition: background 0.15s;
+    }
+
+    .packages-table tbody tr:hover {
+      background: rgba(56, 189, 248, 0.04);
+    }
+
+    .pkg-name {
+      font-family: var(--font-mono);
+      font-weight: 600;
+      font-size: 0.85rem;
+      color: var(--accent);
+    }
+
+    .pkg-desc {
+      color: var(--text-secondary);
+    }
+
+    .install-cmd {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--bg-primary);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 4px 10px;
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      color: var(--text-secondary);
+      white-space: nowrap;
+    }
+
+    .copy-btn {
+      background: none;
+      border: none;
+      cursor: pointer;
+      color: var(--text-secondary);
+      padding: 2px;
+      display: flex;
+      align-items: center;
+      transition: color 0.2s;
+      flex-shrink: 0;
+    }
+
+    .copy-btn:hover {
+      color: var(--accent);
+    }
+
+    .copy-btn svg {
+      width: 14px;
+      height: 14px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    /* Copy button checkmark state */
+    .copy-btn .copy-icon-check { display: none; }
+    .copy-btn.copied .copy-icon-copy { display: none; }
+    .copy-btn.copied .copy-icon-check { display: block; }
+
+    /* ═══════════════════════════════════════════════════════════
+       8. CODE EXAMPLES
+       ═══════════════════════════════════════════════════════════ */
+    .code-panels {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+    }
+
+    .code-panel {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+
+    .code-panel-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 16px;
+      background: rgba(0, 0, 0, 0.2);
+      border-bottom: 1px solid var(--border);
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .code-panel-badge {
+      font-size: 0.7rem;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .badge-react {
+      background: rgba(97, 218, 251, 0.15);
+      color: #61dafb;
+    }
+
+    .badge-html {
+      background: rgba(227, 76, 38, 0.15);
+      color: #e34c26;
+    }
+
+    .code-block {
+      padding: 16px;
+      overflow-x: auto;
+      font-family: var(--font-mono);
+      font-size: 0.82rem;
+      line-height: 1.65;
+      color: #d4d4d4;
+    }
+
+    .code-block pre {
+      margin: 0;
+      white-space: pre;
+    }
+
+    /* Syntax highlighting inline spans */
+    .syn-kw { color: #c586c0; }
+    .syn-fn { color: #dcdcaa; }
+    .syn-str { color: #ce9178; }
+    .syn-tag { color: #569cd6; }
+    .syn-attr { color: #9cdcfe; }
+    .syn-val { color: #ce9178; }
+    .syn-cmt { color: #6a9955; }
+    .syn-type { color: #4ec9b0; }
+    .syn-num { color: #b5cea8; }
+    .syn-op { color: #d4d4d4; }
+    .syn-punc { color: #808080; }
+
+    /* ═══════════════════════════════════════════════════════════
+       9. STORYBOOK LINKS
+       ═══════════════════════════════════════════════════════════ */
+    .storybook-cards {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+    }
+
+    .storybook-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 28px 24px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      transition: border-color 0.2s, transform 0.2s;
+    }
+
+    .storybook-card:hover {
+      border-color: var(--accent);
+      transform: translateY(-2px);
+    }
+
+    .storybook-icon {
+      width: 48px;
+      height: 48px;
+      background: rgba(255, 71, 133, 0.12);
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .storybook-icon svg {
+      width: 26px;
+      height: 26px;
+    }
+
+    .storybook-info h3 {
+      font-size: 1rem;
+      font-weight: 600;
+      color: var(--text-primary);
+      margin-bottom: 2px;
+    }
+
+    .storybook-info p {
+      font-size: 0.85rem;
+      color: var(--text-secondary);
+    }
+
+    /* ═══════════════════════════════════════════════════════════
+       10. FOOTER
+       ═══════════════════════════════════════════════════════════ */
+    .footer {
+      border-top: 1px solid var(--border);
+      padding: 36px 0;
+      text-align: center;
+      color: var(--text-secondary);
+      font-size: 0.85rem;
+    }
+
+    .footer-links {
+      display: flex;
+      justify-content: center;
+      gap: 20px;
+      margin-top: 10px;
+      flex-wrap: wrap;
+    }
+
+    .footer-links a {
+      color: var(--text-secondary);
+      font-size: 0.85rem;
+      transition: color 0.2s;
+    }
+
+    .footer-links a:hover {
+      color: var(--accent);
+    }
+
+    /* ═══════════════════════════════════════════════════════════
+       RESPONSIVE
+       ═══════════════════════════════════════════════════════════ */
+    @media (max-width: 768px) {
+      .hero h1 { font-size: 1.75rem; }
+      .hero-tagline { font-size: 1rem; }
+
+      ecl-editor { height: 200px; }
+      #editor-loading { height: 200px; }
+
+      .section-title { font-size: 1.4rem; }
+
+      .features-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .ide-clients-row {
+        gap: 10px;
+      }
+
+      .ide-card {
+        width: 90px;
+        padding: 14px 10px;
+      }
+
+      .screenshots-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .code-panels {
+        grid-template-columns: 1fr;
+      }
+
+      .storybook-cards {
+        grid-template-columns: 1fr;
+      }
+
+      .explainer-card {
+        padding: 24px 20px;
+      }
+
+      section {
+        padding: 48px 0;
+      }
+    }
+
+    @media (min-width: 769px) and (max-width: 1024px) {
+      .features-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ═══════════════════════════════════════════════════════════
+       1. NAV BAR
+       ═══════════════════════════════════════════════════════════ -->
+  <nav class="navbar" role="navigation" aria-label="Main navigation">
+    <div class="container">
+      <a href="https://aehrc.github.io/ecl-lsp/" class="navbar-brand">
+        <img src="icon.png" alt="ECL Language Tools icon" width="28" height="28">
+        ECL Language Tools
+      </a>
+      <div class="navbar-links">
+        <a href="https://github.com/aehrc/ecl-lsp" aria-label="GitHub repository" title="GitHub">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+        </a>
+        <a href="https://www.npmjs.com/org/aehrc" aria-label="npm packages" title="npm">
+          <svg viewBox="0 0 780 250" aria-hidden="true"><path d="M240 250h100V50h100v200h100V0H240zM0 0v250h240V50h-90v200H60V50H0z"/></svg>
+        </a>
+      </div>
+    </div>
+  </nav>
+
+  <!-- ═══════════════════════════════════════════════════════════
+       2. HERO
+       ═══════════════════════════════════════════════════════════ -->
+  <section class="hero" role="region" aria-label="Live ECL editor demo">
+    <div class="container">
+      <img src="icon.png" alt="ECL Language Tools logo" class="hero-logo" width="64" height="64">
+      <h1>ECL Language Tools</h1>
+      <p class="hero-tagline">
+        Parse, validate, format, and query SNOMED CT &mdash; in any editor, in the browser, or from Slack.
+      </p>
+
+      <!-- Live Editor -->
+      <div class="editor-wrapper">
+        <div class="editor-titlebar">
+          <span class="editor-dot editor-dot--red"></span>
+          <span class="editor-dot editor-dot--yellow"></span>
+          <span class="editor-dot editor-dot--green"></span>
+          <span class="editor-titlebar-text">expression.ecl</span>
+        </div>
+        <div id="editor-loading">
+          <span class="spinner"></span>
+          Loading ECL editor&hellip;
+        </div>
+        <ecl-editor
+          class="ecl-editor-hidden"
+          theme="vs-dark"
+          fhir-url="https://tx.ontoserver.csiro.au/fhir"
+          semantic-validation
+        >&lt; 404684003 |Clinical finding| :
+  363698007 |Finding site| = &lt;&lt; 39057004 |Pulmonary valve structure|</ecl-editor>
+      </div>
+
+      <div id="fhir-fallback" class="fhir-fallback-banner">
+        Terminology server is currently unavailable. The editor is running in offline mode &mdash; syntax checking is still active.
+      </div>
+
+      <!-- Badges -->
+      <div class="badge-row">
+        <img src="https://img.shields.io/github/actions/workflow/status/aehrc/ecl-lsp/ci.yml?label=CI&style=flat-square&logo=github" alt="CI status" loading="lazy">
+        <img src="https://img.shields.io/badge/ECL-2.2-38bdf8?style=flat-square" alt="ECL 2.2" loading="lazy">
+        <img src="https://img.shields.io/badge/node-%3E%3D18-brightgreen?style=flat-square&logo=node.js" alt="Node.js >= 18" loading="lazy">
+        <img src="https://img.shields.io/github/license/aehrc/ecl-lsp?style=flat-square" alt="License" loading="lazy">
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════════════════════════════
+       3. WHAT IS ECL?
+       ═══════════════════════════════════════════════════════════ -->
+  <section class="what-is-ecl" id="what-is-ecl">
+    <div class="container">
+      <h2 class="section-title">What is ECL?</h2>
+      <div class="explainer-card">
+        <p>
+          <strong>Expression Constraint Language (ECL)</strong> is the standard query language for
+          <strong>SNOMED CT</strong>, the world's most comprehensive clinical terminology. ECL lets you
+          define precise sets of clinical concepts &mdash; from "all types of diabetes" to "any procedure
+          on the left knee" &mdash; using a compact, composable syntax of operators, refinements, and
+          filters.
+        </p>
+        <p style="margin-top: 16px;">
+          ECL Language Tools gives you a full language stack for ECL 2.2: an ANTLR4-based parser, rich
+          diagnostics, intelligent completions, formatting, refactoring, semantic validation against
+          FHIR terminology servers, and ready-to-use integrations for seven editors, the browser, and
+          Slack.
+        </p>
+        <p style="margin-top: 16px;">
+          <a href="https://confluence.ihtsdotools.org/display/DOCECL" target="_blank" rel="noopener">
+            Read the ECL 2.2 specification &rarr;
+          </a>
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════════════════════════════
+       4. FEATURES GRID
+       ═══════════════════════════════════════════════════════════ -->
+  <section id="features">
+    <div class="container">
+      <h2 class="section-title">Features</h2>
+      <p class="section-subtitle">Everything you need to write, understand, and maintain ECL expressions.</p>
+      <div class="features-grid">
+
+        <div class="feature-card">
+          <span class="feature-icon">
+            <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          </span>
+          <h3>Diagnostics</h3>
+          <p>Real-time syntax and semantic error detection with actionable messages, powered by the ANTLR4 parser and FHIR terminology validation.</p>
+        </div>
+
+        <div class="feature-card">
+          <span class="feature-icon">
+            <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+          </span>
+          <h3>Completion</h3>
+          <p>Context-aware suggestions for operators, SNOMED CT concepts, attributes, and refinement patterns triggered as you type.</p>
+        </div>
+
+        <div class="feature-card">
+          <span class="feature-icon">
+            <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+          </span>
+          <h3>Hover Docs</h3>
+          <p>Inline documentation for ECL operators, concept identifiers, and attributes, including descriptions resolved from FHIR.</p>
+        </div>
+
+        <div class="feature-card">
+          <span class="feature-icon">
+            <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="21" y1="10" x2="3" y2="10"/><line x1="21" y1="6" x2="3" y2="6"/><line x1="21" y1="14" x2="3" y2="14"/><line x1="21" y1="18" x2="3" y2="18"/></svg>
+          </span>
+          <h3>Formatting</h3>
+          <p>Opinionated formatter with configurable line width, indentation, and multi-line refinement breaking for consistent, readable expressions.</p>
+        </div>
+
+        <div class="feature-card">
+          <span class="feature-icon">
+            <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+          </span>
+          <h3>Refactoring</h3>
+          <p>Automated code actions: add or remove terms, toggle constraint operators, extract sub-expressions, and normalize whitespace.</p>
+        </div>
+
+        <div class="feature-card">
+          <span class="feature-icon">
+            <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+          </span>
+          <h3>Code Lens</h3>
+          <p>Inline concept counts and membership previews, evaluated live against FHIR terminology servers above each expression.</p>
+        </div>
+
+        <div class="feature-card">
+          <span class="feature-icon">
+            <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+          </span>
+          <h3>Semantic Tokens</h3>
+          <p>Fine-grained syntax highlighting that distinguishes concept IDs, terms, operators, constraints, and filters with distinct colors.</p>
+        </div>
+
+        <div class="feature-card">
+          <span class="feature-icon">
+            <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+          </span>
+          <h3>FHIR Integration</h3>
+          <p>Connects to any FHIR R4 terminology server for live concept lookup, ECL evaluation, value set expansion, and version detection.</p>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════════════════════════════
+       5. IDE CLIENTS
+       ═══════════════════════════════════════════════════════════ -->
+  <section id="editors">
+    <div class="container">
+      <h2 class="section-title">Editor &amp; IDE Support</h2>
+      <p class="section-subtitle">First-class ECL support for the editors you already use.</p>
+      <div class="ide-clients-row">
+
+        <!-- VSCode -->
+        <a href="https://github.com/aehrc/ecl-lsp/tree/main/clients/vscode" class="ide-card" target="_blank" rel="noopener">
+          <div class="ide-card-icon">
+            <svg viewBox="0 0 100 100" fill="none"><mask id="a" maskUnits="userSpaceOnUse" x="0" y="0" width="100" height="100"><path d="M74.8 100c1.3 0 2.6-.3 3.7-1l16.8-9.7c2.3-1.3 3.7-3.8 3.7-6.5V17.2c0-2.7-1.4-5.2-3.7-6.5L78.5 1c-2.5-1.5-5.6-1.2-7.8.6L30 36.3 12.4 22.9a3.3 3.3 0 0 0-4.3.3L1.5 29.5a3.3 3.3 0 0 0 0 4.8L16.9 50 1.5 65.7a3.3 3.3 0 0 0 0 4.8l6.6 6.3a3.3 3.3 0 0 0 4.3.3L30 63.7l40.7 34.7c1.2 1 2.6 1.6 4.1 1.6z" fill="#fff"/></mask><g mask="url(#a)"><path d="M95.3 10.7 78.5 1c-2.5-1.5-5.6-1.2-7.8.6L1.5 65.7a3.3 3.3 0 0 0 0 4.8l6.6 6.3a3.3 3.3 0 0 0 4.3.3l78-59.3c3.4-2.6 8.6-.2 8.6 4v-.6c0-2.7-1.4-5.2-3.7-6.5z" fill="#0065A9"/><g><path d="M95.3 89.3 78.5 99c-2.5 1.5-5.6 1.2-7.8-.6L1.5 34.3a3.3 3.3 0 0 1 0-4.8l6.6-6.3a3.3 3.3 0 0 1 4.3-.3l78 59.3c3.4 2.6 8.6.2 8.6-4v.6c0 2.7-1.4 5.2-3.7 6.5z" fill="#007ACC"/></g><g><path d="M78.5 99c-2.5 1.5-5.6 1.2-7.8-.6 2.7 2.7 7.3.8 7.3-3V4.6c0-3.8-4.6-5.7-7.3-3 2.2-1.8 5.3-2.1 7.8-.6l16.8 9.7c2.3 1.3 3.7 3.8 3.7 6.5v65.6c0 2.7-1.4 5.2-3.7 6.5L78.5 99z" fill="#1F9CF0"/></g></g></svg>
+          </div>
+          <h3>VS Code</h3>
+          <span class="ide-type">Extension</span>
+        </a>
+
+        <!-- IntelliJ -->
+        <a href="https://github.com/aehrc/ecl-lsp/tree/main/clients/intellij" class="ide-card" target="_blank" rel="noopener">
+          <div class="ide-card-icon">
+            <svg viewBox="0 0 70 70"><defs><linearGradient id="ij1" x1="0" y1="35" x2="70" y2="35" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#f97a12"/><stop offset=".46" stop-color="#b07b58"/><stop offset=".72" stop-color="#577bae"/><stop offset="1" stop-color="#1e7ce6"/></linearGradient></defs><rect width="70" height="70" rx="8" fill="url(#ij1)"/><rect x="11" y="11" width="48" height="48" fill="#000"/><text x="17" y="44" fill="#fff" font-family="sans-serif" font-weight="700" font-size="22">IJ</text></svg>
+          </div>
+          <h3>IntelliJ</h3>
+          <span class="ide-type">Plugin</span>
+        </a>
+
+        <!-- Eclipse -->
+        <a href="https://github.com/aehrc/ecl-lsp/tree/main/clients/eclipse" class="ide-card" target="_blank" rel="noopener">
+          <div class="ide-card-icon">
+            <svg viewBox="0 0 70 70"><circle cx="35" cy="35" r="30" fill="#2c2255"/><ellipse cx="35" cy="35" rx="26" ry="10" fill="none" stroke="#f7941e" stroke-width="3"/><ellipse cx="35" cy="35" rx="16" ry="16" fill="none" stroke="#f7941e" stroke-width="3"/></svg>
+          </div>
+          <h3>Eclipse</h3>
+          <span class="ide-type">Plugin</span>
+        </a>
+
+        <!-- Neovim -->
+        <a href="https://github.com/aehrc/ecl-lsp/tree/main/clients/neovim" class="ide-card" target="_blank" rel="noopener">
+          <div class="ide-card-icon">
+            <svg viewBox="0 0 70 70"><rect width="70" height="70" rx="8" fill="#57a143"/><text x="35" y="46" fill="#fff" font-family="sans-serif" font-weight="700" font-size="24" text-anchor="middle">N</text></svg>
+          </div>
+          <h3>Neovim</h3>
+          <span class="ide-type">Config</span>
+        </a>
+
+        <!-- Sublime -->
+        <a href="https://github.com/aehrc/ecl-lsp/tree/main/clients/sublime" class="ide-card" target="_blank" rel="noopener">
+          <div class="ide-card-icon">
+            <svg viewBox="0 0 70 70"><rect width="70" height="70" rx="8" fill="#ff9800"/><text x="35" y="46" fill="#fff" font-family="sans-serif" font-weight="700" font-size="24" text-anchor="middle">S</text></svg>
+          </div>
+          <h3>Sublime</h3>
+          <span class="ide-type">Config</span>
+        </a>
+
+        <!-- Emacs -->
+        <a href="https://github.com/aehrc/ecl-lsp/tree/main/clients/emacs" class="ide-card" target="_blank" rel="noopener">
+          <div class="ide-card-icon">
+            <svg viewBox="0 0 70 70"><rect width="70" height="70" rx="8" fill="#7f5ab6"/><text x="35" y="46" fill="#fff" font-family="sans-serif" font-weight="700" font-size="24" text-anchor="middle">E</text></svg>
+          </div>
+          <h3>Emacs</h3>
+          <span class="ide-type">Config</span>
+        </a>
+
+        <!-- Claude Code -->
+        <a href="https://github.com/aehrc/ecl-lsp/tree/main/clients/claude-code" class="ide-card" target="_blank" rel="noopener">
+          <div class="ide-card-icon">
+            <svg viewBox="0 0 70 70"><rect width="70" height="70" rx="8" fill="#d97706"/><text x="35" y="46" fill="#fff" font-family="sans-serif" font-weight="700" font-size="20" text-anchor="middle">CC</text></svg>
+          </div>
+          <h3>Claude Code</h3>
+          <span class="ide-type">Plugin</span>
+        </a>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════════════════════════════
+       6. SCREENSHOTS
+       ═══════════════════════════════════════════════════════════ -->
+  <section id="screenshots">
+    <div class="container">
+      <h2 class="section-title">In Action</h2>
+      <p class="section-subtitle">Syntax highlighting, diagnostics, completion, and hover docs working together.</p>
+      <div class="screenshots-grid">
+
+        <figure class="screenshot-card">
+          <img src="images/syntax-highlighting.png" alt="ECL syntax highlighting with semantic tokens distinguishing concept IDs, terms, operators, and constraints" loading="lazy" width="800" height="450">
+          <figcaption>Syntax Highlighting</figcaption>
+        </figure>
+
+        <figure class="screenshot-card">
+          <img src="images/error-diagnostics.png" alt="Real-time error diagnostics with inline messages showing syntax and semantic errors" loading="lazy" width="800" height="450">
+          <figcaption>Error Diagnostics</figcaption>
+        </figure>
+
+        <figure class="screenshot-card">
+          <img src="images/autocompletion.png" alt="Context-aware autocompletion showing SNOMED CT concept suggestions" loading="lazy" width="800" height="450">
+          <figcaption>Autocompletion</figcaption>
+        </figure>
+
+        <figure class="screenshot-card">
+          <img src="images/hover-info.png" alt="Hover information displaying concept details and operator documentation" loading="lazy" width="800" height="450">
+          <figcaption>Hover Information</figcaption>
+        </figure>
+
+        <figure class="screenshot-card screenshot-full">
+          <img src="images/dark-theme.png" alt="ECL editor in dark theme showing a complex expression with refinements and filters" loading="lazy" width="1200" height="450">
+          <figcaption>Dark Theme &mdash; Full Editor View</figcaption>
+        </figure>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════════════════════════════
+       7. NPM PACKAGES
+       ═══════════════════════════════════════════════════════════ -->
+  <section id="packages">
+    <div class="container">
+      <h2 class="section-title">npm Packages</h2>
+      <p class="section-subtitle">Install what you need. Every package is scoped under <code>@aehrc</code>.</p>
+      <div class="packages-table-wrapper">
+        <table class="packages-table">
+          <thead>
+            <tr>
+              <th>Package</th>
+              <th>Description</th>
+              <th>Install</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><a href="https://www.npmjs.com/package/@aehrc/ecl-core" target="_blank" rel="noopener" class="pkg-name">@aehrc/ecl-core</a></td>
+              <td class="pkg-desc">Zero-dependency core: parser, AST, formatter, completion, refactoring, validation, terminology</td>
+              <td>
+                <span class="install-cmd">
+                  <span>npm i @aehrc/ecl-core</span>
+                  <button class="copy-btn" data-cmd="npm i @aehrc/ecl-core" aria-label="Copy install command">
+                    <svg class="copy-icon-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                    <svg class="copy-icon-check" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+                  </button>
+                </span>
+              </td>
+            </tr>
+            <tr>
+              <td><a href="https://www.npmjs.com/package/@aehrc/ecl-lsp-server" target="_blank" rel="noopener" class="pkg-name">@aehrc/ecl-lsp-server</a></td>
+              <td class="pkg-desc">Language Server Protocol server for any LSP-compatible editor</td>
+              <td>
+                <span class="install-cmd">
+                  <span>npm i @aehrc/ecl-lsp-server</span>
+                  <button class="copy-btn" data-cmd="npm i @aehrc/ecl-lsp-server" aria-label="Copy install command">
+                    <svg class="copy-icon-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                    <svg class="copy-icon-check" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+                  </button>
+                </span>
+              </td>
+            </tr>
+            <tr>
+              <td><a href="https://www.npmjs.com/package/@aehrc/ecl-editor-react" target="_blank" rel="noopener" class="pkg-name">@aehrc/ecl-editor-react</a></td>
+              <td class="pkg-desc">React component with Monaco editor, FHIR integration, and all language features</td>
+              <td>
+                <span class="install-cmd">
+                  <span>npm i @aehrc/ecl-editor-react</span>
+                  <button class="copy-btn" data-cmd="npm i @aehrc/ecl-editor-react" aria-label="Copy install command">
+                    <svg class="copy-icon-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                    <svg class="copy-icon-check" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+                  </button>
+                </span>
+              </td>
+            </tr>
+            <tr>
+              <td><a href="https://www.npmjs.com/package/@aehrc/ecl-editor" target="_blank" rel="noopener" class="pkg-name">@aehrc/ecl-editor</a></td>
+              <td class="pkg-desc">Web component <code>&lt;ecl-editor&gt;</code> for any framework or plain HTML</td>
+              <td>
+                <span class="install-cmd">
+                  <span>npm i @aehrc/ecl-editor</span>
+                  <button class="copy-btn" data-cmd="npm i @aehrc/ecl-editor" aria-label="Copy install command">
+                    <svg class="copy-icon-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                    <svg class="copy-icon-check" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+                  </button>
+                </span>
+              </td>
+            </tr>
+            <tr>
+              <td><a href="https://www.npmjs.com/package/@aehrc/ecl-editor-core" target="_blank" rel="noopener" class="pkg-name">@aehrc/ecl-editor-core</a></td>
+              <td class="pkg-desc">Monaco editor integration core: language registration, markers, completions, hover</td>
+              <td>
+                <span class="install-cmd">
+                  <span>npm i @aehrc/ecl-editor-core</span>
+                  <button class="copy-btn" data-cmd="npm i @aehrc/ecl-editor-core" aria-label="Copy install command">
+                    <svg class="copy-icon-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                    <svg class="copy-icon-check" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+                  </button>
+                </span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════════════════════════════
+       8. CODE EXAMPLES
+       ═══════════════════════════════════════════════════════════ -->
+  <section id="examples">
+    <div class="container">
+      <h2 class="section-title">Get Started</h2>
+      <p class="section-subtitle">Add an ECL editor to your app in under a minute.</p>
+      <div class="code-panels">
+
+        <!-- React Panel -->
+        <div class="code-panel">
+          <div class="code-panel-header">
+            <span class="code-panel-badge badge-react">React</span>
+            App.tsx
+          </div>
+          <div class="code-block"><pre><span class="syn-kw">import</span> { <span class="syn-type">EclEditor</span> } <span class="syn-kw">from</span> <span class="syn-str">'@aehrc/ecl-editor-react'</span>;
+
+<span class="syn-kw">export default</span> <span class="syn-kw">function</span> <span class="syn-fn">App</span>() {
+  <span class="syn-kw">return</span> (
+    <span class="syn-punc">&lt;</span><span class="syn-type">EclEditor</span>
+      <span class="syn-attr">fhirUrl</span><span class="syn-op">=</span><span class="syn-str">"https://tx.ontoserver.csiro.au/fhir"</span>
+      <span class="syn-attr">theme</span><span class="syn-op">=</span><span class="syn-str">"vs-dark"</span>
+      <span class="syn-attr">semanticValidation</span>
+      <span class="syn-attr">onChange</span><span class="syn-op">=</span>{(<span class="syn-attr">ecl</span>) <span class="syn-kw">=&gt;</span> <span class="syn-fn">console</span>.<span class="syn-fn">log</span>(<span class="syn-attr">ecl</span>)}
+    <span class="syn-punc">/&gt;</span>
+  );
+}</pre></div>
+        </div>
+
+        <!-- Web Component Panel -->
+        <div class="code-panel">
+          <div class="code-panel-header">
+            <span class="code-panel-badge badge-html">HTML</span>
+            index.html
+          </div>
+          <div class="code-block"><pre><span class="syn-punc">&lt;</span><span class="syn-tag">script</span> <span class="syn-attr">src</span><span class="syn-op">=</span><span class="syn-str">"https://unpkg.com/
+  @aehrc/ecl-editor@^1.0.0/
+  dist-standalone/
+  ecl-editor.standalone.js"</span><span class="syn-punc">&gt;&lt;/</span><span class="syn-tag">script</span><span class="syn-punc">&gt;</span>
+
+<span class="syn-punc">&lt;</span><span class="syn-tag">ecl-editor</span>
+  <span class="syn-attr">theme</span><span class="syn-op">=</span><span class="syn-str">"vs-dark"</span>
+  <span class="syn-attr">fhir-url</span><span class="syn-op">=</span><span class="syn-str">"https://tx.ontoserver.csiro.au/fhir"</span>
+  <span class="syn-attr">semantic-validation</span>
+<span class="syn-punc">&gt;</span><span class="syn-cmt">&lt;!-- initial ECL here --&gt;</span><span class="syn-punc">&lt;/</span><span class="syn-tag">ecl-editor</span><span class="syn-punc">&gt;</span>
+
+<span class="syn-punc">&lt;</span><span class="syn-tag">script</span><span class="syn-punc">&gt;</span>
+  <span class="syn-kw">const</span> <span class="syn-attr">editor</span> <span class="syn-op">=</span> document.<span class="syn-fn">querySelector</span>(<span class="syn-str">'ecl-editor'</span>);
+  editor.<span class="syn-fn">addEventListener</span>(<span class="syn-str">'ecl-change'</span>, <span class="syn-attr">e</span> <span class="syn-kw">=&gt;</span> {
+    <span class="syn-fn">console</span>.<span class="syn-fn">log</span>(<span class="syn-attr">e</span>.detail);
+  });
+<span class="syn-punc">&lt;/</span><span class="syn-tag">script</span><span class="syn-punc">&gt;</span></pre></div>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════════════════════════════
+       9. STORYBOOK LINKS
+       ═══════════════════════════════════════════════════════════ -->
+  <section id="storybook">
+    <div class="container">
+      <h2 class="section-title">Interactive Demos</h2>
+      <p class="section-subtitle">Explore the editor components in Storybook with live controls.</p>
+      <div class="storybook-cards">
+
+        <a href="react/" class="storybook-card">
+          <div class="storybook-icon">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M12 2L2 7l10 5 10-5-10-5z" fill="#ff4785" opacity="0.8"/><path d="M2 17l10 5 10-5" stroke="#ff4785" stroke-width="2" fill="none"/><path d="M2 12l10 5 10-5" stroke="#ff4785" stroke-width="2" fill="none"/></svg>
+          </div>
+          <div class="storybook-info">
+            <h3>React Storybook</h3>
+            <p>EclEditor component with props playground</p>
+          </div>
+        </a>
+
+        <a href="web-component/" class="storybook-card">
+          <div class="storybook-icon">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M12 2L2 7l10 5 10-5-10-5z" fill="#ff4785" opacity="0.8"/><path d="M2 17l10 5 10-5" stroke="#ff4785" stroke-width="2" fill="none"/><path d="M2 12l10 5 10-5" stroke="#ff4785" stroke-width="2" fill="none"/></svg>
+          </div>
+          <div class="storybook-info">
+            <h3>Web Component Storybook</h3>
+            <p>&lt;ecl-editor&gt; element with attribute controls</p>
+          </div>
+        </a>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════════════════════════════
+       10. FOOTER
+       ═══════════════════════════════════════════════════════════ -->
+  <footer class="footer">
+    <div class="container">
+      <p>
+        Built by <a href="https://aehrc.csiro.au/" target="_blank" rel="noopener">CSIRO's Australian e-Health Research Centre</a>.
+        Licensed under <a href="https://github.com/aehrc/ecl-lsp/blob/main/LICENSE" target="_blank" rel="noopener">Apache 2.0</a>.
+      </p>
+      <div class="footer-links">
+        <a href="https://github.com/aehrc/ecl-lsp" target="_blank" rel="noopener">GitHub</a>
+        <a href="https://www.npmjs.com/org/aehrc" target="_blank" rel="noopener">npm</a>
+        <a href="https://confluence.ihtsdotools.org/display/DOCECL" target="_blank" rel="noopener">ECL 2.2 Specification</a>
+        <a href="https://www.snomed.org/" target="_blank" rel="noopener">SNOMED International</a>
+      </div>
+    </div>
+  </footer>
+
+  <!-- ═══════════════════════════════════════════════════════════
+       SCRIPTS
+       ═══════════════════════════════════════════════════════════ -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.52.2/min/vs/loader.min.js"></script>
+  <script src="https://unpkg.com/@aehrc/ecl-editor@^1.0.0/dist-standalone/ecl-editor.standalone.js"></script>
+
+  <script>
+    /* ── Monaco AMD Loader ────────────────────────────────── */
+    (function () {
+      var editorEl = document.querySelector('ecl-editor');
+      var loadingEl = document.getElementById('editor-loading');
+
+      if (typeof require !== 'undefined' && require.config) {
+        require.config({
+          paths: {
+            vs: 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.52.2/min/vs'
+          }
+        });
+
+        require(['vs/editor/editor.main'], function () {
+          if (loadingEl) loadingEl.style.display = 'none';
+          if (editorEl) editorEl.classList.remove('ecl-editor-hidden');
+        });
+      } else {
+        setTimeout(function () {
+          if (loadingEl) loadingEl.style.display = 'none';
+          if (editorEl) editorEl.classList.remove('ecl-editor-hidden');
+        }, 5000);
+      }
+
+      /* ── FHIR Health Check ────────────────────────────────── */
+      var fhirUrl = 'https://tx.ontoserver.csiro.au/fhir';
+      var fallbackBanner = document.getElementById('fhir-fallback');
+
+      fetch(fhirUrl + '/metadata', {
+        method: 'GET',
+        headers: { Accept: 'application/fhir+json' },
+        signal: AbortSignal.timeout ? AbortSignal.timeout(8000) : undefined
+      })
+        .then(function (res) {
+          if (!res.ok) throw new Error('FHIR server returned ' + res.status);
+        })
+        .catch(function () {
+          if (fallbackBanner) fallbackBanner.classList.add('visible');
+        });
+
+      /* ── Mobile: read-only + shorter editor ──────────────── */
+      if ('ontouchstart' in window || navigator.maxTouchPoints > 0) {
+        if (editorEl) {
+          editorEl.setAttribute('read-only', '');
+          editorEl.style.height = '200px';
+        }
+        if (loadingEl) loadingEl.style.height = '200px';
+      }
+    })();
+
+    /* ── Copy to Clipboard ──────────────────────────────────── */
+    (function () {
+      document.querySelectorAll('.copy-btn').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var cmd = btn.getAttribute('data-cmd');
+          if (!cmd) return;
+
+          navigator.clipboard.writeText(cmd).then(function () {
+            btn.classList.add('copied');
+            btn.style.color = '#4ade80';
+            setTimeout(function () {
+              btn.classList.remove('copied');
+              btn.style.color = '';
+            }, 1500);
+          });
+        });
+      });
+    })();
+  </script>
+
+</body>
+</html>

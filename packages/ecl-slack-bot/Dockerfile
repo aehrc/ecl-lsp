@@ -22,10 +22,16 @@ RUN npm ci --ignore-scripts
 COPY packages/ecl-core/ packages/ecl-core/
 COPY packages/ecl-slack-bot/ packages/ecl-slack-bot/
 
-# Compile ecl-core (tsc -b directly — generated ANTLR parser files are already
-# in the source tree, so we skip the precompile antlr4ts hook which needs Java)
-# Then compile ecl-slack-bot
-RUN cd packages/ecl-core && npx tsc -b && cd ../ecl-slack-bot && npx tsc -b
+# Compile ecl-core (tsc outputs to dist-tsc/; copy to dist/ and alias
+# index.js as index.cjs so the package.json main/exports fields resolve).
+# Generated ANTLR parser files are already in the source tree,
+# so we skip the precompile antlr4ts hook which needs Java.
+# Then compile ecl-slack-bot.
+RUN cd packages/ecl-core \
+    && npx tsc -b \
+    && cp -r dist-tsc dist \
+    && cp dist/index.js dist/index.cjs \
+    && cd ../ecl-slack-bot && npx tsc -b
 
 # ── Stage 2: Production ──────────────────────────────────────────────
 FROM node:22-alpine

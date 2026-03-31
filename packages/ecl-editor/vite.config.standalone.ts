@@ -28,7 +28,7 @@ export default defineConfig({
       },
     },
     outDir: 'dist-standalone',
-    sourcemap: true,
+    sourcemap: false,
     minify: true,
   },
 });

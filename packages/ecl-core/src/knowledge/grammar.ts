@@ -48,6 +48,14 @@ ancestorOf          = ">"
 ancestorOrSelfOf    = ">>"
 parentOf            = ">!"
 parentOrSelfOf      = ">>!"
+\`\`\`
+
+## Operator Composability
+
+All constraint operators (\`<\`, \`<<\`, \`>\`, \`>>\`, \`<!\`, \`>!\`, \`!!<\`, \`!!>\`) can be applied to **subexpressions in parentheses**, not just single concepts. This means \`!!<(S)\` computes "leaf-most within S", not "global leaves intersected with S".
+
+\`\`\`ecl
+!!< (<< 404684003 |Clinical finding| AND ^929360061000036106)
 \`\`\``,
     examples: [],
     related: ['grammar:structure'],

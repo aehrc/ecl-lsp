@@ -173,26 +173,42 @@ Useful in refinements to match any attribute value:
     id: 'op:top',
     category: 'operator',
     name: 'Top (!!>)',
-    summary: 'The root concept (SNOMED CT Concept)',
-    content: `The \`!!>\` operator matches the root concept (SNOMED CT Concept 138875005).
+    summary: 'Root concept, or root-most concepts within a set',
+    content: `The \`!!>\` operator has two forms:
 
+**Bare — all global root concepts:**
 \`\`\`ecl
 !!>
-\`\`\``,
-    examples: ['!!>'],
+\`\`\`
+
+**Scoped — root-most concepts within a set:**
+\`\`\`ecl
+!!> (<< 404684003 |Clinical finding| AND ^929360061000036106)
+\`\`\`
+
+The scoped form finds concepts in the set that have no *ancestors* also in the set — equivalent to \`S MINUS < S\` but more concise.`,
+    examples: ['!!>', '!!> (<< 404684003 |Clinical finding| AND ^929360061000036106)'],
     related: ['op:bottom'],
   },
   {
     id: 'op:bottom',
     category: 'operator',
     name: 'Bottom (!!<)',
-    summary: 'Leaf concepts (no children)',
-    content: `The \`!!<\` operator matches leaf concepts — concepts that have no children.
+    summary: 'Leaf concepts, or leaf-most concepts within a set',
+    content: `The \`!!<\` operator has two forms:
 
+**Bare — all global leaf concepts:**
 \`\`\`ecl
 !!<
-\`\`\``,
-    examples: ['!!<'],
+\`\`\`
+
+**Scoped — leaf-most concepts within a set:**
+\`\`\`ecl
+!!< (> 123456789 AND ^929360061000036106)
+\`\`\`
+
+The scoped form finds concepts in the set that have no *descendants* also in the set — equivalent to \`S MINUS > S\` but more concise. Useful for navigating polyhierarchies where you want the most specific matching concepts.`,
+    examples: ['!!<', '!!< (> 123456789 AND ^929360061000036106)'],
     related: ['op:top'],
   },
   {
@@ -308,11 +324,13 @@ export const operatorHoverDocs: OperatorHoverDoc[] = [
   },
   {
     operator: '!!>',
-    markdown: '**Top**\n\nMatches the root concept (SNOMED CT Concept 138875005).\n\n**Example:**\n```ecl\n!!>\n```',
+    markdown:
+      '**Top**\n\nBare: matches the root concept. Scoped: `!!> (S)` finds root-most concepts within set S (those with no ancestors in S).\n\n**Examples:**\n```ecl\n!!>\n!!> (<< 404684003 AND ^929360061000036106)\n```',
   },
   {
     operator: '!!<',
-    markdown: '**Bottom**\n\nMatches leaf concepts (concepts with no children).\n\n**Example:**\n```ecl\n!!<\n```',
+    markdown:
+      '**Bottom**\n\nBare: matches leaf concepts (no children). Scoped: `!!< (S)` finds leaf-most concepts within set S (those with no descendants in S).\n\n**Examples:**\n```ecl\n!!<\n!!< (> 123456789 AND ^929360061000036106)\n```',
   },
   {
     operator: 'AND',

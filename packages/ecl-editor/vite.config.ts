@@ -12,7 +12,7 @@ export default defineConfig({
     rollupOptions: {
       external: ['monaco-editor', '@aehrc/ecl-editor-core', '@aehrc/ecl-core'],
     },
-    sourcemap: true,
+    sourcemap: false,
     minify: false,
   },
 });

@@ -150,6 +150,28 @@ Three matching modes:
     related: ['pattern:disorders-by-site'],
   },
   {
+    id: 'pattern:leaf-most',
+    category: 'pattern',
+    name: 'Leaf-Most Within a Set',
+    summary: 'Find the most specific matching concepts in a polyhierarchy',
+    content: `Find concepts in a set that have no descendants also in that set:
+
+\`\`\`ecl
+!!< (> 123456789 AND ^929360061000036106)
+\`\`\`
+
+This is useful for navigating polyhierarchies where you want the most specific matching concepts. All constraint operators (including \`!!<\` and \`!!>\`) can take subexpressions as their operand.
+
+The equivalent long-form is \`S MINUS > S\`:
+\`\`\`ecl
+(> 123456789 AND ^929360061000036106)
+MINUS
+> (> 123456789 AND ^929360061000036106)
+\`\`\``,
+    examples: ['!!< (> 123456789 AND ^929360061000036106)'],
+    related: ['op:bottom', 'op:top'],
+  },
+  {
     id: 'pattern:history-supplement',
     category: 'pattern',
     name: 'Include Historical Associations',

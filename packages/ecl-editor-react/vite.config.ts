@@ -21,7 +21,7 @@ export default defineConfig({
         '@aehrc/ecl-core',
       ],
     },
-    sourcemap: true,
+    sourcemap: false,
     minify: false,
   },
 });

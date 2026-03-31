@@ -16,8 +16,16 @@
     "url": "https://github.com/aehrc/ecl-lsp/issues"
   },
   "description": "Core ECL parsing, formatting, validation, and terminology library",
-  "main": "dist/index.js",
+  "main": "dist/index.cjs",
+  "module": "dist/index.mjs",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.cjs"
+    }
+  },
   "files": [
     "dist/**",
     "!dist/test/",
@@ -27,10 +35,10 @@
     "prepack": "node -e \"require('fs').copyFileSync('../../LICENSE','LICENSE')\"",
     "antlr4ts": "antlr4ts -visitor -no-listener -o src/parser/generated ../../grammar/*.g4",
     "precompile": "npm run antlr4ts",
-    "compile": "tsc -b",
+    "compile": "tsc -b && vite build",
     "watch": "tsc -b --watch",
     "clean": "rimraf dist src/parser/generated",
-    "test": "npm run compile && node --test dist/test/*.test.js"
+    "test": "tsc -b && node --test dist-tsc/test/*.test.js"
   },
   "engines": {
     "node": ">=20.0.0"
@@ -42,10 +50,13 @@
     "node-fetch": "^2.7.0"
   },
   "devDependencies": {
-    "typescript": "^5.3.3",
     "@types/node": "^20.10.6",
     "@types/node-fetch": "^2.6.9",
+    "antlr4ts-cli": "^0.5.0-alpha.4",
     "rimraf": "^5.0.5",
-    "antlr4ts-cli": "^0.5.0-alpha.4"
+    "typescript": "^5.3.3",
+    "vite": "^6.4.1",
+    "vite-plugin-dts": "^4.5.4",
+    "vite-plugin-node-polyfills": "^0.25.0"
   }
 }

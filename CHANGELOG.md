@@ -18,7 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Shared language registration**: Web component now shares a single `registerEclLanguage` call across multiple `<ecl-editor>` instances, preventing duplicate hover tooltips and completions
 - **Line highlight disabled**: `renderLineHighlight: 'none'` for cleaner embedded appearance
 
-## [1.0.1] - 2026-03-27
+## [1.0.2] - 2026-03-31
 
 ### Fixed
 

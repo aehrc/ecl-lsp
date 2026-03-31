@@ -86,6 +86,14 @@ jobs:
         with:
           name: compiled-output
 
+      - name: Rewrite workspace refs to registry versions
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          for pkg in ecl-core ecl-lsp-server ecl-editor-core ecl-editor-react ecl-editor; do
+            sed -i "s|\"file:../ecl-core\"|\"^$VERSION\"|g" "packages/$pkg/package.json"
+            sed -i "s|\"file:../ecl-editor-core\"|\"^$VERSION\"|g" "packages/$pkg/package.json"
+          done
+
       - name: Publish npm packages
         run: |
           for pkg in ecl-core ecl-lsp-server ecl-editor-core ecl-editor-react ecl-editor; do

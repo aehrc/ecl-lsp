@@ -259,6 +259,6 @@
     "esbuild": "^0.25.12",
     "mocha": "^10.7.3",
     "rimraf": "^5.0.5",
-    "typescript": "^5.3.3"
+    "typescript": "^6.0.2"
   }
 }

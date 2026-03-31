@@ -1,6 +1,6 @@
 {
   "name": "@aehrc/ecl-lsp-server",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "publishConfig": {
     "access": "public"
   },

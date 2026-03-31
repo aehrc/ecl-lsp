@@ -18,6 +18,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Shared language registration**: Web component now shares a single `registerEclLanguage` call across multiple `<ecl-editor>` instances, preventing duplicate hover tooltips and completions
 - **Line highlight disabled**: `renderLineHighlight: 'none'` for cleaner embedded appearance
 
+## [1.0.4] - 2026-04-01
+
+### Fixed
+
+- **Uncaught errors from Monaco providers**: Added try-catch to the completion provider, code action resolver, and filter completion enrichment so FHIR server errors during incomplete ECL editing return empty results instead of uncaught promise rejections.
+
 ## [1.0.3] - 2026-03-31
 
 ### Fixed

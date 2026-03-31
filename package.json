@@ -1,6 +1,6 @@
 {
   "name": "ecl-lsp",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Language Server Protocol implementation for SNOMED CT Expression Constraint Language (ECL)",
   "private": true,
   "workspaces": [

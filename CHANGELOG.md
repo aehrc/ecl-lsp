@@ -18,6 +18,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Shared language registration**: Web component now shares a single `registerEclLanguage` call across multiple `<ecl-editor>` instances, preventing duplicate hover tooltips and completions
 - **Line highlight disabled**: `renderLineHighlight: 'none'` for cleaner embedded appearance
 
+## [1.0.3] - 2026-03-31
+
+### Fixed
+
+- **ecl-core browser compatibility**: Switched ecl-core to a Vite bundle that inlines antlr4ts with assert/util polyfills. Browser consumers (Webpack 5, CRA) no longer need Node builtin polyfill configuration.
+- **Removed sourcemaps from all published packages**: Sourcemaps referenced src/\*.ts files not included in npm packages, causing warnings for consumers.
+
+### Changed
+
+- **ECL knowledge guides**: Updated `!!<` and `!!>` operator docs to show both bare and scoped (subexpression) forms. Added "Leaf-Most Within a Set" pattern. Added operator composability note to grammar reference.
+
 ## [1.0.2] - 2026-03-31
 
 ### Fixed

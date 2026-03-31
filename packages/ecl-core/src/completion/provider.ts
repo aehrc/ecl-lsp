@@ -217,6 +217,7 @@ export function extractConceptSearchQuery(textBeforeCursor: string): ConceptSear
  * Async wrapper around getCompletionItems that also searches for concepts
  * via the terminology service when the user appears to be typing a term.
  */
+// eslint-disable-next-line sonarjs/cognitive-complexity -- error boundaries for FHIR calls add nesting
 export async function getCompletionItemsWithSearch(
   inExpression: boolean,
   textBeforeCursor: string,
@@ -235,31 +236,35 @@ export async function getCompletionItemsWithSearch(
 
   // FHIR filter enrichment: if cursor is in a filter after-equals for typeId/dialectId/moduleId,
   // fetch FHIR-powered completions and merge with base items (deduplicated by concept code)
-  const filterCtx = detectFilterContext(textBeforeCursor);
-  if (filterCtx?.kind === 'filter-block') {
-    const sub = filterCtx.subContext;
-    if (typeof sub === 'object' && sub.keyword) {
-      const keyword = sub.keyword.toLowerCase();
-      if (keyword in FILTER_ECL_CONSTRAINTS) {
-        const fhirItems = await getFhirFilterCompletions(keyword, terminologyService);
-        if (fhirItems.length > 0) {
-          // Deduplicate: extract concept codes from static items
-          const staticCodes = new Set(
-            baseItems
-              .map((item) => {
-                const codeMatch = /^(\d{6,18})\s/.exec(typeof item.label === 'string' ? item.label : '');
-                return codeMatch ? codeMatch[1] : null;
-              })
-              .filter((code): code is string => code !== null),
-          );
-          const uniqueFhirItems = fhirItems.filter((item) => {
-            const codeMatch = /^(\d{6,18})\s/.exec(typeof item.label === 'string' ? item.label : '');
-            return codeMatch ? !staticCodes.has(codeMatch[1]) : true;
-          });
-          return [...baseItems, ...uniqueFhirItems];
+  try {
+    const filterCtx = detectFilterContext(textBeforeCursor);
+    if (filterCtx?.kind === 'filter-block') {
+      const sub = filterCtx.subContext;
+      if (typeof sub === 'object' && sub.keyword) {
+        const keyword = sub.keyword.toLowerCase();
+        if (keyword in FILTER_ECL_CONSTRAINTS) {
+          const fhirItems = await getFhirFilterCompletions(keyword, terminologyService);
+          if (fhirItems.length > 0) {
+            // Deduplicate: extract concept codes from static items
+            const staticCodes = new Set(
+              baseItems
+                .map((item) => {
+                  const codeMatch = /^(\d{6,18})\s/.exec(typeof item.label === 'string' ? item.label : '');
+                  return codeMatch ? codeMatch[1] : null;
+                })
+                .filter((code): code is string => code !== null),
+            );
+            const uniqueFhirItems = fhirItems.filter((item) => {
+              const codeMatch = /^(\d{6,18})\s/.exec(typeof item.label === 'string' ? item.label : '');
+              return codeMatch ? !staticCodes.has(codeMatch[1]) : true;
+            });
+            return [...baseItems, ...uniqueFhirItems];
+          }
         }
       }
     }
+  } catch {
+    // Graceful degradation — return base items if filter enrichment fails
   }
 
   const searchResult = extractConceptSearchQuery(currentLine.substring(0, cursorColumn));

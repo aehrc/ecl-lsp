@@ -74,26 +74,30 @@ export function createCodeActionProvider(
     async resolveCodeAction(
       codeAction: Monaco.languages.CodeAction & { _coreAction?: CoreCodeAction },
     ): Promise<Monaco.languages.CodeAction> {
-      const coreAction = codeAction._coreAction;
-      if (!coreAction?.data || !lastModelUri) return codeAction;
+      try {
+        const coreAction = codeAction._coreAction;
+        if (!coreAction?.data || !lastModelUri) return codeAction;
 
-      const service = getTerminologyService();
-      if (!service) return codeAction;
+        const service = getTerminologyService();
+        if (!service) return codeAction;
 
-      // Resolve the action via ecl-core (FHIR calls happen here)
-      const resolved = await resolveAddDisplayTerms(coreAction, service);
-      if (resolved.edits) {
-        codeAction.edit = buildWorkspaceEdit(lastModelUri, resolved.edits);
+        // Resolve the action via ecl-core (FHIR calls happen here)
+        const resolved = await resolveAddDisplayTerms(coreAction, service);
+        if (resolved.edits) {
+          codeAction.edit = buildWorkspaceEdit(lastModelUri, resolved.edits);
+          return codeAction;
+        }
+
+        const simplifyResolved = await resolveUnifiedSimplify(coreAction, service);
+        if (simplifyResolved.edits) {
+          codeAction.edit = buildWorkspaceEdit(lastModelUri, simplifyResolved.edits);
+          return codeAction;
+        }
+
+        return codeAction;
+      } catch {
         return codeAction;
       }
-
-      const simplifyResolved = await resolveUnifiedSimplify(coreAction, service);
-      if (simplifyResolved.edits) {
-        codeAction.edit = buildWorkspaceEdit(lastModelUri, simplifyResolved.edits);
-        return codeAction;
-      }
-
-      return codeAction;
     },
   };
 }

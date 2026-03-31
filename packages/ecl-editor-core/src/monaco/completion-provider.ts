@@ -83,43 +83,47 @@ export function createCompletionProvider(
       model: Monaco.editor.ITextModel,
       position: Monaco.Position,
     ): Promise<Monaco.languages.CompletionList> => {
-      const text = model.getValue();
-      const line0 = position.lineNumber - 1; // 0-based
+      try {
+        const text = model.getValue();
+        const line0 = position.lineNumber - 1; // 0-based
 
-      // Compute the text before cursor within the whole document
-      const textBeforeCursor = model.getValueInRange({
-        startLineNumber: 1,
-        startColumn: 1,
-        endLineNumber: position.lineNumber,
-        endColumn: position.column,
-      });
+        // Compute the text before cursor within the whole document
+        const textBeforeCursor = model.getValueInRange({
+          startLineNumber: 1,
+          startColumn: 1,
+          endLineNumber: position.lineNumber,
+          endColumn: position.column,
+        });
 
-      const currentLine = model.getLineContent(position.lineNumber);
-      const cursorColumn = position.column - 1; // 0-based
-      const inExpression = isInsideExpression(text, line0);
+        const currentLine = model.getLineContent(position.lineNumber);
+        const cursorColumn = position.column - 1; // 0-based
+        const inExpression = isInsideExpression(text, line0);
 
-      const service = getTerminologyService();
-      const coreItems: CoreCompletionItem[] = await getCompletionItemsWithSearch(
-        inExpression,
-        textBeforeCursor,
-        currentLine,
-        cursorColumn,
-        line0,
-        service ?? null,
-      );
+        const service = getTerminologyService();
+        const coreItems: CoreCompletionItem[] = await getCompletionItemsWithSearch(
+          inExpression,
+          textBeforeCursor,
+          currentLine,
+          cursorColumn,
+          line0,
+          service ?? null,
+        );
 
-      const word = model.getWordUntilPosition(position);
-      const range: Monaco.IRange = {
-        startLineNumber: position.lineNumber,
-        startColumn: word.startColumn,
-        endLineNumber: position.lineNumber,
-        endColumn: word.endColumn,
-      };
+        const word = model.getWordUntilPosition(position);
+        const range: Monaco.IRange = {
+          startLineNumber: position.lineNumber,
+          startColumn: word.startColumn,
+          endLineNumber: position.lineNumber,
+          endColumn: word.endColumn,
+        };
 
-      return {
-        incomplete: true,
-        suggestions: coreItems.map((item) => mapCompletionItem(item, range, model)),
-      };
+        return {
+          incomplete: true,
+          suggestions: coreItems.map((item) => mapCompletionItem(item, range, model)),
+        };
+      } catch {
+        return { incomplete: true, suggestions: [] };
+      }
     },
   };
 }

@@ -229,6 +229,22 @@ describe('extractEclFromProse', () => {
     assert.strictEqual(extractEclFromProse('try * : 363698007 = << 39057004'), '* : 363698007 = << 39057004');
   });
 
+  it('should preserve closing brace in attribute group', () => {
+    assert.strictEqual(
+      extractEclFromProse('try << 404684003 : { 363698007 = << 39057004 }'),
+      '<< 404684003 : { 363698007 = << 39057004 }',
+    );
+  });
+
+  it('should preserve closing brace with trailing prose', () => {
+    assert.strictEqual(
+      extractEclFromProse(
+        'evaluate (< 763158003 AND ^ 929360061000036106): 127489000 = 395814003, { 127489000 = 395814003 } please',
+      ),
+      '(< 763158003 AND ^ 929360061000036106): 127489000 = 395814003, { 127489000 = 395814003 }',
+    );
+  });
+
   it('should handle bare concept ID in prose', () => {
     assert.strictEqual(extractEclFromProse('what is 404684003'), '404684003');
   });

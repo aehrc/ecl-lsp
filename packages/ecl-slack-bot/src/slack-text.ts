@@ -64,14 +64,14 @@ export function extractEclFromProse(text: string): string {
   if (!eclStart) return trimmed; // No ECL-like content found — pass through as-is
 
   // 4. Find where ECL ends: scan backwards from the end to find the last
-  //    ECL-like character: ) | > digit or wildcard
+  //    ECL-like character: ) } | > digit or wildcard
   const candidate = trimmed.slice(eclStart.index);
   let endIdx = candidate.length;
 
   // Walk backwards past trailing non-ECL characters (letters, punctuation like ? !)
   while (endIdx > 0) {
     const ch = candidate[endIdx - 1];
-    if (')>*|'.includes(ch) || (ch >= '0' && ch <= '9')) break;
+    if (')}>*|'.includes(ch) || (ch >= '0' && ch <= '9')) break;
     endIdx--;
   }
 

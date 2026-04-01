@@ -7,7 +7,7 @@ import {
   unescapeSlackHtml,
   stripMention,
   stripSlackFormatting,
-  extractEclFromProse,
+  extractBacktickExpressions,
   cleanSlackEventText,
   cleanSlackCommandText,
 } from '../slack-text';
@@ -96,22 +96,73 @@ describe('stripSlackFormatting', () => {
   });
 });
 
+// ── extractBacktickExpressions ──────────────────────────────────────────
+
+describe('extractBacktickExpressions', () => {
+  it('should return empty array when no backticks', () => {
+    assert.deepStrictEqual(extractBacktickExpressions('<< 404684003'), []);
+  });
+
+  it('should extract single backtick expression', () => {
+    assert.deepStrictEqual(extractBacktickExpressions('check `<< 404684003` please'), ['<< 404684003']);
+  });
+
+  it('should extract multiple single-backtick expressions', () => {
+    assert.deepStrictEqual(extractBacktickExpressions('`<< 404684003` and `<< 19829001`'), [
+      '<< 404684003',
+      '<< 19829001',
+    ]);
+  });
+
+  it('should extract triple-backtick expression', () => {
+    assert.deepStrictEqual(extractBacktickExpressions('try ```<< 404684003```'), ['<< 404684003']);
+  });
+
+  it('should extract triple-backtick with newlines', () => {
+    assert.deepStrictEqual(extractBacktickExpressions('```\n<< 404684003\n```'), ['<< 404684003']);
+  });
+
+  it('should extract multiple triple-backtick expressions', () => {
+    assert.deepStrictEqual(extractBacktickExpressions('```<< 404684003``` and ```<< 19829001```'), [
+      '<< 404684003',
+      '<< 19829001',
+    ]);
+  });
+
+  it('should mix single and triple backtick expressions in document order', () => {
+    assert.deepStrictEqual(extractBacktickExpressions('`<< 404684003` and ```<< 19829001``` and ```<< 71388002```'), [
+      '<< 404684003',
+      '<< 19829001',
+      '<< 71388002',
+    ]);
+  });
+
+  it('should handle single expression among prose', () => {
+    assert.deepStrictEqual(extractBacktickExpressions('check this `<< 404684003` for me'), ['<< 404684003']);
+  });
+
+  it('should handle complex ECL in backticks', () => {
+    const ecl = '(< 763158003 AND ^ 929360061000036106): 127489000 = 395814003, { 127489000 = 395814003 }';
+    assert.deepStrictEqual(extractBacktickExpressions(`evaluate \`${ecl}\` now`), [ecl]);
+  });
+});
+
 // ── cleanSlackEventText (full @mention pipeline) ─────────────────────
 
 describe('cleanSlackEventText', () => {
   it('should handle a typical @mention with HTML-encoded angle brackets', () => {
     const slackText = '<@U07V5M8EWBM> &lt;&lt; 404684003 |Clinical finding|';
-    assert.strictEqual(cleanSlackEventText(slackText), '<< 404684003 |Clinical finding|');
+    assert.deepStrictEqual(cleanSlackEventText(slackText), ['<< 404684003 |Clinical finding|']);
   });
 
   it('should handle @mention with backtick-wrapped ECL', () => {
     const slackText = '<@U07V5M8EWBM> `&lt;&lt; 404684003`';
-    assert.strictEqual(cleanSlackEventText(slackText), '<< 404684003');
+    assert.deepStrictEqual(cleanSlackEventText(slackText), ['<< 404684003']);
   });
 
   it('should handle @mention with triple-backtick code block', () => {
     const slackText = '<@U07V5M8EWBM> ```&lt;&lt; 404684003 |Clinical finding|```';
-    assert.strictEqual(cleanSlackEventText(slackText), '<< 404684003 |Clinical finding|');
+    assert.deepStrictEqual(cleanSlackEventText(slackText), ['<< 404684003 |Clinical finding|']);
   });
 
   it('should handle compound expression with member-of operator', () => {
@@ -119,32 +170,67 @@ describe('cleanSlackEventText', () => {
       '<@UBOT> (&lt;&lt; 16114001 OR ^ 32570071000036102 ) : &lt;&lt; 363698007 = ( * : (272741003 = 7771000 OR 272741003 = 24028007 ) )';
     const expected =
       '(<< 16114001 OR ^ 32570071000036102 ) : << 363698007 = ( * : (272741003 = 7771000 OR 272741003 = 24028007 ) )';
-    assert.strictEqual(cleanSlackEventText(slackText), expected);
+    assert.deepStrictEqual(cleanSlackEventText(slackText), [expected]);
   });
 
   it('should handle @mention with bold-wrapped ECL', () => {
     const slackText = '<@UBOT> *&lt;&lt; 404684003*';
-    assert.strictEqual(cleanSlackEventText(slackText), '<< 404684003');
+    assert.deepStrictEqual(cleanSlackEventText(slackText), ['<< 404684003']);
   });
 
   it('should handle plain text DM (no mention, no HTML encoding)', () => {
-    // DMs may not have HTML encoding depending on Slack client
-    assert.strictEqual(cleanSlackEventText('<< 404684003'), '<< 404684003');
+    assert.deepStrictEqual(cleanSlackEventText('<< 404684003'), ['<< 404684003']);
   });
 
   it('should preserve --no-terms flag before ECL', () => {
     const slackText = '<@UBOT> --no-terms &lt;&lt; 404684003';
-    assert.strictEqual(cleanSlackEventText(slackText), '--no-terms << 404684003');
+    assert.deepStrictEqual(cleanSlackEventText(slackText), ['--no-terms << 404684003']);
   });
 
   it('should preserve --edition flag with value before ECL', () => {
     const slackText = '<@UBOT> --edition au &lt;&lt; 404684003';
-    assert.strictEqual(cleanSlackEventText(slackText), '--edition au << 404684003');
+    assert.deepStrictEqual(cleanSlackEventText(slackText), ['--edition au << 404684003']);
   });
 
   it('should preserve multiple flags before ECL', () => {
     const slackText = '<@UBOT> --no-terms --edition au &lt;&lt; 404684003';
-    assert.strictEqual(cleanSlackEventText(slackText), '--no-terms --edition au << 404684003');
+    assert.deepStrictEqual(cleanSlackEventText(slackText), ['--no-terms --edition au << 404684003']);
+  });
+
+  it('should return empty array for empty @mention', () => {
+    assert.deepStrictEqual(cleanSlackEventText('<@UBOT>'), []);
+  });
+
+  it('should treat all text after mention as ECL (no prose stripping)', () => {
+    const slackText =
+      '<@UBOT> (< 763158003 AND ^ 929360061000036106): 127489000 = 395814003, { 127489000 = 395814003 }';
+    assert.deepStrictEqual(cleanSlackEventText(slackText), [
+      '(< 763158003 AND ^ 929360061000036106): 127489000 = 395814003, { 127489000 = 395814003 }',
+    ]);
+  });
+});
+
+// ── Multiple expressions ────────────────────────────────────────────────
+
+describe('cleanSlackEventText with multiple expressions', () => {
+  it('should extract multiple backtick-quoted expressions', () => {
+    const slackText = '<@UBOT> `&lt;&lt; 404684003` and also `&lt;&lt; 19829001`';
+    assert.deepStrictEqual(cleanSlackEventText(slackText), ['<< 404684003', '<< 19829001']);
+  });
+
+  it('should apply flags to each backtick-quoted expression', () => {
+    const slackText = '<@UBOT> --edition au `&lt;&lt; 404684003` and `&lt;&lt; 19829001`';
+    assert.deepStrictEqual(cleanSlackEventText(slackText), ['--edition au << 404684003', '--edition au << 19829001']);
+  });
+
+  it('should extract multiple triple-backtick expressions', () => {
+    const slackText = '<@UBOT> ```&lt;&lt; 404684003``` ```&lt;&lt; 19829001```';
+    assert.deepStrictEqual(cleanSlackEventText(slackText), ['<< 404684003', '<< 19829001']);
+  });
+
+  it('should ignore prose between backtick expressions', () => {
+    const slackText = '<@UBOT> please check `&lt;&lt; 404684003` and compare with `&lt;&lt; 19829001` thanks';
+    assert.deepStrictEqual(cleanSlackEventText(slackText), ['<< 404684003', '<< 19829001']);
   });
 });
 
@@ -167,115 +253,5 @@ describe('cleanSlackCommandText', () => {
     assert.strictEqual(cleanSlackCommandText('--edition au `<< 404684003`'), '--edition au `<< 404684003`');
     // Note: flags before backticks means the backticks are NOT surrounding —
     // stripSlackFormatting only strips matching outer delimiters
-  });
-});
-
-// ── extractEclFromProse ──────────────────────────────────────────────
-
-describe('extractEclFromProse', () => {
-  it('should return plain ECL unchanged', () => {
-    assert.strictEqual(extractEclFromProse('<< 404684003'), '<< 404684003');
-  });
-
-  it('should extract ECL from leading prose', () => {
-    assert.strictEqual(extractEclFromProse('can you evaluate << 404684003'), '<< 404684003');
-  });
-
-  it('should extract ECL from trailing prose', () => {
-    assert.strictEqual(extractEclFromProse('<< 404684003 for me please'), '<< 404684003');
-  });
-
-  it('should extract ECL from surrounding prose', () => {
-    assert.strictEqual(
-      extractEclFromProse('hey can you check << 404684003 |Clinical finding| for me?'),
-      '<< 404684003 |Clinical finding|',
-    );
-  });
-
-  it('should extract ECL with display terms', () => {
-    assert.strictEqual(
-      extractEclFromProse('please evaluate << 404684003 |Clinical finding|'),
-      '<< 404684003 |Clinical finding|',
-    );
-  });
-
-  it('should extract compound ECL from prose', () => {
-    assert.strictEqual(
-      extractEclFromProse('what about << 404684003 OR << 71388002 thanks'),
-      '<< 404684003 OR << 71388002',
-    );
-  });
-
-  it('should extract refined ECL from prose', () => {
-    assert.strictEqual(
-      extractEclFromProse('try this: << 404684003 : 363698007 = << 39057004'),
-      '<< 404684003 : 363698007 = << 39057004',
-    );
-  });
-
-  it('should extract ECL starting with parenthesis', () => {
-    assert.strictEqual(extractEclFromProse('evaluate (<< 404684003 OR << 71388002)'), '(<< 404684003 OR << 71388002)');
-  });
-
-  it('should extract ECL from inline code in prose', () => {
-    assert.strictEqual(extractEclFromProse('can you evaluate `<< 404684003` for me?'), '<< 404684003');
-  });
-
-  it('should extract ECL with member-of operator from prose', () => {
-    assert.strictEqual(extractEclFromProse('check ^ 816080008 please'), '^ 816080008');
-  });
-
-  it('should extract wildcard ECL', () => {
-    assert.strictEqual(extractEclFromProse('try * : 363698007 = << 39057004'), '* : 363698007 = << 39057004');
-  });
-
-  it('should preserve closing brace in attribute group', () => {
-    assert.strictEqual(
-      extractEclFromProse('try << 404684003 : { 363698007 = << 39057004 }'),
-      '<< 404684003 : { 363698007 = << 39057004 }',
-    );
-  });
-
-  it('should preserve closing brace with trailing prose', () => {
-    assert.strictEqual(
-      extractEclFromProse(
-        'evaluate (< 763158003 AND ^ 929360061000036106): 127489000 = 395814003, { 127489000 = 395814003 } please',
-      ),
-      '(< 763158003 AND ^ 929360061000036106): 127489000 = 395814003, { 127489000 = 395814003 }',
-    );
-  });
-
-  it('should handle bare concept ID in prose', () => {
-    assert.strictEqual(extractEclFromProse('what is 404684003'), '404684003');
-  });
-
-  it('should return empty string for empty input', () => {
-    assert.strictEqual(extractEclFromProse(''), '');
-  });
-
-  it('should pass through text with no ECL-like content', () => {
-    assert.strictEqual(extractEclFromProse('hello how are you'), 'hello how are you');
-  });
-});
-
-// ── Full pipeline: @mention with prose ────────────────────────────────
-
-describe('cleanSlackEventText with prose', () => {
-  it('should extract ECL from @mention with surrounding prose', () => {
-    const slackText = '<@UBOT> can you evaluate &lt;&lt; 404684003 |Clinical finding| for me?';
-    assert.strictEqual(cleanSlackEventText(slackText), '<< 404684003 |Clinical finding|');
-  });
-
-  it('should extract inline code ECL from @mention with prose', () => {
-    const slackText = '<@UBOT> please check `&lt;&lt; 404684003` thanks';
-    assert.strictEqual(cleanSlackEventText(slackText), '<< 404684003');
-  });
-
-  it('should handle the reported problematic expression in prose', () => {
-    const slackText =
-      '<@UBOT> (&lt;&lt; 16114001 OR ^ 32570071000036102 ) : &lt;&lt; 363698007 = ( * : (272741003 = 7771000 OR 272741003 = 24028007 ) )';
-    const expected =
-      '(<< 16114001 OR ^ 32570071000036102 ) : << 363698007 = ( * : (272741003 = 7771000 OR 272741003 = 24028007 ) )';
-    assert.strictEqual(cleanSlackEventText(slackText), expected);
   });
 });

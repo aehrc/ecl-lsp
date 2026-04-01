@@ -78,14 +78,22 @@ docker run -d --name ecl-slack-bot \
 
 ### @Mention (Thread Reply)
 
+Everything after the mention is treated as ECL:
+
 ```
 @ECL Bot < 404684003 AND < 19829001
 @ECL Bot --edition us < 404684003
 ```
 
+Use backticks to send multiple expressions in one message — each is processed separately (in parallel):
+
+```
+@ECL Bot `<< 404684003` and `<< 19829001`
+```
+
 ### Direct Message
 
-Send your ECL expression directly — no prefix needed.
+Send your ECL expression directly — no prefix needed. Backticks work the same way for multiple expressions.
 
 ### Options
 

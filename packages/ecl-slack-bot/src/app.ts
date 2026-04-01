@@ -86,6 +86,14 @@ async function handleEcl(raw: string): Promise<{ text: string; isHelp: boolean; 
   return { text: buildMessage(result), isHelp: false, isError: false };
 }
 
+async function handleMultipleEcl(expressions: string[]): Promise<string> {
+  if (expressions.length === 0) {
+    return buildHelpMessage();
+  }
+  const results = await Promise.all(expressions.map((raw) => handleEcl(raw)));
+  return results.map((r) => r.text).join('\n\n\u2500\u2500\u2500\n\n');
+}
+
 // ── Slash command: /ecl ─────────────────────────────────────────────────
 
 app.command('/ecl', async ({ command, ack, respond }) => {
@@ -104,12 +112,14 @@ app.command('/ecl', async ({ command, ack, respond }) => {
 
 app.event('app_mention', async ({ event, say }) => {
   console.log(`[ECL] @mention raw event.text:`, JSON.stringify(event.text));
-  // Strip the bot mention and unescape HTML entities Slack injects into event text
-  const raw = cleanSlackEventText(event.text);
-  console.log(`[ECL] @mention after stripping:`, JSON.stringify(raw).slice(0, 200));
+  const expressions = cleanSlackEventText(event.text);
+  console.log(
+    `[ECL] @mention extracted ${expressions.length} expression(s):`,
+    JSON.stringify(expressions).slice(0, 200),
+  );
   try {
-    const { text } = await handleEcl(raw);
-    await say({ text, thread_ts: event.ts });
+    const results = await handleMultipleEcl(expressions);
+    await say({ text: results, thread_ts: event.ts });
   } catch (error) {
     console.error('Error handling @mention:', error);
     await say({ text: ':red_circle: An unexpected error occurred.', thread_ts: event.ts });
@@ -127,11 +137,11 @@ app.message(async ({ message, say }) => {
   // Ignore bot messages to prevent loops
   if (message.subtype === 'bot_message' || ('bot_id' in message && message.bot_id)) return;
 
-  const raw = cleanSlackEventText(('text' in message && message.text) || ''); // eslint-disable-line @typescript-eslint/prefer-nullish-coalescing -- expression yields string|false
+  const expressions = cleanSlackEventText(('text' in message && message.text) || ''); // eslint-disable-line @typescript-eslint/prefer-nullish-coalescing -- expression yields string|false
   console.log(`[ECL] DM from ${('user' in message && message.user) || 'unknown'}`);
   try {
-    const { text } = await handleEcl(raw);
-    await say(text);
+    const results = await handleMultipleEcl(expressions);
+    await say(results);
   } catch (error) {
     console.error('Error handling DM:', error);
     await say(':red_circle: An unexpected error occurred.');

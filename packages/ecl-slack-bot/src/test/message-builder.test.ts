@@ -489,4 +489,9 @@ describe('buildHelpMessage', () => {
     const msg = buildHelpMessage();
     assert.ok(!msg.includes('--eval'));
   });
+
+  it('should mention backticks for multiple expressions', () => {
+    const msg = buildHelpMessage();
+    assert.ok(msg.includes('backtick'));
+  });
 });

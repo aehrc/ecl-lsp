@@ -79,11 +79,12 @@ export function buildHelpMessage(): string {
 \u2022 \`/ecl --edition au < 404684003\` \u2014 specify edition
 
 *@mention (thread reply):*
-\u2022 \`@ECL Bot < 404684003 AND < 19829001\`
-\u2022 \`@ECL Bot --edition us < 404684003\`
+\u2022 \`@ECL Bot << 404684003 AND << 19829001\` \u2014 everything after the mention is ECL
+\u2022 \`@ECL Bot --edition us << 404684003\`
+\u2022 Use backticks for multiple expressions in one message \u2014 each is processed separately
 
 *Direct message:*
-\u2022 Just send your ECL expression directly
+\u2022 Just send your ECL expression directly (backticks work here too)
 
 *Options:*
 \u2022 \`--edition <code|uri>\` \u2014 override SNOMED edition (au, us, uk, nz, int, or full URI)

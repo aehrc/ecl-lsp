@@ -17,6 +17,8 @@ export function stripMention(text: string): string {
  * Strip Slack formatting characters that users wrap around ECL expressions.
  * Handles: ```code blocks```, `inline code`, *bold*, _italic_, ~strikethrough~,
  * and Slack's "smart quote" characters.
+ *
+ * Used by the slash command pipeline where backticks are purely cosmetic.
  */
 export function stripSlackFormatting(text: string): string {
   let s = text.trim();
@@ -40,54 +42,62 @@ export function stripSlackFormatting(text: string): string {
 }
 
 /**
- * Attempts to extract the ECL expression from a cleaned message that may
- * contain surrounding prose. Looks for inline code blocks first (the most
- * explicit signal), then falls back to finding the ECL-like substring.
- *
- * Returns the extracted ECL, or the full input if no extraction was possible.
+ * Extract ECL expressions from backtick-quoted sections in the text.
+ * Supports both triple-backtick code blocks and single-backtick inline code.
+ * Returns an empty array if no backtick expressions are found.
  */
-export function extractEclFromProse(text: string): string {
-  const trimmed = text.trim();
-  if (!trimmed) return trimmed;
+export function extractBacktickExpressions(text: string): string[] {
+  // Collect all matches with their positions so we can mix triple and single backticks
+  const matches: { index: number; end: number; content: string }[] = [];
 
-  // 1. If the message contains an inline code span, assume that's the ECL
-  const inlineCode = /`([^`]+)`/.exec(trimmed);
-  if (inlineCode) return inlineCode[1].trim();
-
-  // 2. If the message contains a triple-backtick code block, extract its content
-  const codeBlock = /```([\s\S]+?)```/.exec(trimmed);
-  if (codeBlock) return codeBlock[1].trim();
-
-  // 3. Try to find where ECL starts: constraint operator, concept ID, wildcard, or paren
-  //    ECL tokens: < << > >> ^ ! * ( and SCTID (\d{6,18})
-  const eclStart = /[(<>^!*]|\b\d{6,18}\b/.exec(trimmed);
-  if (!eclStart) return trimmed; // No ECL-like content found — pass through as-is
-
-  // 4. Find where ECL ends: scan backwards from the end to find the last
-  //    ECL-like character: ) } | > digit or wildcard
-  const candidate = trimmed.slice(eclStart.index);
-  let endIdx = candidate.length;
-
-  // Walk backwards past trailing non-ECL characters (letters, punctuation like ? !)
-  while (endIdx > 0) {
-    const ch = candidate[endIdx - 1];
-    if (')}>*|'.includes(ch) || (ch >= '0' && ch <= '9')) break;
-    endIdx--;
+  // Find triple-backtick expressions
+  const triplePattern = /```([\s\S]+?)```/g;
+  let match;
+  while ((match = triplePattern.exec(text)) !== null) {
+    const content = match[1].trim();
+    if (content) matches.push({ index: match.index, end: match.index + match[0].length, content });
   }
 
-  if (endIdx <= 0) return candidate.trim();
-  return candidate.slice(0, endIdx).trim();
+  // Find single-backtick expressions, skipping any that overlap with triple-backtick matches
+  const singlePattern = /`([^`]+)`/g;
+  while ((match = singlePattern.exec(text)) !== null) {
+    const start = match.index;
+    const end = start + match[0].length;
+    const overlaps = matches.some((m) => start < m.end && end > m.index);
+    if (!overlaps) {
+      const content = match[1].trim();
+      if (content) matches.push({ index: start, end, content });
+    }
+  }
+
+  // Return in document order
+  matches.sort((a, b) => a.index - b.index);
+  return matches.map((m) => m.content);
 }
 
 /**
  * Full cleaning pipeline for Slack event text (e.g. @mention or DM).
- * Strips mention, unescapes HTML entities, removes Slack formatting,
- * and extracts ECL from surrounding prose while preserving --flags.
+ *
+ * Returns an array of ECL expressions to process. If the message contains
+ * backtick-quoted sections, each is treated as a separate ECL expression.
+ * Otherwise, the entire text (after stripping the mention and flags) is
+ * treated as a single ECL expression.
  */
-export function cleanSlackEventText(text: string): string {
-  const cleaned = stripSlackFormatting(unescapeSlackHtml(stripMention(text)));
+export function cleanSlackEventText(text: string): string[] {
+  let cleaned = unescapeSlackHtml(stripMention(text));
 
-  // Extract leading --flags before prose extraction (which would strip them).
+  // Smart quotes → straight quotes
+  cleaned = cleaned.replace(/[\u201C\u201D]/g, '"').replace(/[\u2018\u2019]/g, "'");
+
+  // Strip surrounding bold/italic/strikethrough markers
+  cleaned = cleaned.trim();
+  for (const marker of ['*', '_', '~']) {
+    if (cleaned.startsWith(marker) && cleaned.endsWith(marker) && cleaned.length > 2) {
+      cleaned = cleaned.slice(1, -1).trim();
+    }
+  }
+
+  // Extract leading --flags before splitting expressions.
   // Handles both valueless flags (--no-terms, --eval) and flags with values (--edition au).
   let flags = '';
   let rest = cleaned;
@@ -100,7 +110,15 @@ export function cleanSlackEventText(text: string): string {
     rest = rest.slice(match[0].length);
   }
 
-  return flags + extractEclFromProse(rest);
+  // If backtick-quoted sections exist, each is a separate ECL expression
+  const backtickExprs = extractBacktickExpressions(rest);
+  if (backtickExprs.length > 0) {
+    return backtickExprs.map((expr) => flags + expr);
+  }
+
+  // No backticks — entire remaining text is the ECL expression
+  const result = (flags + rest).trim();
+  return result ? [result] : [];
 }
 
 /**

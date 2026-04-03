@@ -68,6 +68,10 @@ export { getFhirFilterCompletions, clearFilterCache } from './completion/filter-
 export { computeSemanticTokens, eclTokenTypes, eclTokenModifiers } from './semantic-tokens';
 export type { SemanticToken } from './semantic-tokens';
 
+// Canonical comparison
+export { canonicalise, compareExpressions, CanonicaliseError } from './canonical/comparator';
+export type { ComparisonResult } from './canonical/comparator';
+
 // Knowledge
 export {
   allArticles,

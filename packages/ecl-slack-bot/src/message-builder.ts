@@ -71,6 +71,14 @@ export function buildMessage(result: ProcessResult): string {
   return sections.join('\n');
 }
 
+export function buildReplacementMessage(replacementEcl: string): string {
+  let ecl = replacementEcl;
+  if (ecl.length > MAX_CODE_BLOCK_LENGTH) {
+    ecl = ecl.slice(0, MAX_CODE_BLOCK_LENGTH) + '\n… (truncated)';
+  }
+  return `:arrows_counterclockwise: *Suggested replacement* (inactive concepts replaced with active equivalents)\n\`\`\`\n${ecl}\n\`\`\``;
+}
+
 export function buildHelpMessage(): string {
   return `*ECL Bot Usage*
 

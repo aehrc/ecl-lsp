@@ -9,7 +9,7 @@ import {
   refineParseError,
   validateSemantics,
 } from '@aehrc/ecl-core';
-import type { ITerminologyService, ConceptInfo } from '@aehrc/ecl-core';
+import type { ITerminologyService, ConceptInfo, HistoricalAssociation } from '@aehrc/ecl-core';
 
 // ── Types ───────────────────────────────────────────────────────────────
 
@@ -36,6 +36,8 @@ export interface ProcessResult {
   editionUri?: string;
   /** FHIR server base URL for building Shrimp links. */
   fhirServerUrl?: string;
+  /** ECL with inactive concepts replaced by active equivalents, if any were found. */
+  replacementEcl?: string;
 }
 
 export interface ParsedInput {
@@ -210,6 +212,16 @@ export async function processEcl(
     }
   }
 
+  // Step 7b: Build replacement ECL for inactive concepts
+  let replacementEcl: string | undefined;
+  const inactiveIds = conceptIds.filter((ref) => {
+    const info = conceptMap.get(ref.id);
+    return info && !info.active;
+  });
+  if (inactiveIds.length > 0 && terminologyService.getHistoricalAssociations) {
+    replacementEcl = await buildReplacementEcl(ecl, inactiveIds, terminologyService);
+  }
+
   // Step 8: Semantic validation (graceful on failure)
   if (parseResult.ast) {
     try {
@@ -257,5 +269,72 @@ export async function processEcl(
     editionLabel = options.edition;
   }
 
-  return { formatted, errors, warnings, evaluation, edition: editionLabel };
+  return { formatted, errors, warnings, evaluation, edition: editionLabel, replacementEcl };
+}
+
+// ── Inactive concept replacement ───────────────────────────────────────
+
+/**
+ * Build replacement ECL by substituting each inactive concept with the union
+ * of all its historical association targets. Returns formatted replacement ECL,
+ * or undefined if no replacements were found.
+ */
+async function buildReplacementEcl(
+  ecl: string,
+  inactiveRefs: { id: string; range: { start: { offset: number }; end: { offset: number } }; term?: string }[],
+  terminologyService: ITerminologyService,
+): Promise<string | undefined> {
+  // Fetch associations for all inactive concepts in parallel
+  const associationMap = new Map<string, HistoricalAssociation[]>();
+  await Promise.all(
+    // Deduplicate by concept ID — only look up each once
+    [...new Set(inactiveRefs.map((r) => r.id))].map(async (id) => {
+      try {
+        const associations = await terminologyService.getHistoricalAssociations!(id);
+        if (associations.length > 0) {
+          associationMap.set(id, associations);
+        }
+      } catch {
+        // Non-fatal
+      }
+    }),
+  );
+
+  if (associationMap.size === 0) return undefined;
+
+  // Re-parse to get all occurrences (not deduplicated) with correct offsets
+  const parseResult = parseECL(ecl);
+  if (!parseResult.ast) return undefined;
+  const allRefs = extractConceptIds(parseResult.ast, { deduplicate: false });
+
+  // Build replacement text by substituting in reverse offset order
+  let replaced = ecl;
+  const refsToReplace = allRefs
+    .filter((ref) => associationMap.has(ref.id))
+    .sort((a, b) => b.range.start.offset - a.range.start.offset);
+
+  for (const ref of refsToReplace) {
+    const associations = associationMap.get(ref.id);
+    if (!associations) continue;
+
+    // Collect ALL targets across all association types into one OR disjunction
+    const allTargets = associations.flatMap((a) => a.targets);
+    if (allTargets.length === 0) continue;
+
+    let replacement: string;
+    if (allTargets.length === 1) {
+      const t = allTargets[0];
+      replacement = t.display ? `${t.code} |${t.display}|` : t.code;
+    } else {
+      const parts = allTargets.map((t) => (t.display ? `${t.code} |${t.display}|` : t.code));
+      replacement = '(' + parts.join(' OR ') + ')';
+    }
+
+    replaced = replaced.slice(0, ref.range.start.offset) + replacement + replaced.slice(ref.range.end.offset);
+  }
+
+  if (replaced === ecl) return undefined;
+
+  // Format the replacement ECL
+  return formatDocument(replaced, { ...defaultFormattingOptions, alignTerms: false });
 }

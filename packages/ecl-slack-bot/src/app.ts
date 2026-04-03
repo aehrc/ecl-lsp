@@ -6,7 +6,7 @@ import { App } from '@slack/bolt';
 import { FhirTerminologyService } from '@aehrc/ecl-core';
 import { loadConfig, resolveEdition, formatResolvedVersion } from './config';
 import { parseInput, processEcl } from './ecl-processor';
-import { buildMessage, buildHelpMessage } from './message-builder';
+import { buildMessage, buildReplacementMessage, buildHelpMessage } from './message-builder';
 import { cleanSlackEventText, cleanSlackCommandText } from './slack-text';
 
 const config = loadConfig();
@@ -26,7 +26,9 @@ let slackTeamName = 'unknown';
 
 // ── Shared handler logic ────────────────────────────────────────────────
 
-async function handleEcl(raw: string): Promise<{ text: string; isHelp: boolean; isError: boolean }> {
+async function handleEcl(
+  raw: string,
+): Promise<{ text: string; replacementText?: string; isHelp: boolean; isError: boolean }> {
   const start = Date.now();
   const parsed = parseInput(raw);
 
@@ -83,15 +85,20 @@ async function handleEcl(raw: string): Promise<{ text: string; isHelp: boolean; 
   const elapsed = ((Date.now() - start) / 1000).toFixed(1);
   console.log(`[ECL] Done in ${elapsed}s — ${result.errors.length} errors, ${result.warnings.length} warnings`);
 
-  return { text: buildMessage(result), isHelp: false, isError: false };
+  const replacementText = result.replacementEcl ? buildReplacementMessage(result.replacementEcl) : undefined;
+  return { text: buildMessage(result), replacementText, isHelp: false, isError: false };
 }
 
-async function handleMultipleEcl(expressions: string[]): Promise<string> {
+async function handleMultipleEcl(expressions: string[]): Promise<{ text: string; replacementText?: string }> {
   if (expressions.length === 0) {
-    return buildHelpMessage();
+    return { text: buildHelpMessage() };
   }
   const results = await Promise.all(expressions.map((raw) => handleEcl(raw)));
-  return results.map((r) => r.text).join('\n\n\u2500\u2500\u2500\n\n');
+  const text = results.map((r) => r.text).join('\n\n\u2500\u2500\u2500\n\n');
+  // Collect all replacement texts into one follow-up message
+  const replacements = results.map((r) => r.replacementText).filter(Boolean);
+  const replacementText = replacements.length > 0 ? replacements.join('\n\n\u2500\u2500\u2500\n\n') : undefined;
+  return { text, replacementText };
 }
 
 // ── Slash command: /ecl ─────────────────────────────────────────────────
@@ -100,8 +107,11 @@ app.command('/ecl', async ({ command, ack, respond }) => {
   await ack();
   console.log(`[ECL] /ecl command from ${command.user_name}`);
   try {
-    const { text } = await handleEcl(cleanSlackCommandText(command.text));
+    const { text, replacementText } = await handleEcl(cleanSlackCommandText(command.text));
     await respond({ text, response_type: 'ephemeral' });
+    if (replacementText) {
+      await respond({ text: replacementText, response_type: 'ephemeral' });
+    }
   } catch (error) {
     console.error('Error handling /ecl command:', error);
     await respond({ text: ':red_circle: An unexpected error occurred.', response_type: 'ephemeral' });
@@ -118,8 +128,11 @@ app.event('app_mention', async ({ event, say }) => {
     JSON.stringify(expressions).slice(0, 200),
   );
   try {
-    const results = await handleMultipleEcl(expressions);
-    await say({ text: results, thread_ts: event.ts });
+    const { text, replacementText } = await handleMultipleEcl(expressions);
+    await say({ text, thread_ts: event.ts });
+    if (replacementText) {
+      await say({ text: replacementText, thread_ts: event.ts });
+    }
   } catch (error) {
     console.error('Error handling @mention:', error);
     await say({ text: ':red_circle: An unexpected error occurred.', thread_ts: event.ts });
@@ -140,8 +153,11 @@ app.message(async ({ message, say }) => {
   const expressions = cleanSlackEventText(('text' in message && message.text) || ''); // eslint-disable-line @typescript-eslint/prefer-nullish-coalescing -- expression yields string|false
   console.log(`[ECL] DM from ${('user' in message && message.user) || 'unknown'}`);
   try {
-    const results = await handleMultipleEcl(expressions);
-    await say(results);
+    const { text, replacementText } = await handleMultipleEcl(expressions);
+    await say(text);
+    if (replacementText) {
+      await say(replacementText);
+    }
   } catch (error) {
     console.error('Error handling DM:', error);
     await say(':red_circle: An unexpected error occurred.');

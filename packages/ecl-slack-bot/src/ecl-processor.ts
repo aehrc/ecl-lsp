@@ -45,6 +45,7 @@ export interface ParsedInput {
   evaluate: boolean;
   edition?: string;
   noTerms?: boolean;
+  keepParens?: boolean;
   help?: boolean;
   error?: string;
 }
@@ -60,6 +61,7 @@ export function parseInput(raw: string): ParsedInput {
 
   let runEval = false;
   let noTerms = false;
+  let keepParens = false;
   let edition: string | undefined;
   let rest = trimmed;
 
@@ -67,6 +69,7 @@ export function parseInput(raw: string): ParsedInput {
   // Require word boundary after flag name to avoid prefix-matching.
   const runEvalPattern = /^--eval(?:\s|$)/;
   const noTermsPattern = /^--no-terms(?:\s|$)/;
+  const keepParensPattern = /^--keep-parens(?:\s|$)/;
   const editionPattern = /^--edition(?:\s|$)/;
   while (rest.startsWith('--')) {
     if (runEvalPattern.test(rest)) {
@@ -75,6 +78,9 @@ export function parseInput(raw: string): ParsedInput {
     } else if (noTermsPattern.test(rest)) {
       noTerms = true;
       rest = rest.slice('--no-terms'.length).trimStart();
+    } else if (keepParensPattern.test(rest)) {
+      keepParens = true;
+      rest = rest.slice('--keep-parens'.length).trimStart();
     } else if (editionPattern.test(rest)) {
       rest = rest.slice('--edition'.length).trimStart();
       if (!rest || rest.startsWith('--')) {
@@ -96,7 +102,7 @@ export function parseInput(raw: string): ParsedInput {
   // Strip backticks the user may have wrapped around the ECL expression
   rest = stripSurroundingBackticks(rest);
 
-  return { ecl: rest, evaluate: runEval, edition, noTerms };
+  return { ecl: rest, evaluate: runEval, edition, noTerms, keepParens };
 }
 
 /** Strip surrounding ``` or ` from text (users often wrap ECL in code formatting). */
@@ -117,7 +123,7 @@ function stripSurroundingBackticks(text: string): string {
 export async function processEcl(
   ecl: string,
   terminologyService: ITerminologyService,
-  options?: { evaluate?: boolean; edition?: string; maxEvalResults?: number; noTerms?: boolean },
+  options?: { evaluate?: boolean; edition?: string; maxEvalResults?: number; noTerms?: boolean; keepParens?: boolean },
 ): Promise<ProcessResult> {
   const errors: Diagnostic[] = [];
   const warnings: Diagnostic[] = [];
@@ -223,7 +229,7 @@ export async function processEcl(
     return info && !info.active;
   });
   if (inactiveIds.length > 0 && terminologyService.getHistoricalAssociations) {
-    const replacementEcl = await buildReplacementEcl(ecl, inactiveIds, terminologyService);
+    const replacementEcl = await buildReplacementEcl(ecl, inactiveIds, terminologyService, options?.keepParens);
     if (replacementEcl) {
       let evalResult: EvaluationResult | undefined;
       try {
@@ -301,6 +307,7 @@ async function buildReplacementEcl(
   ecl: string,
   inactiveRefs: { id: string; range: { start: { offset: number }; end: { offset: number } }; term?: string }[],
   terminologyService: ITerminologyService,
+  keepParens?: boolean,
 ): Promise<string | undefined> {
   // Fetch associations for all inactive concepts in parallel
   const associationMap = new Map<string, HistoricalAssociation[]>();
@@ -354,5 +361,9 @@ async function buildReplacementEcl(
   if (replaced === ecl) return undefined;
 
   // Format the replacement ECL
-  return formatDocument(replaced, { ...defaultFormattingOptions, alignTerms: false, removeRedundantParentheses: true });
+  return formatDocument(replaced, {
+    ...defaultFormattingOptions,
+    alignTerms: false,
+    removeRedundantParentheses: !keepParens,
+  });
 }

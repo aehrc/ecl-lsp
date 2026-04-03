@@ -121,6 +121,7 @@ export function buildHelpMessage(): string {
 *Options:*
 \u2022 \`--edition <code|uri>\` \u2014 override SNOMED edition (au, us, uk, nz, int, or full URI)
 \u2022 \`--no-terms\` \u2014 format and validate without adding display terms
+\u2022 \`--keep-parens\` \u2014 preserve all parentheses (don't remove redundant brackets)
 \u2022 \`help\` \u2014 show this message
 
 Valid expressions are automatically evaluated (up to 5 results shown).

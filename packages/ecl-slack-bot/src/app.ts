@@ -72,6 +72,7 @@ async function handleEcl(
     edition: editionLabel,
     maxEvalResults: config.maxEvalResults,
     noTerms: parsed.noTerms,
+    keepParens: parsed.keepParens,
   });
 
   // Use the actual resolved version from the FHIR response when available

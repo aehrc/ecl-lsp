@@ -44,6 +44,7 @@ import {
   REFACTORING_RESOLVE_KIND,
   resolveAddDisplayTerms,
   resolveUnifiedSimplify,
+  buildReplacementText,
   getCompletionItemsWithSearch,
   clearFilterCache,
   validateSemantics,
@@ -841,7 +842,8 @@ connection.onHover(async (params: HoverParams): Promise<Hover | null> => {
 
 // ── Code action provider ────────────────────────────────────────────────
 
-connection.onCodeAction((params: CodeActionParams): CodeAction[] => {
+// eslint-disable-next-line sonarjs/cognitive-complexity -- diagnostic quick fix handler with multiple patterns
+connection.onCodeAction(async (params: CodeActionParams): Promise<CodeAction[]> => {
   const document = documents.get(params.textDocument.uri);
   if (!document) {
     return [];
@@ -850,9 +852,12 @@ connection.onCodeAction((params: CodeActionParams): CodeAction[] => {
   const codeActions: CodeAction[] = [];
   const diagnostics = params.context.diagnostics;
 
-  diagnostics.forEach((diagnostic) => {
+  // Collect inactive concept IDs for parallel FHIR lookups
+  const inactiveConcepts: { conceptId: string; diagnostic: Diagnostic }[] = [];
+
+  for (const diagnostic of diagnostics) {
     if (diagnostic.source !== 'ecl') {
-      return;
+      continue;
     }
 
     const line = document.getText({
@@ -926,6 +931,12 @@ connection.onCodeAction((params: CodeActionParams): CodeAction[] => {
       });
     }
 
+    // Inactive concept: queue FHIR lookup for replacement actions
+    const inactiveMatch = /^Inactive concept (\d+)/.exec(diagnostic.message);
+    if (inactiveMatch) {
+      inactiveConcepts.push({ conceptId: inactiveMatch[1], diagnostic });
+    }
+
     if (diagnostic.message.includes('Missing operator')) {
       // eslint-disable-next-line sonarjs/slow-regex -- bounded to single editor line
       const fixedLine = line.replace(/(<<?)\s+(\d+[^<]*)\s+(<<?)\s+(\d+)/, '$1 $2 AND $3 $4');
@@ -948,7 +959,55 @@ connection.onCodeAction((params: CodeActionParams): CodeAction[] => {
         },
       });
     }
-  });
+  }
+
+  // Fetch historical associations for all inactive concepts in parallel
+  if (inactiveConcepts.length > 0 && terminologyService.getHistoricalAssociations) {
+    await Promise.all(
+      inactiveConcepts.map(async ({ conceptId, diagnostic }) => {
+        try {
+          const associations = await terminologyService.getHistoricalAssociations!(conceptId);
+          for (const assoc of associations) {
+            const { replacement, label } = buildReplacementText(assoc);
+            if (!replacement) continue;
+
+            // Compute replacement range (concept ID + optional display term)
+            const lineText = document.getText({
+              start: { line: diagnostic.range.end.line, character: 0 },
+              end: { line: diagnostic.range.end.line + 1, character: 0 },
+            });
+            let endChar = diagnostic.range.end.character;
+            const afterConcept = lineText.slice(endChar);
+            const termMatch = /^\s*\|[^|]*\|/.exec(afterConcept);
+            if (termMatch) {
+              endChar += termMatch[0].length;
+            }
+
+            codeActions.push({
+              title: label,
+              kind: CodeActionKind.QuickFix,
+              diagnostics: [diagnostic],
+              edit: {
+                changes: {
+                  [params.textDocument.uri]: [
+                    TextEdit.replace(
+                      {
+                        start: diagnostic.range.start,
+                        end: { line: diagnostic.range.end.line, character: endChar },
+                      },
+                      replacement,
+                    ),
+                  ],
+                },
+              },
+            });
+          }
+        } catch {
+          // FHIR lookup failure is non-fatal — just skip replacement actions
+        }
+      }),
+    );
+  }
 
   // Add refactoring code actions — ecl-core returns CoreCodeAction[]
   const coreRange = lspRangeToCoreRange(params.range);

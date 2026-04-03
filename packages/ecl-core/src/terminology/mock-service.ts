@@ -1,7 +1,7 @@
 // Copyright 2026 Commonwealth Scientific and Industrial Research Organisation (CSIRO)
 // ABN 41 687 119 230. SPDX-License-Identifier: Apache-2.0
 
-import { ITerminologyService, ConceptInfo, SearchResponse, EvaluationResponse } from './types';
+import { ITerminologyService, ConceptInfo, SearchResponse, EvaluationResponse, HistoricalAssociation } from './types';
 
 /* eslint-disable @typescript-eslint/require-await -- interface mandates async; mock returns synchronously */
 export class MockTerminologyService implements ITerminologyService {
@@ -55,6 +55,24 @@ export class MockTerminologyService implements ITerminologyService {
       .map((c) => ({ id: c.id, fsn: c.fsn, pt: c.pt }));
 
     return { results, hasMore: false };
+  }
+
+  /** Mock historical association data for inactive concepts. */
+  private readonly mockAssociations = new Map<string, HistoricalAssociation[]>([
+    [
+      '123456001',
+      [
+        {
+          type: 'same-as',
+          refsetId: '900000000000527005',
+          targets: [{ code: '404684003', display: 'Clinical finding' }],
+        },
+      ],
+    ],
+  ]);
+
+  async getHistoricalAssociations(conceptId: string): Promise<HistoricalAssociation[]> {
+    return this.mockAssociations.get(conceptId) ?? [];
   }
 
   /** Mock results for filter ECL constraint expansions. */

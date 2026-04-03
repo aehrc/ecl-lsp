@@ -32,9 +32,18 @@ export interface EvaluationResponse {
   truncated: boolean;
 }
 
+export type HistoricalAssociationType = 'same-as' | 'replaced-by' | 'possibly-equivalent-to' | 'alternative';
+
+export interface HistoricalAssociation {
+  type: HistoricalAssociationType;
+  refsetId: string;
+  targets: { code: string; display: string }[];
+}
+
 export interface ITerminologyService {
   getConceptInfo(conceptId: string): Promise<ConceptInfo | null>;
   validateConcepts(conceptIds: string[]): Promise<Map<string, ConceptInfo | null>>;
   searchConcepts(query: string): Promise<SearchResponse>;
   evaluateEcl(expression: string, limit?: number): Promise<EvaluationResponse>;
+  getHistoricalAssociations?(conceptId: string): Promise<HistoricalAssociation[]>;
 }

@@ -207,6 +207,54 @@ describe('ECL Evaluation — FHIR Integration', { skip: SKIP }, () => {
   });
 });
 
+// ─── Historical Associations ──────────────────────────────────────────────
+
+describe('Historical Associations — FHIR Integration', { skip: SKIP }, () => {
+  it('should find SAME AS association for 261282001 (Black hellebore)', { timeout: TIMEOUT }, async () => {
+    const associations = await svc.getHistoricalAssociations('261282001');
+    assert.ok(associations.length > 0, 'Should find at least one association');
+    const sameAs = associations.find((a) => a.type === 'same-as');
+    assert.ok(sameAs, 'Should have a SAME AS association');
+    assert.strictEqual(sameAs.targets.length, 1, 'SAME AS should have exactly one target');
+    assert.strictEqual(sameAs.targets[0].code, '52323007', 'Target should be 52323007 (Helleborus niger)');
+    assert.ok(sameAs.targets[0].display.length > 0, 'Target should have a display term');
+  });
+
+  it('should return empty for an active concept', { timeout: TIMEOUT }, async () => {
+    const associations = await svc.getHistoricalAssociations('404684003');
+    assert.strictEqual(associations.length, 0, 'Active concept should have no historical associations');
+  });
+
+  it('should return empty for an unknown concept', { timeout: TIMEOUT }, async () => {
+    const associations = await svc.getHistoricalAssociations('999999999');
+    assert.strictEqual(associations.length, 0, 'Unknown concept should have no historical associations');
+  });
+
+  it('should return associations ordered by specificity', { timeout: TIMEOUT }, async () => {
+    // 261282001 has SAME AS — verify it comes first if present
+    const associations = await svc.getHistoricalAssociations('261282001');
+    if (associations.length > 0) {
+      const typeOrder = ['same-as', 'replaced-by', 'possibly-equivalent-to', 'alternative'];
+      for (let i = 1; i < associations.length; i++) {
+        const prevIdx = typeOrder.indexOf(associations[i - 1].type);
+        const currIdx = typeOrder.indexOf(associations[i].type);
+        assert.ok(
+          prevIdx <= currIdx,
+          `Associations should be ordered by specificity: ${associations.map((a) => a.type).join(', ')}`,
+        );
+      }
+    }
+  });
+
+  it('should include refsetId in each association', { timeout: TIMEOUT }, async () => {
+    const associations = await svc.getHistoricalAssociations('261282001');
+    for (const assoc of associations) {
+      assert.ok(assoc.refsetId.length > 0, `refsetId should be non-empty for ${assoc.type}`);
+      assert.ok(/^\d+$/.test(assoc.refsetId), `refsetId should be numeric for ${assoc.type}`);
+    }
+  });
+});
+
 // ─── Semantic Validation ────────────────────────────────────────────────────
 
 function parseAndValidate(text: string): Promise<SemanticDiagnostic[]> {

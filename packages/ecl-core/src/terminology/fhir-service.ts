@@ -2,7 +2,15 @@
 // ABN 41 687 119 230. SPDX-License-Identifier: Apache-2.0
 
 import fetch from './fetch-compat';
-import { ITerminologyService, ConceptInfo, SearchResponse, ConceptSearchResult, EvaluationResponse } from './types';
+import {
+  ITerminologyService,
+  ConceptInfo,
+  SearchResponse,
+  ConceptSearchResult,
+  EvaluationResponse,
+  HistoricalAssociation,
+  HistoricalAssociationType,
+} from './types';
 import { isValidSnomedId } from './verhoeff';
 
 // ── FHIR response types ────────────────────────────────────────────────
@@ -293,6 +301,77 @@ export class FhirTerminologyService implements ITerminologyService {
       // eslint-disable-next-line no-console -- no LSP connection available in service layer
       console.warn(`Failed to fetch concept ${conceptId}:`, error);
       return null;
+    }
+  }
+
+  /** Map of SNOMED CT historical association reference set IDs to association types. */
+  private static readonly ASSOCIATION_REFSETS: Record<string, HistoricalAssociationType> = {
+    '900000000000527005': 'same-as',
+    '900000000000526001': 'replaced-by',
+    '900000000000523009': 'possibly-equivalent-to',
+    '900000000000530003': 'alternative',
+  };
+
+  async getHistoricalAssociations(conceptId: string): Promise<HistoricalAssociation[]> {
+    // Query all 4 association types in parallel via ConceptMap/$translate
+    const entries: [string, HistoricalAssociationType][] = Object.entries(FhirTerminologyService.ASSOCIATION_REFSETS);
+    const promises = entries.map(async ([refsetId, type]) => {
+      const targets = await this.translateAssociation(conceptId, refsetId);
+      if (targets.length === 0) return null;
+      return { type, refsetId, targets } satisfies HistoricalAssociation;
+    });
+
+    const settled = await Promise.all(promises);
+
+    // Return in specificity order (same-as first), filtering out nulls
+    const typeOrder: HistoricalAssociationType[] = ['same-as', 'replaced-by', 'possibly-equivalent-to', 'alternative'];
+    return typeOrder
+      .map((type) => settled.find((a) => a?.type === type))
+      .filter((a): a is HistoricalAssociation => a !== null && a !== undefined);
+  }
+
+  /** Query a single implicit ConceptMap for historical association targets. */
+  private async translateAssociation(
+    conceptId: string,
+    refsetId: string,
+  ): Promise<{ code: string; display: string }[]> {
+    try {
+      const cmUrl = `${this.snomedSystemUrl}?fhir_cm=${refsetId}`;
+      const targetUrl = 'http://snomed.info/sct?fhir_vs'; // eslint-disable-line sonarjs/no-clear-text-protocols -- FHIR system URI, not a network URL
+      const url =
+        `${this.baseUrl}/ConceptMap/$translate` +
+        `?code=${encodeURIComponent(conceptId)}` +
+        `&system=${encodeURIComponent('http://snomed.info/sct')}` + // eslint-disable-line sonarjs/no-clear-text-protocols -- FHIR system URI
+        `&target=${encodeURIComponent(targetUrl)}` +
+        `&url=${encodeURIComponent(cmUrl)}`;
+
+      const response = await this.fetchWithTimeout(url, this.timeout, {
+        headers: { Accept: 'application/fhir+json' },
+      });
+      if (!response.ok) return [];
+
+      const data = (await response.json()) as FhirParametersResponse;
+      const params = data.parameter ?? [];
+      const resultParam = params.find((p) => p.name === 'result');
+      if (resultParam?.valueBoolean !== true) return [];
+
+      // Extract targets from match entries
+      const targets: { code: string; display: string }[] = [];
+      for (const param of params) {
+        if (param.name !== 'match') continue;
+        const parts = param.part ?? [];
+        const conceptPart = parts.find((p) => p.name === 'concept');
+        // valueCoding is not in our FhirParameterPart type — access via type assertion
+        const coding = (conceptPart as Record<string, unknown> | undefined)?.valueCoding as
+          | { code?: string; display?: string }
+          | undefined;
+        if (coding?.code) {
+          targets.push({ code: coding.code, display: coding.display ?? '' });
+        }
+      }
+      return targets;
+    } catch {
+      return [];
     }
   }
 

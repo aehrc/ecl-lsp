@@ -33,7 +33,13 @@ export {
 // Terminology
 export { FhirTerminologyService } from './terminology/fhir-service';
 export type { FhirTerminologyServiceOptions } from './terminology/fhir-service';
-export type { ITerminologyService, ConceptInfo, EvaluationResponse } from './terminology/types';
+export type {
+  ITerminologyService,
+  ConceptInfo,
+  EvaluationResponse,
+  HistoricalAssociation,
+  HistoricalAssociationType,
+} from './terminology/types';
 export { isValidSnomedId, isValidConceptId, isValidDescriptionId } from './terminology/verhoeff';
 
 // Validation
@@ -56,6 +62,8 @@ export { getRefactoringActions, REFACTORING_RESOLVE_KIND } from './refactoring';
 export type { RefactoringContext } from './refactoring';
 export { resolveAddDisplayTerms } from './refactoring/add-display-terms';
 export { resolveUnifiedSimplify } from './refactoring/simplify-expression';
+export { buildReplacementText } from './refactoring/replace-inactive-concept';
+export type { ReplacementResult } from './refactoring/replace-inactive-concept';
 
 // Completion
 export { getCompletionItems, getCompletionItemsWithSearch } from './completion/provider';

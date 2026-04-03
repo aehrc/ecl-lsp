@@ -187,7 +187,11 @@ export async function processEcl(
   }
 
   // Step 6: Format (alignTerms off — pipe alignment adds noise in Slack)
-  const formatted = formatDocument(withTerms, { ...defaultFormattingOptions, alignTerms: false });
+  const formatted = formatDocument(withTerms, {
+    ...defaultFormattingOptions,
+    alignTerms: false,
+    removeRedundantParentheses: true,
+  });
 
   // Step 7: Concept warnings
   // AST Position.line is 1-indexed (from ANTLR), column is 0-indexed
@@ -350,5 +354,5 @@ async function buildReplacementEcl(
   if (replaced === ecl) return undefined;
 
   // Format the replacement ECL
-  return formatDocument(replaced, { ...defaultFormattingOptions, alignTerms: false });
+  return formatDocument(replaced, { ...defaultFormattingOptions, alignTerms: false, removeRedundantParentheses: true });
 }

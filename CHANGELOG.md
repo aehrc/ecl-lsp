@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Inactive concept replacement quick fixes** (`ecl-lsp-server`): Code actions to replace inactive concepts with their active equivalents from historical association maps, with each association type shown as a separate action
 - **Slack bot: multiple expressions**: Use backticks to send multiple ECL expressions in one message, processed in parallel. Mixed single and triple backticks supported
 - **Slack bot: inactive concept replacement**: Second message with suggested replacement ECL where inactive concepts are substituted with the OR'd union of their historical association targets, including evaluation results
+- **Remove redundant parentheses** (`ecl-core`): New `removeRedundantParentheses` formatter option that removes parens which don't change the meaning of an expression — removes non-compound wrappers like `(404684003)`, flattens same-operator nesting like `(A AND B) AND C`, and keeps parens where required by different operators
 - **Toggle display terms** (Shift+Alt+T): Smart toggle keyboard shortcut for the web component and React editor — adds display terms via FHIR lookup when concept IDs are bare, strips them when all are present
 - **`registerToggleTermsAction()`**: New export from `@aehrc/ecl-editor-core` for registering the toggle action on any Monaco editor instance
 - **`getTerminologyService()`**: New method on `EclEditorDisposable` to access the current terminology service

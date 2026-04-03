@@ -4,7 +4,7 @@
 import { describe, it } from 'node:test';
 import * as assert from 'node:assert';
 import { parseInput, processEcl } from '../ecl-processor';
-import type { ITerminologyService, ConceptInfo, EvaluationResponse } from '@aehrc/ecl-core';
+import type { ITerminologyService, ConceptInfo, EvaluationResponse, HistoricalAssociation } from '@aehrc/ecl-core';
 
 // ── parseInput ──────────────────────────────────────────────────────────
 
@@ -622,5 +622,244 @@ describe('processEcl', () => {
     assert.strictEqual(evaluateCalled, true);
     assert.ok(result.evaluation);
     assert.ok(result.warnings.some((w) => w.message.includes('Terminology server unavailable')));
+  });
+});
+
+// ── processEcl — inactive concept replacement ──────────────────────────
+
+/**
+ * Create a mock service that supports getHistoricalAssociations for testing
+ * the inactive concept replacement pipeline through processEcl.
+ */
+function createMockServiceWithAssociations(opts: {
+  conceptMap: Map<string, ConceptInfo | null>;
+  associations: Map<string, HistoricalAssociation[]>;
+  evaluateEcl?: (expression: string, limit?: number) => Promise<EvaluationResponse>;
+}): ITerminologyService {
+  return {
+    getConceptInfo: async () => null,
+    validateConcepts: async (ids: string[]) => {
+      const result = new Map<string, ConceptInfo | null>();
+      for (const id of ids) {
+        if (opts.conceptMap.has(id)) {
+          result.set(id, opts.conceptMap.get(id)!);
+        }
+      }
+      return result;
+    },
+    searchConcepts: async () => ({ results: [], hasMore: false }),
+    evaluateEcl: opts.evaluateEcl ?? (async () => ({ total: 0, concepts: [], truncated: false })),
+    getHistoricalAssociations: async (conceptId: string) => {
+      return opts.associations.get(conceptId) ?? [];
+    },
+  };
+}
+
+describe('processEcl — inactive concept replacement', () => {
+  it('should produce replacement when inactive concept has SAME AS association', async () => {
+    const conceptMap = new Map<string, ConceptInfo | null>();
+    // 399144008 "Bronze diabetes" is inactive
+    conceptMap.set('399144008', {
+      id: '399144008',
+      fsn: 'Bronze diabetes (disorder)',
+      pt: 'Bronze diabetes',
+      active: false,
+    });
+
+    const associations = new Map<string, HistoricalAssociation[]>();
+    associations.set('399144008', [
+      {
+        type: 'same-as',
+        refsetId: '900000000000527005',
+        targets: [{ code: '235597007', display: 'Diabetic hepatopathy (disorder)' }],
+      },
+    ]);
+
+    const service = createMockServiceWithAssociations({ conceptMap, associations });
+    const result = await processEcl('< 399144008', service);
+
+    assert.ok(result.replacement, 'Should have a replacement');
+    assert.ok(result.replacement.ecl.includes('235597007'), 'Replacement should contain the target concept');
+    assert.ok(!result.replacement.ecl.includes('399144008'), 'Replacement should not contain the inactive concept');
+  });
+
+  it('should not produce replacement when no associations found', async () => {
+    const conceptMap = new Map<string, ConceptInfo | null>();
+    conceptMap.set('399144008', {
+      id: '399144008',
+      fsn: 'Bronze diabetes (disorder)',
+      pt: 'Bronze diabetes',
+      active: false,
+    });
+
+    // Empty associations — no historical targets
+    const associations = new Map<string, HistoricalAssociation[]>();
+
+    const service = createMockServiceWithAssociations({ conceptMap, associations });
+    const result = await processEcl('< 399144008', service);
+
+    assert.strictEqual(result.replacement, undefined, 'Should not produce replacement when no associations exist');
+  });
+
+  it('should not produce replacement when all concepts are active', async () => {
+    const conceptMap = new Map<string, ConceptInfo | null>();
+    conceptMap.set('404684003', {
+      id: '404684003',
+      fsn: 'Clinical finding (finding)',
+      pt: 'Clinical finding',
+      active: true,
+    });
+
+    const associations = new Map<string, HistoricalAssociation[]>();
+
+    const service = createMockServiceWithAssociations({ conceptMap, associations });
+    const result = await processEcl('< 404684003', service);
+
+    assert.strictEqual(result.replacement, undefined, 'Should not produce replacement when all concepts are active');
+  });
+
+  it('should handle multiple inactive concepts', async () => {
+    const conceptMap = new Map<string, ConceptInfo | null>();
+    conceptMap.set('399144008', {
+      id: '399144008',
+      fsn: 'Bronze diabetes (disorder)',
+      pt: 'Bronze diabetes',
+      active: false,
+    });
+    conceptMap.set('12481008', {
+      id: '12481008',
+      fsn: 'Intestinal infectious disease (disorder)',
+      pt: 'Intestinal infectious disease',
+      active: false,
+    });
+
+    const associations = new Map<string, HistoricalAssociation[]>();
+    associations.set('399144008', [
+      {
+        type: 'same-as',
+        refsetId: '900000000000527005',
+        targets: [{ code: '235597007', display: 'Diabetic hepatopathy (disorder)' }],
+      },
+    ]);
+    associations.set('12481008', [
+      {
+        type: 'replaced-by',
+        refsetId: '900000000000526001',
+        targets: [{ code: '1193006', display: 'Amoebic infection (disorder)' }],
+      },
+    ]);
+
+    const service = createMockServiceWithAssociations({ conceptMap, associations });
+    const result = await processEcl('< 399144008 OR < 12481008', service);
+
+    assert.ok(result.replacement, 'Should have a replacement');
+    assert.ok(result.replacement.ecl.includes('235597007'), 'Replacement should contain the first target');
+    assert.ok(result.replacement.ecl.includes('1193006'), 'Replacement should contain the second target');
+    assert.ok(
+      !result.replacement.ecl.includes('399144008'),
+      'Replacement should not contain the first inactive concept',
+    );
+    assert.ok(
+      !result.replacement.ecl.includes('12481008'),
+      'Replacement should not contain the second inactive concept',
+    );
+  });
+
+  it('should evaluate the replacement ECL when evaluation succeeds', async () => {
+    const conceptMap = new Map<string, ConceptInfo | null>();
+    conceptMap.set('399144008', {
+      id: '399144008',
+      fsn: 'Bronze diabetes (disorder)',
+      pt: 'Bronze diabetes',
+      active: false,
+    });
+
+    const associations = new Map<string, HistoricalAssociation[]>();
+    associations.set('399144008', [
+      {
+        type: 'same-as',
+        refsetId: '900000000000527005',
+        targets: [{ code: '235597007', display: 'Diabetic hepatopathy (disorder)' }],
+      },
+    ]);
+
+    let evaluateCallCount = 0;
+    const service = createMockServiceWithAssociations({
+      conceptMap,
+      associations,
+      evaluateEcl: async () => {
+        evaluateCallCount++;
+        return {
+          total: 3,
+          concepts: [
+            { code: '235597007', display: 'Diabetic hepatopathy' },
+            { code: '100001', display: 'Concept A' },
+            { code: '100002', display: 'Concept B' },
+          ],
+          truncated: false,
+        };
+      },
+    });
+    const result = await processEcl('< 399144008', service);
+
+    assert.ok(result.replacement, 'Should have a replacement');
+    assert.ok(result.replacement.evaluation, 'Replacement should have evaluation');
+    assert.strictEqual(result.replacement.evaluation.count, 3);
+    assert.strictEqual(result.replacement.evaluation.concepts.length, 3);
+    // evaluateEcl should be called at least twice: once for replacement, once for original
+    assert.ok(evaluateCallCount >= 2, `Expected at least 2 evaluateEcl calls, got ${evaluateCallCount}`);
+  });
+
+  it('should produce replacement with multiple targets as OR disjunction', async () => {
+    const conceptMap = new Map<string, ConceptInfo | null>();
+    conceptMap.set('399144008', {
+      id: '399144008',
+      fsn: 'Bronze diabetes (disorder)',
+      pt: 'Bronze diabetes',
+      active: false,
+    });
+
+    const associations = new Map<string, HistoricalAssociation[]>();
+    associations.set('399144008', [
+      {
+        type: 'possibly-equivalent-to',
+        refsetId: '900000000000523009',
+        targets: [
+          { code: '235597007', display: 'Diabetic hepatopathy (disorder)' },
+          { code: '44054006', display: 'Type 2 diabetes mellitus (disorder)' },
+        ],
+      },
+    ]);
+
+    const service = createMockServiceWithAssociations({ conceptMap, associations });
+    const result = await processEcl('< 399144008', service);
+
+    assert.ok(result.replacement, 'Should have a replacement');
+    assert.ok(result.replacement.ecl.includes('235597007'), 'Replacement should include first target');
+    assert.ok(result.replacement.ecl.includes('44054006'), 'Replacement should include second target');
+    assert.ok(result.replacement.ecl.includes('OR'), 'Multiple targets should be joined with OR');
+  });
+
+  it('should not produce replacement when getHistoricalAssociations is not available', async () => {
+    // Use the basic mock service which has no getHistoricalAssociations
+    const service = createMockService({
+      validateConcepts: async () => {
+        const map = new Map<string, ConceptInfo | null>();
+        map.set('399144008', {
+          id: '399144008',
+          fsn: 'Bronze diabetes (disorder)',
+          pt: 'Bronze diabetes',
+          active: false,
+        });
+        return map;
+      },
+    });
+    const result = await processEcl('< 399144008', service);
+
+    assert.strictEqual(
+      result.replacement,
+      undefined,
+      'Should not produce replacement without getHistoricalAssociations',
+    );
   });
 });

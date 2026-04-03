@@ -108,6 +108,36 @@ const results = await fhir.evaluateEcl('< 404684003');
 // { concepts: [...], total }
 ```
 
+### Canonical Comparison
+
+```typescript
+import { canonicalise, compareExpressions } from '@aehrc/ecl-core';
+
+// Normalise to a deterministic canonical form (strips terms, sorts operands/attributes)
+canonicalise('< 404684003 |Clinical finding| OR < 19829001');
+// → '<19829001 OR <404684003'
+
+// Compare two expressions for structural equivalence
+compareExpressions('< 404684003 OR < 19829001', '< 19829001 OR < 404684003');
+// → 'structurally_equivalent'
+```
+
+Returns `'identical'`, `'structurally_equivalent'`, or `'different'`. Throws `CanonicaliseError` for unparseable input. Pure, synchronous, zero-network-dependency.
+
+### Historical Associations
+
+```typescript
+import { FhirTerminologyService } from '@aehrc/ecl-core';
+
+const fhir = new FhirTerminologyService({ baseUrl: 'https://tx.ontoserver.csiro.au/fhir' });
+
+// Look up historical association targets for an inactive concept
+const associations = await fhir.getHistoricalAssociations('261282001');
+// [{ type: 'same-as', refsetId: '900000000000527005', targets: [{ code: '52323007', display: 'Helleborus niger' }] }]
+```
+
+Queries SNOMED CT historical association reference sets (SAME AS, REPLACED BY, POSSIBLY EQUIVALENT TO, ALTERNATIVE) via FHIR `ConceptMap/$translate`.
+
 ### Knowledge
 
 Structured ECL reference documentation — 50 articles across 6 categories.

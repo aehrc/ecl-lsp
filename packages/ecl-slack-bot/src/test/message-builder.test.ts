@@ -3,7 +3,7 @@
 
 import { describe, it } from 'node:test';
 import * as assert from 'node:assert';
-import { buildMessage, buildHelpMessage } from '../message-builder';
+import { buildMessage, buildHelpMessage, buildReplacementMessage } from '../message-builder';
 import type { ProcessResult } from '../ecl-processor';
 
 // ── Helper ──────────────────────────────────────────────────────────────
@@ -493,5 +493,197 @@ describe('buildHelpMessage', () => {
   it('should mention backticks for multiple expressions', () => {
     const msg = buildHelpMessage();
     assert.ok(msg.includes('backtick'));
+  });
+});
+
+// ── buildReplacementMessage ────────────────────────────────────────────
+
+describe('buildReplacementMessage', () => {
+  it('should return empty string when result has no replacement', () => {
+    const msg = buildReplacementMessage(makeResult());
+    assert.strictEqual(msg, '');
+  });
+
+  it('should return empty string when replacement is undefined', () => {
+    const msg = buildReplacementMessage(makeResult({ replacement: undefined }));
+    assert.strictEqual(msg, '');
+  });
+
+  it('should show replacement ECL in a code block', () => {
+    const msg = buildReplacementMessage(
+      makeResult({
+        replacement: { ecl: '<< 73211009 |Diabetes mellitus|' },
+      }),
+    );
+    assert.ok(msg.includes('```'));
+    assert.ok(msg.includes('73211009'));
+    assert.ok(msg.includes('Diabetes mellitus'));
+  });
+
+  it('should show "Suggested replacement" header', () => {
+    const msg = buildReplacementMessage(
+      makeResult({
+        replacement: { ecl: '<< 73211009' },
+      }),
+    );
+    assert.ok(msg.includes('*Suggested replacement*'));
+    assert.ok(msg.includes(':arrows_counterclockwise:'));
+  });
+
+  it('should show evaluation count when present', () => {
+    const msg = buildReplacementMessage(
+      makeResult({
+        replacement: {
+          ecl: '<< 73211009',
+          evaluation: {
+            count: 42,
+            concepts: [{ code: '73211009', display: 'Diabetes mellitus' }],
+          },
+        },
+      }),
+    );
+    assert.ok(msg.includes(':bar_chart:'));
+    assert.ok(msg.includes('42 concepts matched'));
+  });
+
+  it('should show singular "concept" for evaluation count of 1', () => {
+    const msg = buildReplacementMessage(
+      makeResult({
+        replacement: {
+          ecl: '<< 73211009',
+          evaluation: {
+            count: 1,
+            concepts: [{ code: '73211009', display: 'Diabetes mellitus' }],
+          },
+        },
+      }),
+    );
+    assert.ok(msg.includes('1 concept matched'));
+    assert.ok(!msg.includes('1 concepts'));
+  });
+
+  it('should show concept codes in evaluation', () => {
+    const msg = buildReplacementMessage(
+      makeResult({
+        replacement: {
+          ecl: '<< 73211009',
+          evaluation: {
+            count: 2,
+            concepts: [
+              { code: '73211009', display: 'Diabetes mellitus' },
+              { code: '44054006', display: 'Type 2 diabetes mellitus' },
+            ],
+          },
+        },
+      }),
+    );
+    assert.ok(msg.includes('73211009'));
+    assert.ok(msg.includes('Diabetes mellitus'));
+    assert.ok(msg.includes('44054006'));
+    assert.ok(msg.includes('Type 2 diabetes mellitus'));
+  });
+
+  it('should show "and N more" when count > shown concepts', () => {
+    const msg = buildReplacementMessage(
+      makeResult({
+        replacement: {
+          ecl: '<< 73211009',
+          evaluation: {
+            count: 500,
+            concepts: [
+              { code: '73211009', display: 'Diabetes mellitus' },
+              { code: '44054006', display: 'Type 2 diabetes mellitus' },
+            ],
+          },
+        },
+      }),
+    );
+    assert.ok(msg.includes('and 498 more'));
+  });
+
+  it('should not show "and N more" when all concepts are displayed', () => {
+    const msg = buildReplacementMessage(
+      makeResult({
+        replacement: {
+          ecl: '<< 73211009',
+          evaluation: {
+            count: 2,
+            concepts: [
+              { code: '73211009', display: 'Diabetes mellitus' },
+              { code: '44054006', display: 'Type 2 diabetes mellitus' },
+            ],
+          },
+        },
+      }),
+    );
+    assert.ok(!msg.includes('more'));
+  });
+
+  it('should truncate long ECL', () => {
+    const longEcl = '<< ' + '73211009 '.repeat(400);
+    const msg = buildReplacementMessage(
+      makeResult({
+        replacement: { ecl: longEcl },
+      }),
+    );
+    assert.ok(msg.includes('… (truncated)'));
+  });
+
+  it('should not show evaluation section when replacement has no evaluation', () => {
+    const msg = buildReplacementMessage(
+      makeResult({
+        replacement: { ecl: '<< 73211009' },
+      }),
+    );
+    assert.ok(!msg.includes(':bar_chart:'));
+  });
+
+  it('should render Shrimp links when editionUri is available', () => {
+    const msg = buildReplacementMessage(
+      makeResult({
+        editionUri: 'http://snomed.info/sct/32506021000036107/version/20260228',
+        fhirServerUrl: 'https://tx.ontoserver.csiro.au/fhir',
+        replacement: {
+          ecl: '<< 73211009',
+          evaluation: {
+            count: 1,
+            concepts: [{ code: '73211009', display: 'Diabetes mellitus' }],
+          },
+        },
+      }),
+    );
+    assert.ok(msg.includes('ontoserver.csiro.au/shrimp'));
+    assert.ok(msg.includes('|73211009>'));
+  });
+
+  it('should render inline code when editionUri is not available', () => {
+    const msg = buildReplacementMessage(
+      makeResult({
+        replacement: {
+          ecl: '<< 73211009',
+          evaluation: {
+            count: 1,
+            concepts: [{ code: '73211009', display: 'Diabetes mellitus' }],
+          },
+        },
+      }),
+    );
+    assert.ok(msg.includes('`73211009`'));
+    assert.ok(!msg.includes('ontoserver.csiro.au/shrimp'));
+  });
+
+  it('should format large evaluation counts with commas', () => {
+    const msg = buildReplacementMessage(
+      makeResult({
+        replacement: {
+          ecl: '<< 73211009',
+          evaluation: {
+            count: 1234567,
+            concepts: [],
+          },
+        },
+      }),
+    );
+    assert.ok(msg.includes('1,234,567'));
   });
 });

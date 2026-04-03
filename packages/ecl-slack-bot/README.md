@@ -110,6 +110,7 @@ Send your ECL expression directly — no prefix needed. Backticks work the same 
 - **Warnings** (inactive concepts, unknown concepts, semantic issues)
 - **Evaluation** — concept count + sample results with Shrimp browser links
 - **Edition** — resolved SNOMED CT edition and version
+- **Suggested replacement** (when inactive concepts are found) — a second message with inactive concepts replaced by their active equivalents from SNOMED CT historical association reference sets (SAME AS, REPLACED BY, POSSIBLY EQUIVALENT TO, ALTERNATIVE), with its own evaluation results
 
 ## Development
 

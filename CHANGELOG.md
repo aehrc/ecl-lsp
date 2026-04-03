@@ -9,12 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Canonical ECL comparison** (`ecl-core`): `canonicalise()` and `compareExpressions()` for structural equivalence checking without FHIR calls — strips display terms, sorts AND/OR operands and refinement attributes (numeric by SCTID), flattens same-operator compounds, removes redundant parentheses
+- **Historical association lookups** (`ecl-core`): `getHistoricalAssociations()` on `FhirTerminologyService` queries SNOMED CT historical association reference sets (SAME AS, REPLACED BY, POSSIBLY EQUIVALENT TO, ALTERNATIVE) via FHIR `ConceptMap/$translate`
+- **Inactive concept replacement quick fixes** (`ecl-lsp-server`): Code actions to replace inactive concepts with their active equivalents from historical association maps, with each association type shown as a separate action
+- **Slack bot: multiple expressions**: Use backticks to send multiple ECL expressions in one message, processed in parallel. Mixed single and triple backticks supported
+- **Slack bot: inactive concept replacement**: Second message with suggested replacement ECL where inactive concepts are substituted with the OR'd union of their historical association targets, including evaluation results
 - **Toggle display terms** (Shift+Alt+T): Smart toggle keyboard shortcut for the web component and React editor — adds display terms via FHIR lookup when concept IDs are bare, strips them when all are present
 - **`registerToggleTermsAction()`**: New export from `@aehrc/ecl-editor-core` for registering the toggle action on any Monaco editor instance
 - **`getTerminologyService()`**: New method on `EclEditorDisposable` to access the current terminology service
 
 ### Fixed
 
+- **Slack bot: closing brace preservation**: `extractEclFromProse()` no longer strips `}` from ECL expressions ending with attribute groups
+- **Slack bot: simplified text handling**: Replaced fragile prose extraction with direct approach — everything after the bot mention is ECL, or use backticks to delimit multiple expressions
 - **Shared language registration**: Web component now shares a single `registerEclLanguage` call across multiple `<ecl-editor>` instances, preventing duplicate hover tooltips and completions
 - **Line highlight disabled**: `renderLineHighlight: 'none'` for cleaner embedded appearance
 

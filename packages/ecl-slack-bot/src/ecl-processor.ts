@@ -37,7 +37,7 @@ export interface ProcessResult {
   /** FHIR server base URL for building Shrimp links. */
   fhirServerUrl?: string;
   /** ECL with inactive concepts replaced by active equivalents, if any were found. */
-  replacementEcl?: string;
+  replacement?: { ecl: string; evaluation?: EvaluationResult };
 }
 
 export interface ParsedInput {
@@ -213,13 +213,27 @@ export async function processEcl(
   }
 
   // Step 7b: Build replacement ECL for inactive concepts
-  let replacementEcl: string | undefined;
+  let replacement: ProcessResult['replacement'];
   const inactiveIds = conceptIds.filter((ref) => {
     const info = conceptMap.get(ref.id);
     return info && !info.active;
   });
   if (inactiveIds.length > 0 && terminologyService.getHistoricalAssociations) {
-    replacementEcl = await buildReplacementEcl(ecl, inactiveIds, terminologyService);
+    const replacementEcl = await buildReplacementEcl(ecl, inactiveIds, terminologyService);
+    if (replacementEcl) {
+      let evalResult: EvaluationResult | undefined;
+      try {
+        const limit = options?.maxEvalResults ?? 5;
+        const evalResponse = await terminologyService.evaluateEcl(replacementEcl, limit);
+        evalResult = {
+          count: evalResponse.total,
+          concepts: evalResponse.concepts.slice(0, limit).map((c) => ({ code: c.code, display: c.display })),
+        };
+      } catch {
+        // Evaluation failure is non-fatal
+      }
+      replacement = { ecl: replacementEcl, evaluation: evalResult };
+    }
   }
 
   // Step 8: Semantic validation (graceful on failure)
@@ -269,7 +283,7 @@ export async function processEcl(
     editionLabel = options.edition;
   }
 
-  return { formatted, errors, warnings, evaluation, edition: editionLabel, replacementEcl };
+  return { formatted, errors, warnings, evaluation, edition: editionLabel, replacement };
 }
 
 // ── Inactive concept replacement ───────────────────────────────────────

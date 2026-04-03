@@ -71,12 +71,36 @@ export function buildMessage(result: ProcessResult): string {
   return sections.join('\n');
 }
 
-export function buildReplacementMessage(replacementEcl: string): string {
-  let ecl = replacementEcl;
+export function buildReplacementMessage(result: ProcessResult): string {
+  const replacement = result.replacement;
+  if (!replacement) return '';
+
+  const sections: string[] = [];
+
+  let ecl = replacement.ecl;
   if (ecl.length > MAX_CODE_BLOCK_LENGTH) {
     ecl = ecl.slice(0, MAX_CODE_BLOCK_LENGTH) + '\n… (truncated)';
   }
-  return `:arrows_counterclockwise: *Suggested replacement* (inactive concepts replaced with active equivalents)\n\`\`\`\n${ecl}\n\`\`\``;
+  sections.push(
+    `:arrows_counterclockwise: *Suggested replacement* (inactive concepts replaced with active equivalents)\n\`\`\`\n${ecl}\n\`\`\``,
+  );
+
+  if (replacement.evaluation) {
+    const count = replacement.evaluation.count.toLocaleString('en-US');
+    let evalText = `:bar_chart: *Evaluation* \u2014 ${count} concept${replacement.evaluation.count === 1 ? '' : 's'} matched`;
+    if (replacement.evaluation.concepts.length > 0) {
+      const rows = replacement.evaluation.concepts.map(
+        (c) => `${shrimpLink(c.code, result.editionUri, result.fhirServerUrl)}  ${c.display}`,
+      );
+      evalText += '\n' + rows.join('\n');
+      if (replacement.evaluation.count > replacement.evaluation.concepts.length) {
+        evalText += `\n\u2026 and ${(replacement.evaluation.count - replacement.evaluation.concepts.length).toLocaleString('en-US')} more`;
+      }
+    }
+    sections.push(evalText);
+  }
+
+  return sections.join('\n');
 }
 
 export function buildHelpMessage(): string {

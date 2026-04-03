@@ -85,7 +85,7 @@ async function handleEcl(
   const elapsed = ((Date.now() - start) / 1000).toFixed(1);
   console.log(`[ECL] Done in ${elapsed}s — ${result.errors.length} errors, ${result.warnings.length} warnings`);
 
-  const replacementText = result.replacementEcl ? buildReplacementMessage(result.replacementEcl) : undefined;
+  const replacementText = result.replacement ? buildReplacementMessage(result) : undefined;
   return { text: buildMessage(result), replacementText, isHelp: false, isError: false };
 }
 

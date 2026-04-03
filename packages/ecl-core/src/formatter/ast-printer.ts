@@ -53,6 +53,7 @@ function printExpression(
   }
 }
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- parenthesis analysis + inline/multi-line layout
 function printSubExpression(
   node: SubExpressionNode,
   depth: number,
@@ -81,10 +82,23 @@ function printSubExpression(
       result += '*';
       break;
     case NodeType.ExpressionConstraint: {
+      const innerExpr = node.focus;
+
+      // Check if parentheses can be removed
+      if (opts.removeRedundantParentheses && !node.operator && !node.memberOf) {
+        const inner = innerExpr.expression;
+        if (inner.type !== NodeType.CompoundExpression) {
+          // Rule 1: inner is non-compound → parens always redundant
+          result += printExpression(innerExpr, depth, column + result.length, opts, src);
+          break;
+        }
+        // Rule 2 (same operator) is handled by flattening in printCompoundExpression
+        // Rule 3: different operator → keep parens (fall through)
+      }
+
       // Parenthesized sub-expression — try inline first, fall back to multi-line.
       // When inner is a refined expression, don't add depth for the paren because
       // the refinement handles its own indentation via : → depth+1.
-      const innerExpr = node.focus;
       const innerIsRefined = innerExpr.expression.type === NodeType.RefinedExpression;
       const innerDepth = innerIsRefined ? depth : depth + 1;
       const openCol = column + result.length;
@@ -134,8 +148,14 @@ function printCompoundExpression(
   const op = node.operator.operator; // 'AND' | 'OR' | 'MINUS'
   const opSep = opts.spaceAroundOperators ? ` ${op} ` : op;
 
+  // Flatten same-operator nested compounds when removing redundant parens
+  let operands = node.operands;
+  if (opts.removeRedundantParentheses && (op === 'AND' || op === 'OR')) {
+    operands = flattenSameOperatorOperands(operands, op);
+  }
+
   // Render all operands
-  const printed = node.operands.map((operand) => printSubExpression(operand, depth, 0, opts, src));
+  const printed = operands.map((operand) => printSubExpression(operand, depth, 0, opts, src));
 
   // Try inline form: operand1 OP operand2 OP operand3
   const inline = printed.join(opSep);
@@ -162,6 +182,32 @@ function printCompoundExpression(
     lines.push(`${ind}${op} ${printed[i]}`);
   }
   return lines.join('\n');
+}
+
+/**
+ * Flatten operands that are parenthesized compound expressions with the same operator.
+ * e.g., `(A AND B) AND C` → operands [A, B, C] (parens removed, operands merged).
+ */
+function flattenSameOperatorOperands(operands: readonly SubExpressionNode[], operator: string): SubExpressionNode[] {
+  const result: SubExpressionNode[] = [];
+  for (const operand of operands) {
+    if (
+      operand.focus.type === NodeType.ExpressionConstraint &&
+      !operand.operator &&
+      !operand.memberOf &&
+      !operand.filters &&
+      !operand.historySupplement
+    ) {
+      const inner = operand.focus.expression;
+      if (inner.type === NodeType.CompoundExpression && inner.operator.operator === operator) {
+        // Recursively flatten in case of deeper nesting
+        result.push(...flattenSameOperatorOperands(inner.operands, operator));
+        continue;
+      }
+    }
+    result.push(operand);
+  }
+  return result;
 }
 
 function printDottedExpression(

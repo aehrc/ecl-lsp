@@ -171,6 +171,10 @@ async function getFormattingOptions(conn: Connection): Promise<FormattingOptions
       defaultFormattingOptions.breakOnRefinementComma,
     ),
     breakAfterColon: validateBoolean(config.breakAfterColon, defaultFormattingOptions.breakAfterColon),
+    removeRedundantParentheses: validateBoolean(
+      config.removeRedundantParentheses,
+      defaultFormattingOptions.removeRedundantParentheses,
+    ),
   };
 }
 

@@ -29,6 +29,13 @@ export interface FormattingOptions {
    * Defaults to false.
    */
   breakAfterColon: boolean;
+  /**
+   * Remove parentheses that don't change the meaning of the expression.
+   * Removes parens around non-compound expressions (e.g. `(404684003)` → `404684003`)
+   * and flattens same-operator nesting (e.g. `(A AND B) AND C` → `A AND B AND C`).
+   * Defaults to false.
+   */
+  removeRedundantParentheses: boolean;
 }
 
 export const defaultFormattingOptions: FormattingOptions = {
@@ -41,4 +48,5 @@ export const defaultFormattingOptions: FormattingOptions = {
   breakOnOperators: false,
   breakOnRefinementComma: false,
   breakAfterColon: false,
+  removeRedundantParentheses: false,
 };

@@ -217,6 +217,11 @@
           "default": false,
           "description": "Force a new line after the refinement colon (:), indenting attributes under the focus concept"
         },
+        "ecl.formatting.removeRedundantParentheses": {
+          "type": "boolean",
+          "default": false,
+          "description": "Remove parentheses that don't change the meaning of the expression and flatten same-operator nesting"
+        },
         "ecl.evaluation.resultLimit": {
           "type": "number",
           "default": 200,

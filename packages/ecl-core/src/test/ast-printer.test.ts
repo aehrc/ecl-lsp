@@ -510,3 +510,104 @@ describe('AST Printer — Leaf Nodes and Sub-Expressions', () => {
     });
   });
 });
+
+// ── removeRedundantParentheses ──────────────────────────────────────────
+
+const optsRemoveParens = { ...defaultFormattingOptions, removeRedundantParentheses: true };
+
+describe('AST Printer — removeRedundantParentheses', () => {
+  describe('Non-compound inner (rule 1: always remove)', () => {
+    test('should remove parens around bare concept', () => {
+      const src = '(404684003)';
+      const { ast } = parseECL(src);
+      assert.strictEqual(printAst(ast, src, optsRemoveParens), '404684003');
+    });
+
+    test('should remove parens around constrained concept', () => {
+      const src = '(< 404684003)';
+      const { ast } = parseECL(src);
+      assert.strictEqual(printAst(ast, src, optsRemoveParens), '< 404684003');
+    });
+
+    test('should remove parens around concept with display term', () => {
+      const src = '(< 404684003 |Clinical finding|)';
+      const { ast } = parseECL(src);
+      assert.strictEqual(printAst(ast, src, optsRemoveParens), '< 404684003 | Clinical finding |');
+    });
+
+    test('should remove parens around refined expression', () => {
+      const src = '(404684003: 363698007 = *)';
+      const { ast } = parseECL(src);
+      assert.strictEqual(printAst(ast, src, optsRemoveParens), '404684003: 363698007 = *');
+    });
+
+    test('should not remove parens when option is off', () => {
+      const src = '(404684003)';
+      const { ast } = parseECL(src);
+      assert.strictEqual(printAst(ast, src, opts), '(404684003)');
+    });
+  });
+
+  describe('Same-operator flattening (rule 2: flatten AND/OR)', () => {
+    test('should flatten AND inside AND', () => {
+      const src = '(< 404684003 AND < 19829001) AND < 71388002';
+      const { ast } = parseECL(src);
+      const result = printAst(ast, src, optsRemoveParens);
+      assert.ok(!result.includes('('), `Should not contain parens: ${result}`);
+      assert.ok(result.includes('AND'), 'Should still have AND operators');
+    });
+
+    test('should flatten OR inside OR', () => {
+      const src = '(< 404684003 OR < 19829001) OR < 71388002';
+      const { ast } = parseECL(src);
+      const result = printAst(ast, src, optsRemoveParens);
+      assert.ok(!result.includes('('), `Should not contain parens: ${result}`);
+    });
+
+    test('should flatten deeply nested same-operator', () => {
+      const src = '((< 404684003 AND < 19829001) AND < 71388002) AND < 64572001';
+      const { ast } = parseECL(src);
+      const result = printAst(ast, src, optsRemoveParens);
+      assert.ok(!result.includes('('), `Should flatten all levels: ${result}`);
+    });
+
+    test('should not flatten MINUS (non-commutative)', () => {
+      const src = '(< 404684003 MINUS < 19829001) MINUS < 71388002';
+      const { ast } = parseECL(src);
+      const result = printAst(ast, src, optsRemoveParens);
+      assert.ok(result.includes('('), `MINUS should keep parens: ${result}`);
+    });
+  });
+
+  describe('Different-operator (rule 3: keep parens)', () => {
+    test('should keep parens for OR inside AND', () => {
+      const src = '(< 404684003 OR < 19829001) AND < 71388002';
+      const { ast } = parseECL(src);
+      const result = printAst(ast, src, optsRemoveParens);
+      assert.ok(result.includes('('), `Should keep parens for different ops: ${result}`);
+    });
+
+    test('should keep parens for AND inside OR', () => {
+      const src = '(< 404684003 AND < 19829001) OR < 71388002';
+      const { ast } = parseECL(src);
+      const result = printAst(ast, src, optsRemoveParens);
+      assert.ok(result.includes('('), `Should keep parens for different ops: ${result}`);
+    });
+  });
+
+  describe('Preserves parens with operators/memberOf', () => {
+    test('should keep parens when sub-expression has constraint operator', () => {
+      const src = '< (< 404684003 OR < 19829001)';
+      const { ast } = parseECL(src);
+      const result = printAst(ast, src, optsRemoveParens);
+      assert.ok(result.includes('('), `Constraint operator needs parens: ${result}`);
+    });
+
+    test('should keep parens when sub-expression has member-of', () => {
+      const src = '^ (< 404684003 OR < 19829001)';
+      const { ast } = parseECL(src);
+      const result = printAst(ast, src, optsRemoveParens);
+      assert.ok(result.includes('('), `Member-of needs parens: ${result}`);
+    });
+  });
+});

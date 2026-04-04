@@ -76,8 +76,12 @@ jobs:
           cache: npm
           registry-url: https://registry.npmjs.org
 
-      - name: Upgrade npm for OIDC publishing
-        run: npm install -g npm@11
+      - name: Repair and upgrade npm for OIDC publishing
+        run: |
+          # The pre-installed npm on Node 22.22.2 is broken (missing promise-retry).
+          # Use corepack to get a working npm, then upgrade properly.
+          corepack enable npm
+          corepack install -g npm@11
 
       - run: npm ci
 

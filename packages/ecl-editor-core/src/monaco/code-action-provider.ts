@@ -2,7 +2,12 @@
 // ABN 41 687 119 230. SPDX-License-Identifier: Apache-2.0
 
 import type * as Monaco from 'monaco-editor';
-import { getRefactoringActions, resolveAddDisplayTerms, resolveUnifiedSimplify } from '@aehrc/ecl-core';
+import {
+  getRefactoringActions,
+  resolveAddDisplayTerms,
+  resolveUnifiedSimplify,
+  buildReplacementText,
+} from '@aehrc/ecl-core';
 import type { CoreCodeAction, CoreTextEdit, ITerminologyService } from '@aehrc/ecl-core';
 
 function coreEditToMonaco(edit: CoreTextEdit): { range: Monaco.IRange; text: string } {
@@ -34,7 +39,11 @@ export function createCodeActionProvider(
   let lastModelUri: Monaco.Uri | null = null;
 
   return {
-    provideCodeActions(model: Monaco.editor.ITextModel, range: Monaco.Range): Monaco.languages.CodeActionList {
+    provideCodeActions(
+      model: Monaco.editor.ITextModel,
+      range: Monaco.Range,
+      context: Monaco.languages.CodeActionContext,
+    ): Monaco.languages.CodeActionList {
       lastModelUri = model.uri;
       const text = model.getValue();
       const uri = model.uri.toString();
@@ -63,6 +72,35 @@ export function createCodeActionProvider(
         return monacoAction;
       });
 
+      // Add quick fixes for inactive concept diagnostics
+      for (const marker of context.markers) {
+        const inactiveMatch = /^Inactive concept (\d+)/.exec(marker.message);
+        if (!inactiveMatch) continue;
+
+        const conceptId = inactiveMatch[1];
+        actions.push({
+          title: 'Replace inactive concept with active replacement\u2026',
+          kind: 'quickfix',
+          diagnostics: [],
+          isPreferred: false,
+          _coreAction: {
+            title: 'Replace inactive concept',
+            kind: 'quickfix',
+            data: {
+              action: 'replaceInactiveConcept',
+              conceptId,
+              // Store the marker range (1-based Monaco) for the replacement edit
+              markerRange: {
+                startLineNumber: marker.startLineNumber,
+                startColumn: marker.startColumn,
+                endLineNumber: marker.endLineNumber,
+                endColumn: marker.endColumn,
+              },
+            },
+          },
+        } as Monaco.languages.CodeAction & { _coreAction?: CoreCodeAction });
+      }
+
       return {
         actions,
         dispose: () => {
@@ -80,6 +118,13 @@ export function createCodeActionProvider(
 
         const service = getTerminologyService();
         if (!service) return codeAction;
+
+        const data = coreAction.data as Record<string, unknown>;
+
+        // Resolve inactive concept replacement
+        if (data.action === 'replaceInactiveConcept') {
+          return await resolveInactiveConceptAction(codeAction, data, service, lastModelUri);
+        }
 
         // Resolve the action via ecl-core (FHIR calls happen here)
         const resolved = await resolveAddDisplayTerms(coreAction, service);
@@ -100,4 +145,46 @@ export function createCodeActionProvider(
       }
     },
   };
+}
+
+async function resolveInactiveConceptAction(
+  codeAction: Monaco.languages.CodeAction,
+  data: Record<string, unknown>,
+  service: ITerminologyService,
+  modelUri: Monaco.Uri,
+): Promise<Monaco.languages.CodeAction> {
+  const conceptId = data.conceptId as string;
+  const markerRange = data.markerRange as {
+    startLineNumber: number;
+    startColumn: number;
+    endLineNumber: number;
+    endColumn: number;
+  };
+  if (!service.getHistoricalAssociations) return codeAction;
+
+  const associations = await service.getHistoricalAssociations(conceptId);
+  if (associations.length === 0) {
+    codeAction.title = 'No historical association mappings found for this concept';
+    return codeAction;
+  }
+
+  // Use the most specific association type
+  const { replacement, label } = buildReplacementText(associations[0]);
+  codeAction.title = label;
+  if (!replacement) return codeAction;
+
+  codeAction.edit = {
+    edits: [
+      {
+        resource: modelUri,
+        textEdit: {
+          range: markerRange,
+          text: replacement,
+        },
+        versionId: undefined,
+      },
+    ],
+  };
+
+  return codeAction;
 }

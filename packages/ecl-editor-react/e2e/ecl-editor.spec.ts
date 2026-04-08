@@ -425,6 +425,35 @@ test.describe('Code Actions', () => {
 });
 
 // ---------------------------------------------------------------------------
+// 8b. Inactive Concept Replacement Quick Fix
+// ---------------------------------------------------------------------------
+
+test.describe('Inactive Concept Replacement', () => {
+  test('offers quick fix to replace inactive concept with active replacement', async ({ page }) => {
+    // Use withFhirServer story for FHIR-backed diagnostics and code actions
+    await page.goto(storyUrl(STORIES.withFhirServer));
+    await waitForMonacoReady(page);
+
+    // 75304006 is inactive, with SAME AS → 422610006 |Egretta ardesiaca|
+    await setEditorValue(page, '< 75304006');
+
+    // Wait for the inactive concept diagnostic (debounced FHIR validation)
+    await waitForMarkers(page, 1, 15_000);
+    const markers = await getMarkers(page);
+    const inactiveMarker = markers.find((m) => m.message.includes('Inactive concept'));
+    expect(inactiveMarker).toBeDefined();
+
+    // Position cursor on the concept and trigger quick fix
+    await setCursorPosition(page, 1, 5);
+    const actions = await getCodeActionTitles(page);
+
+    // Should offer a replacement quick fix with the association target
+    const replaceAction = actions.find((a) => a.toLowerCase().includes('replace'));
+    expect(replaceAction).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // 9. FHIR Integration (WithFhirServer story)
 // ---------------------------------------------------------------------------
 

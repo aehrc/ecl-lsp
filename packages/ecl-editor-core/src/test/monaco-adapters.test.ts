@@ -2,7 +2,7 @@
 // ABN 41 687 119 230. SPDX-License-Identifier: Apache-2.0
 
 import { describe, it, expect, vi } from 'vitest';
-import type { ITerminologyService, ConceptInfo } from '@aehrc/ecl-core';
+import type { ITerminologyService, ConceptInfo, HistoricalAssociation } from '@aehrc/ecl-core';
 import { createMockModel, MockPosition, MockRange } from './mock-monaco';
 import { createCompletionProvider } from '../monaco/completion-provider';
 import { createHoverProvider } from '../monaco/hover-provider';
@@ -622,5 +622,93 @@ describe('Monaco Code Action Provider', () => {
 
     const resolved = await provider.resolveCodeAction!(action as any, null as any);
     expect(resolved.edit).toBeUndefined();
+  });
+
+  it('should offer inactive concept replacement quick fix from diagnostic marker', () => {
+    const provider = createCodeActionProvider(() => null);
+    const model = createMockModel('< 75304006');
+    const range = new MockRange(1, 1, 1, 12);
+
+    // Simulate an inactive concept diagnostic marker
+    const context = {
+      markers: [
+        {
+          message: 'Inactive concept 75304006 |Black-headed heron| — consider using an active replacement.',
+          startLineNumber: 1,
+          startColumn: 3,
+          endLineNumber: 1,
+          endColumn: 12,
+          severity: 4, // Warning
+        },
+      ],
+      trigger: 1,
+    };
+
+    const result = provider.provideCodeActions(model as any, range as any, context as any, null as any);
+    const replaceAction = result.actions.find((a: any) => a.title.includes('Replace inactive concept'));
+    expect(replaceAction).toBeDefined();
+    expect(replaceAction!.kind).toBe('quickfix');
+    expect((replaceAction as any)._coreAction.data.conceptId).toBe('75304006');
+  });
+
+  it('should resolve inactive concept replacement with historical association target', async () => {
+    // Mock service with getHistoricalAssociations
+    const associations: HistoricalAssociation[] = [
+      {
+        type: 'same-as',
+        refsetId: '900000000000527005',
+        targets: [{ code: '422610006', display: 'Egretta ardesiaca' }],
+      },
+    ];
+    const service: ITerminologyService = {
+      ...createMockService(),
+      async getHistoricalAssociations() {
+        return associations;
+      },
+    };
+    const provider = createCodeActionProvider(() => service);
+    const model = createMockModel('< 75304006');
+    const range = new MockRange(1, 1, 1, 12);
+
+    const context = {
+      markers: [
+        {
+          message: 'Inactive concept 75304006 — consider using an active replacement.',
+          startLineNumber: 1,
+          startColumn: 3,
+          endLineNumber: 1,
+          endColumn: 12,
+          severity: 4,
+        },
+      ],
+      trigger: 1,
+    };
+
+    // Provide actions to stash lastModelUri and get the replacement action
+    const result = provider.provideCodeActions(model as any, range as any, context as any, null as any);
+    const replaceAction = result.actions.find((a: any) => a.title.includes('Replace inactive concept'));
+    expect(replaceAction).toBeDefined();
+
+    // Resolve — should call getHistoricalAssociations and build an edit
+    const resolved = await provider.resolveCodeAction!(replaceAction as any, null as any);
+    expect(resolved.edit).toBeDefined();
+    expect(resolved.title).toContain('same as');
+    expect(resolved.title).toContain('422610006');
+
+    // The edit should replace with the target concept
+    const editText = (resolved.edit!.edits[0] as any).textEdit.text;
+    expect(editText).toContain('422610006');
+    expect(editText).toContain('Egretta ardesiaca');
+  });
+
+  it('should not offer replacement when no inactive concept markers present', () => {
+    const provider = createCodeActionProvider(() => null);
+    const model = createMockModel('< 404684003');
+    const range = new MockRange(1, 1, 1, 12);
+
+    const context = { markers: [], trigger: 1 };
+    const result = provider.provideCodeActions(model as any, range as any, context as any, null as any);
+    const replaceAction = result.actions.find((a: any) => a.title.includes('Replace inactive concept'));
+    expect(replaceAction).toBeUndefined();
   });
 });

@@ -178,6 +178,7 @@ export function activate(context: ExtensionContext) {
           await evaluateExpression(client, startLine, expression);
           return;
         }
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-return -- LSP middleware signature returns any
         return next(command, args);
       },
     },
@@ -231,7 +232,7 @@ export function activate(context: ExtensionContext) {
 
       // Listen for resolved version notifications from server
       client.onNotification('ecl/resolvedSnomedVersion', (params: { versionUri: string }) => {
-        const setting = workspace.getConfiguration('ecl.terminology').get<string>('snomedVersion', '');
+        const setting = workspace.getConfiguration('ecl.terminology').get('snomedVersion', '');
         // Only update display for default or edition-only settings (not pinned)
         if (!setting.includes('/version/')) {
           resolvedVersionUri = params.versionUri;
@@ -441,7 +442,7 @@ async function evaluateExpression(client: LanguageClient, startLine?: number, ex
     return;
   }
 
-  const limit = workspace.getConfiguration('ecl.evaluation').get<number>('resultLimit', 200);
+  const limit = workspace.getConfiguration('ecl.evaluation').get('resultLimit', 200);
 
   // If no expression provided (Command Palette), try embedded fragment first, then .ecl line
   if (!expression) {
@@ -553,7 +554,7 @@ function getEditionLabel(moduleId: string): string {
 
 // eslint-disable-next-line sonarjs/cognitive-complexity -- status bar display logic with multiple edition/version/resolved states
 function updateStatusBar(): void {
-  const setting = workspace.getConfiguration('ecl.terminology').get<string>('snomedVersion', '');
+  const setting: string = workspace.getConfiguration('ecl.terminology').get('snomedVersion', '');
 
   if (setting) {
     const parsed = parseSnomedVersionUri(setting);
@@ -625,7 +626,7 @@ async function selectSnomedEdition(client: LanguageClient): Promise<void> {
       prompt: 'Enter a SNOMED CT version URI',
       // eslint-disable-next-line sonarjs/no-clear-text-protocols -- SNOMED CT standard URI scheme uses http://snomed.info/sct
       placeHolder: 'http://snomed.info/sct/32506021000036107/version/20260131',
-      value: workspace.getConfiguration('ecl.terminology').get<string>('snomedVersion', ''),
+      value: workspace.getConfiguration('ecl.terminology').get('snomedVersion', ''),
     });
     if (uri !== undefined) {
       await workspace

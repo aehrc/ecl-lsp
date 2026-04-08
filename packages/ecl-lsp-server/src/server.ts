@@ -143,8 +143,8 @@ async function getFormattingOptions(conn: Connection): Promise<FormattingOptions
   // Try workspace.getConfiguration, fall back to initializationOptions.formatting
   let config: Record<string, unknown> | null = null;
   try {
-    const wsConfig = await conn.workspace.getConfiguration({ section: 'ecl.formatting' });
-    if (wsConfig && typeof wsConfig === 'object' && Object.keys(wsConfig).length > 0) {
+    const wsConfig: unknown = await conn.workspace.getConfiguration({ section: 'ecl.formatting' });
+    if (wsConfig && typeof wsConfig === 'object' && Object.keys(wsConfig as Record<string, unknown>).length > 0) {
       config = wsConfig as Record<string, unknown>;
     }
   } catch {
@@ -243,7 +243,7 @@ function applyTerminologyConfig(cfg: { serverUrl?: string; timeout?: number; sno
 async function initTerminologyService(): Promise<void> {
   // Try workspace.getConfiguration first (VSCode, clients with configuration support)
   try {
-    const config = await connection.workspace.getConfiguration({
+    const config: unknown = await connection.workspace.getConfiguration({
       section: 'ecl.terminology',
     });
     const cfg = extractTerminologyConfig(config as Record<string, unknown>);
@@ -264,7 +264,7 @@ async function initTerminologyService(): Promise<void> {
 
   // Read semantic validation setting
   try {
-    const semanticConfig = await connection.workspace.getConfiguration({
+    const semanticConfig: unknown = await connection.workspace.getConfiguration({
       section: 'ecl.semanticValidation',
     });
     const scObj = semanticConfig as Record<string, unknown> | null;

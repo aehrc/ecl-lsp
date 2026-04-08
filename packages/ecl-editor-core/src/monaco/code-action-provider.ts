@@ -42,7 +42,7 @@ export function createCodeActionProvider(
     provideCodeActions(
       model: Monaco.editor.ITextModel,
       range: Monaco.Range,
-      context: Monaco.languages.CodeActionContext,
+      context?: Monaco.languages.CodeActionContext,
     ): Monaco.languages.CodeActionList {
       lastModelUri = model.uri;
       const text = model.getValue();
@@ -73,7 +73,7 @@ export function createCodeActionProvider(
       });
 
       // Add quick fixes for inactive concept diagnostics
-      for (const marker of context.markers) {
+      for (const marker of context?.markers ?? []) {
         const inactiveMatch = /^Inactive concept (\d+)/.exec(marker.message);
         if (!inactiveMatch) continue;
 

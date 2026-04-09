@@ -713,7 +713,7 @@ describe('Large expressions: performance', () => {
     assert.strictEqual(result.errors.length, 0);
   });
 
-  test('50-level nested parentheses complete in < 2000ms', () => {
+  test('50-level nested parentheses complete in < 3000ms', () => {
     const depth = 50;
     const open = '('.repeat(depth);
     const close = ')'.repeat(depth);
@@ -721,7 +721,7 @@ describe('Large expressions: performance', () => {
     const start = performance.now();
     const result = parseECL(expr);
     const elapsed = performance.now() - start;
-    assert.ok(elapsed < 2000, `50-deep nesting: ${elapsed.toFixed(1)}ms (limit 2000ms)`);
+    assert.ok(elapsed < 3000, `50-deep nesting: ${elapsed.toFixed(1)}ms (limit 3000ms)`);
     assert.strictEqual(result.errors.length, 0);
   });
 

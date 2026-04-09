@@ -2,7 +2,7 @@
   "name": "ecl-lsp-client",
   "displayName": "ECL Language Support",
   "description": "Language support for SNOMED CT Expression Constraint Language",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "license": "Apache-2.0",
   "author": "Commonwealth Scientific and Industrial Research Organisation (CSIRO)",
   "publisher": "ecl-lsp",

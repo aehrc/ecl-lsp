@@ -16,6 +16,7 @@ import {
   waitForNoMarkers,
   isEclLanguageRegistered,
   getModelLanguageId,
+  getCodeActionTitles,
 } from './helpers';
 
 // ---------------------------------------------------------------------------
@@ -443,12 +444,25 @@ test.describe('Inactive Concept Replacement', () => {
     const inactiveMarker = markers.find((m) => m.message.includes('Inactive concept'));
     expect(inactiveMarker).toBeDefined();
 
-    // Position cursor on the concept and trigger quick fix
-    await setCursorPosition(page, 1, 5);
-    const actions = await getCodeActionTitles(page);
+    // Position cursor on the inactive concept (within the marker range)
+    await setCursorPosition(page, inactiveMarker!.startLineNumber, inactiveMarker!.startColumn);
+    await page.waitForTimeout(500);
 
-    // Should offer a replacement quick fix with the association target
-    const replaceAction = actions.find((a) => a.toLowerCase().includes('replace'));
+    // Trigger quick fix and wait for the widget to populate
+    await page.evaluate(async () => {
+      const editor = (window as any).monaco.editor.getEditors()[0];
+      editor?.getAction('editor.action.quickFix')?.run();
+    });
+    await page.waitForTimeout(2000);
+
+    // Read code action titles from the context menu
+    const actions = await page.evaluate(() => {
+      const items = document.querySelectorAll('.context-view .monaco-list-row');
+      return Array.from(items).map((el) => el.textContent?.trim() ?? '');
+    });
+
+    // Should offer a replacement quick fix
+    const replaceAction = actions.find((a: string) => a.toLowerCase().includes('replace'));
     expect(replaceAction).toBeDefined();
   });
 });

@@ -970,7 +970,7 @@ connection.onCodeAction(async (params: CodeActionParams): Promise<CodeAction[]> 
     await Promise.all(
       inactiveConcepts.map(async ({ conceptId, diagnostic }) => {
         try {
-          const associations = await terminologyService.getHistoricalAssociations!(conceptId);
+          const associations = (await terminologyService.getHistoricalAssociations?.(conceptId)) ?? [];
           for (const assoc of associations) {
             const { replacement, label } = buildReplacementText(assoc);
             if (!replacement) continue;

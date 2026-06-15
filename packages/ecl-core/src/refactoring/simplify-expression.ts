@@ -121,7 +121,7 @@ function rankOperands(operandTexts: string[], compoundOp: 'AND' | 'OR'): string[
     if (!result.ast?.expression) return null;
     const expr = result.ast.expression;
     if (expr.type !== NodeType.SubExpressionConstraint) return null;
-    const sub = expr as unknown as SubExpressionNode;
+    const sub = expr;
     if (sub.memberOf || sub.filters?.length || sub.historySupplement) return null;
     const cid = getConceptId(sub);
     if (cid === null) return null;
@@ -191,7 +191,7 @@ function getFocusKey(text: string): { focusKey: string; focusText: string; refin
   // In the AST: SubExpressionNode with focus = ExpressionConstraint
   // whose inner expression is a RefinedExpression
   if (expr.type !== NodeType.SubExpressionConstraint) return null;
-  const sub = expr as unknown as SubExpressionNode;
+  const sub = expr;
   if (sub.focus.type !== NodeType.ExpressionConstraint) return null;
 
   const nested = sub.focus;

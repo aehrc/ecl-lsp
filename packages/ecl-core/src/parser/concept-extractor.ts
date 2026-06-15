@@ -88,7 +88,6 @@ export function extractConceptIds(ast: ExpressionNode, options?: { deduplicate?:
         break;
 
       case NodeType.ExpressionConstraint:
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- visitor may return null for invalid parse trees
         if (node.expression) visitNode(node.expression);
         break;
 

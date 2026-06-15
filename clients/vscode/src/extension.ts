@@ -355,7 +355,7 @@ function searchAndInsertConcept(client: LanguageClient): void {
   // Handle concept selection
   quickPick.onDidAccept(async () => {
     const selected = quickPick.selectedItems[0];
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- selectedItems[0] can be undefined at runtime
+
     if (!selected?.concept) {
       quickPick.hide();
       return;

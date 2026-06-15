@@ -1,7 +1,7 @@
 // Copyright 2026 Commonwealth Scientific and Industrial Research Organisation (CSIRO)
 // ABN 41 687 119 230. SPDX-License-Identifier: Apache-2.0
 
-import type { CoreCompletionItem, CoreCompletionItemKind } from '../types';
+import type { CoreCompletionItem } from '../types';
 import { coreReplace } from '../types';
 import { eclSnippetCompletions } from './snippets';
 import { detectCursorContext, detectFilterContext, FilterSubContext } from './context-detector';
@@ -287,7 +287,7 @@ export async function getCompletionItemsWithSearch(
       const displayLabel = tagMatch ? `${result.pt} ${tagMatch[1]}` : result.pt;
       return {
         label: `${result.id} |${displayLabel}|`,
-        kind: 'concept' as CoreCompletionItemKind,
+        kind: 'concept',
         detail: result.fsn,
         filterText: result.pt,
         sortText: `g${String(index).padStart(3, '0')}`,

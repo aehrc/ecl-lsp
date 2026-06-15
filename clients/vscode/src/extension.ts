@@ -180,7 +180,7 @@ export function activate(context: ExtensionContext) {
           }
           return;
         }
-        return next(command, args);
+        return next(command, args) as Promise<unknown>;
       },
     },
   };

@@ -3,7 +3,37 @@
 
 import { groupIntoExpressions } from './parser/expression-grouper';
 import { parseECL } from './parser';
-import { NodeType, type ExpressionNode, type SubExpressionNode } from './parser/ast';
+import {
+  NodeType,
+  type ExpressionNode,
+  type SubExpressionNode,
+  type CompoundExpressionNode,
+  type RefinedExpressionNode,
+  type DottedExpressionNode,
+  type DottedAttributeNode,
+  type ConceptReferenceNode,
+  type WildcardNode,
+  type RefinementNode,
+  type AttributeNode,
+  type AttributeNameNode,
+  type FilterConstraintNode,
+  type HistorySupplementNode,
+} from './parser/ast';
+
+/** Union of every AST node the semantic-token walker can encounter. */
+type AnyAstNode =
+  | ExpressionNode
+  | SubExpressionNode
+  | CompoundExpressionNode
+  | RefinedExpressionNode
+  | DottedExpressionNode
+  | DottedAttributeNode
+  | ConceptReferenceNode
+  | WildcardNode
+  | RefinementNode
+  | AttributeNode
+  | FilterConstraintNode
+  | HistorySupplementNode;
 
 // --- Token type indices ---
 const TOKEN_KEYWORD = 0;
@@ -41,70 +71,49 @@ export interface SemanticToken {
 
 // --- Attribute name position set ---
 
-// Node type constants — must match ecl-core's NodeType enum values
-const NT = {
-  ExpressionConstraint: 'ExpressionConstraint',
-  SubExpressionConstraint: 'SubExpressionConstraint',
-  CompoundExpression: 'CompoundExpression',
-  RefinedExpression: 'RefinedExpression',
-  DottedExpression: 'DottedExpression',
-  DottedAttribute: 'DottedAttribute',
-  Refinement: 'Refinement',
-  Attribute: 'Attribute',
-  AttributeName: 'AttributeName',
-  ConceptReference: 'ConceptReference',
-  FilterConstraint: 'FilterConstraint',
-  HistorySupplement: 'HistorySupplement',
-} as const;
-
 /**
  * Walk the AST to collect document-level positions of concept IDs used as attribute names.
  */
 function collectAttributeNamePositions(ast: ExpressionNode, lineOffsets: number[]): Set<string> {
   const positions = new Set<string>();
 
-  // eslint-disable-next-line sonarjs/cognitive-complexity, @typescript-eslint/no-explicit-any -- priority-ordered AST visitor with 12 node types; ANTLR4 AST nodes are inherently untyped
-  function visit(node: any): void {
-    if (!node?.type) return;
+  function visit(node: AnyAstNode | null | undefined): void {
+    if (!node) return;
     switch (node.type) {
-      case NT.ExpressionConstraint:
-        if (node.expression) visit(node.expression);
+      case NodeType.ExpressionConstraint:
+        visit(node.expression);
         break;
-      case NT.SubExpressionConstraint:
-        if (node.focus) visit(node.focus);
-        if (node.filters) {
-          for (const f of node.filters) visit(f);
-        }
-        if (node.historySupplement) visit(node.historySupplement);
+      case NodeType.SubExpressionConstraint:
+        visit(node.focus);
+        for (const f of node.filters ?? []) visit(f);
+        visit(node.historySupplement);
         break;
-      case NT.CompoundExpression:
+      case NodeType.CompoundExpression:
         for (const op of node.operands) visit(op);
         break;
-      case NT.RefinedExpression:
+      case NodeType.RefinedExpression:
         visit(node.expression);
         visit(node.refinement);
         break;
-      case NT.DottedExpression:
+      case NodeType.DottedExpression:
         visit(node.source);
         for (const attr of node.attributes) visit(attr);
         break;
-      case NT.DottedAttribute:
-        if (node.attributeName) {
-          markSubExpressionAsAttrName(node.attributeName, lineOffsets, positions);
-        }
+      case NodeType.DottedAttribute:
+        markSubExpressionAsAttrName(node.attributeName, lineOffsets, positions);
         break;
-      case NT.Refinement:
+      case NodeType.Refinement:
         for (const attr of node.attributes) visit(attr);
         break;
-      case NT.Attribute:
+      case NodeType.Attribute:
         markAttributeName(node.name, lineOffsets, positions);
-        if (node.value?.expression) visit(node.value.expression);
+        visit(node.value.expression);
         break;
-      case NT.FilterConstraint:
+      case NodeType.FilterConstraint:
         for (const ce of node.conceptExpressions) visit(ce);
         break;
-      case NT.HistorySupplement:
-        if (node.subsetExpression) visit(node.subsetExpression);
+      case NodeType.HistorySupplement:
+        visit(node.subsetExpression);
         break;
       default:
         break;
@@ -115,8 +124,7 @@ function collectAttributeNamePositions(ast: ExpressionNode, lineOffsets: number[
   return positions;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function markAttributeName(name: any, lineOffsets: number[], positions: Set<string>): void {
+function markAttributeName(name: AttributeNameNode, lineOffsets: number[], positions: Set<string>): void {
   if (name.conceptId) {
     const exprLine = Math.max(0, name.range.start.line - 1);
     const docLine = lineOffsets[exprLine] ?? 0;

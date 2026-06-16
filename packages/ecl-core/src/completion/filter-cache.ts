@@ -6,7 +6,7 @@
 // Evaluates ECL constraints for filter keywords (typeId, dialectId, moduleId)
 // against the terminology server and caches results with a 15-minute TTL.
 
-import type { CoreCompletionItem, CoreCompletionItemKind } from '../types';
+import type { CoreCompletionItem } from '../types';
 import type { ITerminologyService, EvaluationConcept } from '../terminology/types';
 
 /** ECL constraints for filter keywords that support FHIR-powered completions. */
@@ -54,7 +54,7 @@ export async function getFhirFilterCompletions(
     const items = response.concepts.map(
       (concept: EvaluationConcept, index: number): CoreCompletionItem => ({
         label: `${concept.code} |${concept.display}|`,
-        kind: 'value' as CoreCompletionItemKind,
+        kind: 'value',
         detail: concept.display,
         sortText: `e-${(20 + index).toString().padStart(3, '0')}`,
       }),

@@ -1,6 +1,10 @@
 import type { StorybookConfig } from '@storybook/web-components-vite';
 import { nodePolyfills } from 'vite-plugin-node-polyfills';
 import path from 'path';
+import { fileURLToPath } from 'node:url';
+
+// Storybook 10 evaluates this config as an ESM module, where __dirname is undefined.
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const config: StorybookConfig = {
   stories: ['../src/**/*.stories.@(ts|tsx)'],

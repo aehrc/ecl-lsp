@@ -60,7 +60,9 @@ export function extractConceptIds(ast: ExpressionNode, options?: { deduplicate?:
   const seenIds = new Set<string>();
 
   // eslint-disable-next-line sonarjs/cognitive-complexity -- exhaustive switch over AST node types
-  function visitNode(node: EclAstNode): void {
+  function visitNode(node: EclAstNode | null | undefined): void {
+    // Required AST fields can still be null in partial/error-recovery parse trees.
+    if (!node) return;
     switch (node.type) {
       case NodeType.ConceptReference:
         if (!deduplicate || !seenIds.has(node.conceptId)) {
@@ -88,7 +90,7 @@ export function extractConceptIds(ast: ExpressionNode, options?: { deduplicate?:
         break;
 
       case NodeType.ExpressionConstraint:
-        if (node.expression) visitNode(node.expression);
+        visitNode(node.expression);
         break;
 
       case NodeType.SubExpressionConstraint:

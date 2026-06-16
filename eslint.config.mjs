@@ -205,31 +205,6 @@ export default tseslint.config(
     },
   },
 
-  // Files with heavy `any`-typed external APIs (LSP, FHIR, config, AST traversal)
-  {
-    files: [
-      'packages/ecl-lsp-server/src/server.ts',
-      'packages/ecl-core/src/terminology/fhir-service.ts',
-      'packages/ecl-core/src/formatter/config.ts',
-      'packages/ecl-core/src/formatter/formatter.ts',
-      'packages/ecl-core/src/parser/concept-extractor.ts',
-      'packages/ecl-core/src/parser/index.ts',
-      'packages/ecl-core/src/semantic-tokens.ts',
-      'clients/vscode/src/extension.ts',
-    ],
-    rules: {
-      '@typescript-eslint/no-explicit-any': 'warn',
-      '@typescript-eslint/no-unsafe-assignment': 'off',
-      '@typescript-eslint/no-unsafe-member-access': 'off',
-      '@typescript-eslint/no-unsafe-call': 'off',
-      '@typescript-eslint/no-unsafe-argument': 'off',
-      '@typescript-eslint/no-unsafe-return': 'off',
-      '@typescript-eslint/no-unnecessary-type-arguments': 'off',
-      '@typescript-eslint/no-unnecessary-condition': 'off',
-      '@typescript-eslint/restrict-template-expressions': 'off',
-    },
-  },
-
   // Prettier — must be last to override formatting rules
   eslintConfigPrettier,
 );

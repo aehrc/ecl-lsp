@@ -315,7 +315,7 @@ async function buildReplacementEcl(
     // Deduplicate by concept ID — only look up each once
     [...new Set(inactiveRefs.map((r) => r.id))].map(async (id) => {
       try {
-        const associations = await terminologyService.getHistoricalAssociations!(id);
+        const associations = (await terminologyService.getHistoricalAssociations?.(id)) ?? [];
         if (associations.length > 0) {
           associationMap.set(id, associations);
         }

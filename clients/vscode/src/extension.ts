@@ -20,7 +20,7 @@ import {
   extractCommentTriggerFragments,
 } from './embedded';
 
-let client: LanguageClient;
+let client: LanguageClient | undefined;
 let evaluationOutput: vscode.OutputChannel;
 let snomedStatusBar: vscode.StatusBarItem;
 let resolvedVersionUri: string | null = null;
@@ -174,11 +174,13 @@ export function activate(context: ExtensionContext) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       executeCommand: async (command: string, args: any[], next: ExecuteCommandSignature) => {
         if (command === 'ecl.evaluateExpression') {
-          const [startLine, , expression] = args as [number, number, string];
-          await evaluateExpression(client, startLine, expression);
+          if (client) {
+            const [startLine, , expression] = args as [number, number, string];
+            await evaluateExpression(client, startLine, expression);
+          }
           return;
         }
-        return next(command, args);
+        return next(command, args) as Promise<unknown>;
       },
     },
   };
@@ -200,17 +202,17 @@ export function activate(context: ExtensionContext) {
   };
 
   registerCommand('ecl.searchConcept', () => {
-    searchAndInsertConcept(client);
+    if (client) searchAndInsertConcept(client);
   });
 
   registerCommand('ecl.selectSnomedEdition', () => {
-    void selectSnomedEdition(client);
+    if (client) void selectSnomedEdition(client);
   });
 
   registerCommand('ecl.evaluateEmbeddedExpression', (uri: vscode.Uri, fragmentIndex: number) => {
     const fragments = embeddedManager.getFragments(uri);
     const fragment = fragments.find((f) => f.index === fragmentIndex);
-    if (fragment) {
+    if (fragment && client) {
       void evaluateExpression(client, fragment.range.start.line, fragment.text);
     }
   });
@@ -225,13 +227,14 @@ export function activate(context: ExtensionContext) {
     .start()
     .then(() => {
       console.log('Language client started successfully');
+      if (!client) return;
 
       // Wire embedded ECL manager to the running client
       embeddedManager.setClient(client);
 
       // Listen for resolved version notifications from server
       client.onNotification('ecl/resolvedSnomedVersion', (params: { versionUri: string }) => {
-        const setting = workspace.getConfiguration('ecl.terminology').get<string>('snomedVersion', '');
+        const setting: string = workspace.getConfiguration('ecl.terminology').get('snomedVersion', '');
         // Only update display for default or edition-only settings (not pinned)
         if (!setting.includes('/version/')) {
           resolvedVersionUri = params.versionUri;
@@ -441,7 +444,7 @@ async function evaluateExpression(client: LanguageClient, startLine?: number, ex
     return;
   }
 
-  const limit = workspace.getConfiguration('ecl.evaluation').get<number>('resultLimit', 200);
+  const limit: number = workspace.getConfiguration('ecl.evaluation').get('resultLimit', 200);
 
   // If no expression provided (Command Palette), try embedded fragment first, then .ecl line
   if (!expression) {
@@ -553,7 +556,7 @@ function getEditionLabel(moduleId: string): string {
 
 // eslint-disable-next-line sonarjs/cognitive-complexity -- status bar display logic with multiple edition/version/resolved states
 function updateStatusBar(): void {
-  const setting = workspace.getConfiguration('ecl.terminology').get<string>('snomedVersion', '');
+  const setting: string = workspace.getConfiguration('ecl.terminology').get('snomedVersion', '');
 
   if (setting) {
     const parsed = parseSnomedVersionUri(setting);
@@ -625,7 +628,7 @@ async function selectSnomedEdition(client: LanguageClient): Promise<void> {
       prompt: 'Enter a SNOMED CT version URI',
       // eslint-disable-next-line sonarjs/no-clear-text-protocols -- SNOMED CT standard URI scheme uses http://snomed.info/sct
       placeHolder: 'http://snomed.info/sct/32506021000036107/version/20260131',
-      value: workspace.getConfiguration('ecl.terminology').get<string>('snomedVersion', ''),
+      value: workspace.getConfiguration('ecl.terminology').get('snomedVersion', ''),
     });
     if (uri !== undefined) {
       await workspace
@@ -697,7 +700,6 @@ async function selectSnomedEdition(client: LanguageClient): Promise<void> {
 }
 
 export function deactivate(): Thenable<void> | undefined {
-  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
   if (!client) {
     return undefined;
   }

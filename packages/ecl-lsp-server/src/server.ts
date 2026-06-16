@@ -143,7 +143,7 @@ async function getFormattingOptions(conn: Connection): Promise<FormattingOptions
   // Try workspace.getConfiguration, fall back to initializationOptions.formatting
   let config: Record<string, unknown> | null = null;
   try {
-    const wsConfig = await conn.workspace.getConfiguration({ section: 'ecl.formatting' });
+    const wsConfig: unknown = await conn.workspace.getConfiguration({ section: 'ecl.formatting' });
     if (wsConfig && typeof wsConfig === 'object' && Object.keys(wsConfig).length > 0) {
       config = wsConfig as Record<string, unknown>;
     }
@@ -243,7 +243,7 @@ function applyTerminologyConfig(cfg: { serverUrl?: string; timeout?: number; sno
 async function initTerminologyService(): Promise<void> {
   // Try workspace.getConfiguration first (VSCode, clients with configuration support)
   try {
-    const config = await connection.workspace.getConfiguration({
+    const config: unknown = await connection.workspace.getConfiguration({
       section: 'ecl.terminology',
     });
     const cfg = extractTerminologyConfig(config as Record<string, unknown>);
@@ -264,7 +264,7 @@ async function initTerminologyService(): Promise<void> {
 
   // Read semantic validation setting
   try {
-    const semanticConfig = await connection.workspace.getConfiguration({
+    const semanticConfig: unknown = await connection.workspace.getConfiguration({
       section: 'ecl.semanticValidation',
     });
     const scObj = semanticConfig as Record<string, unknown> | null;
@@ -970,7 +970,7 @@ connection.onCodeAction(async (params: CodeActionParams): Promise<CodeAction[]> 
     await Promise.all(
       inactiveConcepts.map(async ({ conceptId, diagnostic }) => {
         try {
-          const associations = await terminologyService.getHistoricalAssociations!(conceptId);
+          const associations = (await terminologyService.getHistoricalAssociations?.(conceptId)) ?? [];
           for (const assoc of associations) {
             const { replacement, label } = buildReplacementText(assoc);
             if (!replacement) continue;

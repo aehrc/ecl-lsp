@@ -90,12 +90,42 @@ interface CacheEntry<T> {
   timestamp: number;
 }
 
+class ConcurrencyQueue {
+  private running = 0;
+  private readonly waiters: (() => void)[] = [];
+
+  constructor(private readonly max: number) {}
+
+  run<T>(fn: () => Promise<T>): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      const attempt = () => {
+        this.running++;
+        fn()
+          .then(resolve, reject)
+          .finally(() => {
+            this.running--;
+            const next = this.waiters.shift();
+            if (next) next();
+          });
+      };
+      if (this.running < this.max) attempt();
+      else this.waiters.push(attempt);
+    });
+  }
+}
+
+const RETRY_BASE_DELAY_MS = 500;
+const RETRY_MAX_DELAY_MS = 10_000;
+const RETRY_MAX_ATTEMPTS = 3;
+const RETRY_JITTER_MS = 200;
+
 export interface FhirTerminologyServiceOptions {
   baseUrl?: string;
   timeout?: number;
   userAgent?: string;
   snomedVersion?: string;
   onResolvedVersion?: (versionUri: string) => void;
+  maxConcurrency?: number;
 }
 
 /** A version of a SNOMED CT edition available on the server. */
@@ -122,8 +152,12 @@ export class FhirTerminologyService implements ITerminologyService {
   private readonly snomedVersion: string | undefined;
   private readonly onResolvedVersion: ((versionUri: string) => void) | undefined;
   private resolvedVersion: string | null = null;
+  private readonly queue: ConcurrencyQueue;
 
   constructor(options: FhirTerminologyServiceOptions = {}) {
+    const maxConcurrency = options.maxConcurrency ?? 5;
+    if (maxConcurrency <= 0) throw new Error(`maxConcurrency must be > 0, got ${maxConcurrency}`);
+    this.queue = new ConcurrencyQueue(maxConcurrency);
     this.baseUrl = options.baseUrl ?? 'https://tx.ontoserver.csiro.au/fhir';
     this.timeout = options.timeout ?? 2000;
     this.userAgent = options.userAgent ?? DEFAULT_USER_AGENT;
@@ -243,6 +277,39 @@ export class FhirTerminologyService implements ITerminologyService {
     }
   }
 
+  private async fetchWithRetry(
+    url: string,
+    timeoutMs: number,
+    init?: { method?: string; headers?: Record<string, string>; body?: string },
+  ): Promise<Response> {
+    for (let attempt = 0; attempt < RETRY_MAX_ATTEMPTS; attempt++) {
+      const response = await this.fetchWithTimeout(url, timeoutMs, init);
+      if (response.status !== 429) return response;
+
+      if (attempt === RETRY_MAX_ATTEMPTS - 1) {
+        throw new Error(`FHIR request rate-limited after ${RETRY_MAX_ATTEMPTS} attempts`);
+      }
+
+      const retryAfterHeader = response.headers.get('Retry-After');
+      const retryAfterMs = retryAfterHeader ? parseInt(retryAfterHeader, 10) * 1000 : 0;
+      const backoff = Math.min(RETRY_BASE_DELAY_MS * Math.pow(2, attempt), RETRY_MAX_DELAY_MS);
+      const jitter = Math.random() * RETRY_JITTER_MS; // eslint-disable-line sonarjs/pseudo-random -- jitter for retry backoff; cryptographic randomness not needed
+      const waitMs = Math.max(retryAfterMs, backoff + jitter);
+
+      await new Promise<void>((resolve) => setTimeout(resolve, waitMs));
+    }
+
+    throw new Error('Unreachable');
+  }
+
+  private fetchQueued(
+    url: string,
+    timeoutMs: number,
+    init?: { method?: string; headers?: Record<string, string>; body?: string },
+  ): Promise<Response> {
+    return this.queue.run(() => this.fetchWithRetry(url, timeoutMs, init));
+  }
+
   async getConceptInfo(conceptId: string): Promise<ConceptInfo | null> {
     // Check cache first
     const cached = this.cache.get(conceptId);
@@ -255,7 +322,7 @@ export class FhirTerminologyService implements ITerminologyService {
       if (this.snomedVersion) {
         url += `&version=${encodeURIComponent(this.snomedVersion)}`;
       }
-      const response = await this.fetchWithTimeout(url, this.timeout);
+      const response = await this.fetchQueued(url, this.timeout);
 
       if (!response.ok) {
         return null;
@@ -345,7 +412,7 @@ export class FhirTerminologyService implements ITerminologyService {
         `&target=${encodeURIComponent(targetUrl)}` +
         `&url=${encodeURIComponent(cmUrl)}`;
 
-      const response = await this.fetchWithTimeout(url, this.timeout, {
+      const response = await this.fetchQueued(url, this.timeout, {
         headers: { Accept: 'application/fhir+json' },
       });
       if (!response.ok) return [];
@@ -453,7 +520,7 @@ export class FhirTerminologyService implements ITerminologyService {
       compose: { include: [include] },
     };
 
-    const response = await this.fetchWithTimeout(url, this.timeout, {
+    const response = await this.fetchQueued(url, this.timeout, {
       method: 'POST',
       headers: { 'Content-Type': 'application/fhir+json' },
       body: JSON.stringify(valueSet),
@@ -588,7 +655,7 @@ export class FhirTerminologyService implements ITerminologyService {
     const implicitVsUrl = `${this.snomedSystemUrl}?fhir_vs=ecl/${expression.trim()}`;
     const url = `${this.baseUrl}/ValueSet/$expand?url=${encodeURIComponent(implicitVsUrl)}&count=${limit}`;
 
-    const response = await this.fetchWithTimeout(url, this.evaluationTimeout);
+    const response = await this.fetchQueued(url, this.evaluationTimeout);
 
     if (!response.ok) {
       const data = (await response.json().catch(() => null)) as FhirOperationOutcomeResponse | null;
@@ -629,7 +696,7 @@ export class FhirTerminologyService implements ITerminologyService {
   private async searchByFilter(filter: string): Promise<SearchResponse> {
     const url = `${this.baseUrl}/ValueSet/$expand?url=${this.snomedSystemUrl}?fhir_vs&filter=${encodeURIComponent(filter)}&count=21&includeDesignations=true&activeOnly=true`;
 
-    const response = await this.fetchWithTimeout(url, this.searchTimeout);
+    const response = await this.fetchQueued(url, this.searchTimeout);
 
     if (!response.ok) {
       throw new Error(`FHIR request failed: ${response.status}`);
@@ -659,7 +726,7 @@ export class FhirTerminologyService implements ITerminologyService {
   /** Fetch available SNOMED CT editions and versions from the FHIR server. */
   async getSnomedEditions(): Promise<SnomedEdition[]> {
     const url = `${this.baseUrl}/CodeSystem?url=http://snomed.info/sct`;
-    const response = await this.fetchWithTimeout(url, this.searchTimeout);
+    const response = await this.fetchQueued(url, this.searchTimeout);
 
     if (!response.ok) {
       throw new Error(`Failed to fetch SNOMED editions: HTTP ${response.status}`);

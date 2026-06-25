@@ -1,7 +1,7 @@
 // Copyright 2026 Commonwealth Scientific and Industrial Research Organisation (CSIRO)
 // ABN 41 687 119 230. SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import type { ITerminologyService, ConceptInfo, HistoricalAssociation } from '@aehrc/ecl-core';
 import { createMockModel, MockPosition, MockRange } from './mock-monaco';
 import { createCompletionProvider } from '../monaco/completion-provider';
@@ -111,25 +111,48 @@ describe('Monaco Completion Provider', () => {
     }
   });
 
-  it('should return concept search results when service has concepts', async () => {
-    const service = createMockService();
-    // Override searchConcepts to return results
-    service.searchConcepts = async () => ({
-      results: [{ id: '73211009', fsn: 'Diabetes mellitus (disorder)', pt: 'Diabetes mellitus', active: true }],
-      hasMore: false,
-    });
+  it('should return concept search results after debounce window', async () => {
+    vi.useFakeTimers();
+    try {
+      const service = createMockService();
+      service.searchConcepts = async () => ({
+        results: [{ id: '73211009', fsn: 'Diabetes mellitus (disorder)', pt: 'Diabetes mellitus', active: true }],
+        hasMore: false,
+      });
 
-    const provider = createCompletionProvider(() => service);
-    const model = createMockModel('< diabetes');
-    const position = new MockPosition(1, 11); // after "diabetes"
+      const provider = createCompletionProvider(() => service);
+      const model = createMockModel('< diabetes');
+      const position = new MockPosition(1, 11);
 
-    const result = await provider.provideCompletionItems(model as any, position as any, null as any, null as any);
+      // First call — static items only; search not yet fired
+      const resultBefore = await provider.provideCompletionItems(
+        model as any,
+        position as any,
+        null as any,
+        null as any,
+      );
+      const conceptBefore = resultBefore.suggestions.find(
+        (s: any) => s.label?.toString().includes('73211009') || s.insertText?.includes('73211009'),
+      );
+      expect(conceptBefore).toBeUndefined();
 
-    // Should include concept search results from FHIR
-    const conceptItem = result.suggestions.find(
-      (s: any) => s.label?.toString().includes('73211009') || s.insertText?.includes('73211009'),
-    );
-    expect(conceptItem).toBeDefined();
+      // Advance past debounce window and flush the search promise
+      await vi.advanceTimersByTimeAsync(250);
+
+      // Second call — should now include search results from latestSearchItems
+      const resultAfter = await provider.provideCompletionItems(
+        model as any,
+        position as any,
+        null as any,
+        null as any,
+      );
+      const conceptAfter = resultAfter.suggestions.find(
+        (s: any) => s.label?.toString().includes('73211009') || s.insertText?.includes('73211009'),
+      );
+      expect(conceptAfter).toBeDefined();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('should mark result as incomplete for incremental loading', async () => {
@@ -140,6 +163,83 @@ describe('Monaco Completion Provider', () => {
     const result = await provider.provideCompletionItems(model as any, position as any, null as any, null as any);
 
     expect(result.incomplete).toBe(true);
+  });
+});
+
+// --- Completion Provider Debounce Tests ---
+
+describe('Monaco Completion Provider — search debounce', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('should return static completions immediately without waiting for search', async () => {
+    vi.useFakeTimers();
+    let searchCallCount = 0;
+    const service = createMockService();
+    service.searchConcepts = async () => {
+      searchCallCount++;
+      return {
+        results: [{ id: '73211009', fsn: 'Diabetes mellitus (disorder)', pt: 'Diabetes mellitus', active: true }],
+        hasMore: false,
+      };
+    };
+
+    const provider = createCompletionProvider(() => service);
+    const model = createMockModel('< diabetes');
+    const position = new MockPosition(1, 11);
+
+    // Call without advancing timers — search not yet fired
+    const result = await provider.provideCompletionItems(model as any, position as any, null as any, null as any);
+
+    expect(result.suggestions.length).toBeGreaterThan(0); // static items present
+    expect(searchCallCount).toBe(0); // search not fired yet
+  });
+
+  it('should fire exactly one search after rapid successive calls within debounce window', async () => {
+    vi.useFakeTimers();
+    let searchCallCount = 0;
+    const service = createMockService();
+    service.searchConcepts = async () => {
+      searchCallCount++;
+      return { results: [], hasMore: false };
+    };
+
+    const provider = createCompletionProvider(() => service);
+    const model = createMockModel('< dia');
+    const position = new MockPosition(1, 6);
+
+    // Fire 5 rapid calls within debounce window
+    for (let i = 0; i < 5; i++) {
+      await provider.provideCompletionItems(model as any, position as any, null as any, null as any);
+    }
+
+    expect(searchCallCount).toBe(0); // none fired yet
+
+    // Advance past debounce window
+    await vi.advanceTimersByTimeAsync(250);
+
+    expect(searchCallCount).toBe(1); // exactly one search fired
+  });
+
+  it('should fire a search after a single call once debounce window expires', async () => {
+    vi.useFakeTimers();
+    let searchCallCount = 0;
+    const service = createMockService();
+    service.searchConcepts = async () => {
+      searchCallCount++;
+      return { results: [], hasMore: false };
+    };
+
+    const provider = createCompletionProvider(() => service);
+    const model = createMockModel('< diabetes');
+    const position = new MockPosition(1, 11);
+
+    await provider.provideCompletionItems(model as any, position as any, null as any, null as any);
+    expect(searchCallCount).toBe(0);
+
+    await vi.advanceTimersByTimeAsync(250);
+    expect(searchCallCount).toBe(1);
   });
 });
 

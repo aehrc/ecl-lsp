@@ -44,4 +44,4 @@
 - [x] 7.1 Create branch `feat/expose-max-concurrency` from `main`
 - [x] 7.2 Run `npm run lint && npm run format:check` and fix any issues
 - [x] 7.3 Run `npm test` and confirm no regressions
-- [ ] 7.4 Open PR referencing the GitHub issue; describe how to test each config surface (React prop, VSCode setting, env var)
+- [x] 7.4 Open PR referencing the GitHub issue; describe how to test each config surface (React prop, VSCode setting, env var)

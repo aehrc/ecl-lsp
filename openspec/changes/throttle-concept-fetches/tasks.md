@@ -33,5 +33,5 @@
 ## 5. Branch and PR
 
 - [x] 5.1 Create branch `fix/throttle-concept-fetches` from `main`
-- [ ] 5.2 Commit changes with descriptive messages per logical unit (queue, retry, debounce)
-- [ ] 5.3 Open PR referencing GitHub issue #52; include a brief description of the three changes and the test steps from task 4
+- [x] 5.2 Commit changes with descriptive messages per logical unit (queue, retry, debounce)
+- [x] 5.3 Open PR referencing GitHub issue #52; include a brief description of the three changes and the test steps from task 4

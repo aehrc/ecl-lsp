@@ -15,12 +15,14 @@ All FHIR calls flow through `FhirTerminologyService` in `ecl-core`. The service 
 ## Goals / Non-Goals
 
 **Goals:**
+
 - Cap in-flight FHIR requests to at most N (default 5) across the whole service instance
 - Retry 429 responses with exponential backoff + jitter, up to 3 attempts
 - Debounce concept search calls in the completion provider to the last keystroke in a 200 ms window
 - Honour `Retry-After` response header when present
 
 **Non-Goals:**
+
 - Global rate-limiting across multiple `FhirTerminologyService` instances (each instance manages its own queue)
 - Persistent request deduplication beyond what the existing caches already provide
 - Changing the public `ITerminologyService` interface — queue and retry are internal to `FhirTerminologyService`

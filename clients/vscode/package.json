@@ -165,6 +165,12 @@
           "maximum": 30000,
           "description": "Timeout in milliseconds for concept lookup requests to the terminology server"
         },
+        "ecl.terminology.maxConcurrency": {
+          "type": "integer",
+          "default": 5,
+          "minimum": 1,
+          "description": "Maximum number of concurrent FHIR terminology requests. Lower values reduce server load at the cost of slower validation on large expressions."
+        },
         "ecl.formatting.indentSize": {
           "type": "number",
           "default": 2,

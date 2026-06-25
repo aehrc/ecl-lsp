@@ -65,6 +65,7 @@ async function handleEcl(
     timeout: 10_000, // 10s timeout — bot users expect a few seconds of latency
     userAgent: `ecl-slack-bot/1.0.0 (team:${slackTeamName})`,
     snomedVersion: snomedEdition,
+    maxConcurrency: config.maxConcurrency,
   });
 
   const result = await processEcl(parsed.ecl, terminologyService, {

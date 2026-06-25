@@ -45,6 +45,8 @@ export interface EclEditorProps {
   options?: Monaco.editor.IStandaloneEditorConstructionOptions;
   /** Custom terminology service (bypasses fhirServerUrl). */
   terminologyService?: EclEditorConfig['terminologyService'];
+  /** Maximum number of concurrent in-flight FHIR requests. Default: 5 */
+  maxConcurrency?: number;
 }
 
 /** React component wrapping Monaco with full ECL language support. */
@@ -68,6 +70,7 @@ export function EclEditor({
   lineNumbers = true,
   options,
   terminologyService,
+  maxConcurrency,
 }: Readonly<EclEditorProps>) {
   const registrationRef = useRef<EclEditorDisposable | null>(null);
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
@@ -94,6 +97,7 @@ export function EclEditor({
         corsProxy,
         terminologyService,
         onResolvedSnomedVersion,
+        maxConcurrency,
         onDiagnostics: (diags) => onDiagnosticsRef.current?.(diags),
       });
 
@@ -110,6 +114,7 @@ export function EclEditor({
       corsProxy,
       terminologyService,
       onResolvedSnomedVersion,
+      maxConcurrency,
     ],
   );
 
@@ -124,6 +129,7 @@ export function EclEditor({
       corsProxy,
       terminologyService,
       onResolvedSnomedVersion,
+      maxConcurrency,
     });
   }, [
     fhirServerUrl,
@@ -134,6 +140,7 @@ export function EclEditor({
     corsProxy,
     terminologyService,
     onResolvedSnomedVersion,
+    maxConcurrency,
   ]);
 
   // Cleanup on unmount

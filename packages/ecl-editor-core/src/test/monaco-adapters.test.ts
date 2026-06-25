@@ -3,12 +3,14 @@
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import type { ITerminologyService, ConceptInfo, HistoricalAssociation } from '@aehrc/ecl-core';
+import { FhirTerminologyService } from '@aehrc/ecl-core';
 import { createMockModel, MockPosition, MockRange } from './mock-monaco';
 import { createCompletionProvider } from '../monaco/completion-provider';
 import { createHoverProvider } from '../monaco/hover-provider';
 import { createDocumentFormattingProvider, createDocumentRangeFormattingProvider } from '../monaco/formatting-provider';
 import { createCodeActionProvider } from '../monaco/code-action-provider';
 import { createSemanticTokensProvider, eclSemanticTokensLegend } from '../monaco/semantic-tokens-provider';
+import { registerEclLanguage } from '../monaco/register';
 
 // --- Mock terminology service ---
 
@@ -810,5 +812,75 @@ describe('Monaco Code Action Provider', () => {
     const result = provider.provideCodeActions(model as any, range as any, context as any, null as any);
     const replaceAction = result.actions.find((a: any) => a.title.includes('Replace inactive concept'));
     expect(replaceAction).toBeUndefined();
+  });
+});
+
+// --- registerEclLanguage — maxConcurrency ---
+
+function createMockMonaco() {
+  const disposable = { dispose: vi.fn() };
+  return {
+    languages: {
+      register: vi.fn(),
+      setMonarchTokensProvider: vi.fn(),
+      registerCompletionItemProvider: vi.fn(() => disposable),
+      registerHoverProvider: vi.fn(() => disposable),
+      registerDocumentFormattingEditProvider: vi.fn(() => disposable),
+      registerDocumentRangeFormattingEditProvider: vi.fn(() => disposable),
+      registerCodeActionProvider: vi.fn(() => disposable),
+      registerDocumentSemanticTokensProvider: vi.fn(() => disposable),
+    },
+    editor: {
+      getModels: vi.fn(() => []),
+      onDidCreateModel: vi.fn(() => disposable),
+      onWillDisposeModel: vi.fn(() => disposable),
+    },
+  };
+}
+
+describe('registerEclLanguage — maxConcurrency', () => {
+  it('creates a FhirTerminologyService when fhirServerUrl and maxConcurrency are provided', () => {
+    const monaco = createMockMonaco();
+    const handle = registerEclLanguage(monaco as any, {
+      fhirServerUrl: 'http://example.com/fhir',
+      maxConcurrency: 2,
+    });
+
+    const svc = handle.getTerminologyService();
+    expect(svc).toBeInstanceOf(FhirTerminologyService);
+    handle.dispose();
+  });
+
+  it('updateConfig with new maxConcurrency replaces the service instance', () => {
+    const monaco = createMockMonaco();
+    const handle = registerEclLanguage(monaco as any, {
+      fhirServerUrl: 'http://example.com/fhir',
+      maxConcurrency: 2,
+    });
+
+    const original = handle.getTerminologyService();
+
+    handle.updateConfig({ maxConcurrency: 8 });
+
+    const updated = handle.getTerminologyService();
+    expect(updated).toBeInstanceOf(FhirTerminologyService);
+    expect(updated).not.toBe(original);
+    handle.dispose();
+  });
+
+  it('updateConfig without maxConcurrency change does not replace the service', () => {
+    const monaco = createMockMonaco();
+    const handle = registerEclLanguage(monaco as any, {
+      fhirServerUrl: 'http://example.com/fhir',
+      maxConcurrency: 5,
+    });
+
+    const original = handle.getTerminologyService();
+
+    handle.updateConfig({ semanticValidation: false });
+
+    const after = handle.getTerminologyService();
+    expect(after).toBe(original);
+    handle.dispose();
   });
 });

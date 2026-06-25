@@ -62,6 +62,7 @@ export function registerEclLanguage(
   const disposables: Monaco.IDisposable[] = [];
   let terminologyService: ITerminologyService | null = config.terminologyService ?? null;
   let formattingOptions: Partial<FormattingOptions> = config.formattingOptions ?? {};
+  let currentMaxConcurrency: number | undefined = config.maxConcurrency;
   const diagnosticsAdapters = new Map<string, MonacoDiagnosticsAdapter>();
 
   // Create terminology service if not provided
@@ -71,6 +72,7 @@ export function registerEclLanguage(
       baseUrl: url,
       snomedVersion: config.snomedVersion,
       onResolvedVersion: config.onResolvedSnomedVersion,
+      maxConcurrency: currentMaxConcurrency,
     });
   }
 
@@ -153,9 +155,16 @@ export function registerEclLanguage(
       if (newConfig.formattingOptions) {
         formattingOptions = { ...formattingOptions, ...newConfig.formattingOptions };
       }
+      if (newConfig.maxConcurrency !== undefined) {
+        currentMaxConcurrency = newConfig.maxConcurrency;
+      }
       if (newConfig.terminologyService !== undefined) {
         terminologyService = newConfig.terminologyService;
-      } else if (newConfig.fhirServerUrl !== undefined || newConfig.snomedVersion !== undefined) {
+      } else if (
+        newConfig.fhirServerUrl !== undefined ||
+        newConfig.snomedVersion !== undefined ||
+        newConfig.maxConcurrency !== undefined
+      ) {
         const url =
           (newConfig.corsProxy ?? config.corsProxy)
             ? `${newConfig.corsProxy ?? config.corsProxy}${newConfig.fhirServerUrl ?? config.fhirServerUrl ?? 'https://tx.ontoserver.csiro.au/fhir'}`
@@ -165,6 +174,7 @@ export function registerEclLanguage(
             baseUrl: url,
             snomedVersion: newConfig.snomedVersion ?? config.snomedVersion,
             onResolvedVersion: newConfig.onResolvedSnomedVersion ?? config.onResolvedSnomedVersion,
+            maxConcurrency: currentMaxConcurrency,
           });
         }
       }

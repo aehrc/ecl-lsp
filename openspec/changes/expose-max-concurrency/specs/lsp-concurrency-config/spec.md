@@ -17,12 +17,12 @@
 #### Scenario: maxConcurrency absent from config
 
 - **WHEN** neither VSCode settings nor `initializationOptions` include `maxConcurrency`
-- **THEN** `FhirTerminologyService` is constructed without the option and uses its default of 5
+- **THEN** `FhirTerminologyService` is constructed without the option and uses its default of 25
 
 #### Scenario: Invalid maxConcurrency value rejected
 
 - **WHEN** the config provides `maxConcurrency: 0` or a non-integer value
-- **THEN** the value is ignored and the service default of 5 is used (construction SHALL NOT throw; the LSP server logs a warning instead)
+- **THEN** the value is ignored and the service default of 25 is used (construction SHALL NOT throw; the LSP server logs a warning instead)
 
 ### Requirement: VSCode extension declares ecl.terminology.maxConcurrency setting
 

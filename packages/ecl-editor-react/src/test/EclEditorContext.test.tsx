@@ -8,9 +8,7 @@ import { EclEditorProvider, useEclEditorContext } from '../EclEditorContext';
 
 // Mock @monaco-editor/react so EclEditor renders without a real browser environment
 vi.mock('@monaco-editor/react', () => {
-  const MockEditor = React.forwardRef((props: any, _ref: any) => (
-    <div data-testid="monaco-editor" />
-  ));
+  const MockEditor = React.forwardRef<HTMLDivElement>((_props, _ref) => <div data-testid="monaco-editor" />);
   MockEditor.displayName = 'MockEditor';
   return { default: MockEditor };
 });
@@ -24,12 +22,7 @@ vi.mock('ecl-editor-core', () => ({
 // Helper: renders a component that exposes context values via data attributes
 function ContextReader() {
   const ctx = useEclEditorContext();
-  return (
-    <div
-      data-testid="ctx"
-      data-max-concurrency={ctx.maxConcurrency ?? 'undefined'}
-    />
-  );
+  return <div data-testid="ctx" data-max-concurrency={ctx.maxConcurrency ?? 'undefined'} />;
 }
 
 // ── EclEditorProvider ────────────────────────────────────────────────────

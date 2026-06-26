@@ -60,7 +60,7 @@ The existing `updateConfig` condition recreates the service when `fhirServerUrl`
 
 ### 4. VSCode setting: integer, minimum 1, no maximum declared
 
-**Decision**: Declare `ecl.terminology.maxConcurrency` in the extension's `contributes.configuration` with `"type": "integer"`, `"minimum": 1`, `"default": 5`. Do not declare a maximum — the server-side validation in the LSP server is the authoritative guard.
+**Decision**: Declare `ecl.terminology.maxConcurrency` in the extension's `contributes.configuration` with `"type": "integer"`, `"minimum": 1`, `"default": 25` (matching the `FhirTerminologyService` default). Do not declare a maximum — the server-side validation in the LSP server is the authoritative guard.
 
 **Rationale**: Declaring a UI maximum (e.g. 20) would create a false ceiling for power users with a high-capacity FHIR server. The integer minimum of 1 matches the constructor's guard (`> 0`), giving VS Code UI enough to prevent obviously invalid values.
 
@@ -78,6 +78,6 @@ The existing `updateConfig` condition recreates the service when `fhirServerUrl`
 
 **Slack bot requires restart to pick up env var change** → Operators changing `ECL_MAX_CONCURRENCY` must restart the bot process. Mitigation: this is standard behaviour for env-var-based config in 12-factor apps; document it.
 
-## Open Questions
+## Resolved Questions
 
-- Should `maxConcurrency` be included in the existing `updateConfig` condition verbatim, or should it get its own `else if` branch to avoid unintentionally creating a new service (with a potentially stale URL) when only concurrency changes? The safest approach is to track `currentFhirServerUrl` explicitly in the closure and always use it as the base when recreating, regardless of which field triggered the recreation.
+- **Should a `maxConcurrency`-only `updateConfig` risk recreating the service with a stale URL?** Resolved: all service-defining options (`fhirServerUrl`, `snomedVersion`, `corsProxy`, `onResolvedSnomedVersion`, `maxConcurrency`) are now tracked in closure state and folded in on every `updateConfig` before the recreation decision. Recreation always builds from the latest tracked values, so a single-field update (e.g. concurrency only) preserves a previously-updated URL or version instead of reverting to the construction-time config object.

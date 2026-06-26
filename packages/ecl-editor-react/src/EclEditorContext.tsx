@@ -24,6 +24,6 @@ export interface EclEditorProviderProps extends EclEditorContextValue {
  * Provides default configuration for every EclEditor nested within.
  * Explicit props on EclEditor always take precedence over provider values.
  */
-export function EclEditorProvider({ children, ...value }: EclEditorProviderProps) {
+export function EclEditorProvider({ children, ...value }: Readonly<EclEditorProviderProps>) {
   return <EclEditorContext.Provider value={value}>{children}</EclEditorContext.Provider>;
 }

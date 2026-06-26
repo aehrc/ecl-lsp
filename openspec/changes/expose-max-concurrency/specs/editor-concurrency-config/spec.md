@@ -2,7 +2,7 @@
 
 ### Requirement: RegisterOptions exposes maxConcurrency
 
-`RegisterOptions` in `ecl-editor-core` SHALL include an optional `maxConcurrency?: number` field. When `registerEclLanguage` creates a `FhirTerminologyService` internally (i.e. `fhirServerUrl` is provided and `terminologyService` is not), it MUST pass the `maxConcurrency` value to the service constructor. If `maxConcurrency` is omitted, the service's own default (5) applies.
+`RegisterOptions` in `ecl-editor-core` SHALL include an optional `maxConcurrency?: number` field. When `registerEclLanguage` creates a `FhirTerminologyService` internally (i.e. `fhirServerUrl` is provided and `terminologyService` is not), it MUST pass the `maxConcurrency` value to the service constructor. If `maxConcurrency` is omitted, the service's own default (25) applies.
 
 #### Scenario: maxConcurrency set in RegisterOptions
 
@@ -12,7 +12,7 @@
 #### Scenario: maxConcurrency omitted from RegisterOptions
 
 - **WHEN** `registerEclLanguage` is called with `{ fhirServerUrl: '...' }` and no `maxConcurrency`
-- **THEN** the internally-created `FhirTerminologyService` uses its own default of 5
+- **THEN** the internally-created `FhirTerminologyService` uses its own default of 25
 
 #### Scenario: terminologyService provided directly
 
@@ -40,9 +40,28 @@ The `EclEditor` React component in `ecl-editor-react` SHALL accept an optional `
 #### Scenario: maxConcurrency not set as React prop
 
 - **WHEN** `<EclEditor fhirServerUrl="..." />` is rendered without `maxConcurrency`
-- **THEN** no `maxConcurrency` is forwarded and the service uses its default of 5
+- **THEN** no `maxConcurrency` is forwarded and the service uses its default of 25
 
 #### Scenario: maxConcurrency prop change triggers service recreation
 
 - **WHEN** `maxConcurrency` prop changes between renders (e.g. from 5 to 10)
 - **THEN** `updateConfig` is called with the new value and a new `FhirTerminologyService` is created with the updated concurrency limit
+
+### Requirement: EclEditorProvider supplies a default maxConcurrency to nested editors
+
+`ecl-editor-react` SHALL export an `EclEditorProvider` (with `EclEditorProviderProps` and `EclEditorContextValue` types) that supplies a default `maxConcurrency` to every `EclEditor` nested within it, so consumers can configure concurrency once instead of prop-drilling it to each editor. An explicit `maxConcurrency` prop on an individual `EclEditor` MUST take precedence over the provider value. `EclEditor` MUST render correctly with no provider present (the field resolves to `undefined`, and the service default applies).
+
+#### Scenario: provider value used when no prop is set
+
+- **WHEN** an `EclEditor` with no `maxConcurrency` prop is rendered inside `<EclEditorProvider maxConcurrency={10}>`
+- **THEN** `registerEclLanguage` receives `maxConcurrency: 10`
+
+#### Scenario: explicit prop overrides provider value
+
+- **WHEN** an `EclEditor maxConcurrency={2}` is rendered inside `<EclEditorProvider maxConcurrency={10}>`
+- **THEN** `registerEclLanguage` receives `maxConcurrency: 2`
+
+#### Scenario: no provider present
+
+- **WHEN** an `EclEditor` is rendered with no enclosing `EclEditorProvider`
+- **THEN** no `maxConcurrency` is forwarded and the service uses its default of 25

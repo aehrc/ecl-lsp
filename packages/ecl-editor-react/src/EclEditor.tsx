@@ -46,7 +46,7 @@ export interface EclEditorProps {
   options?: Monaco.editor.IStandaloneEditorConstructionOptions;
   /** Custom terminology service (bypasses fhirServerUrl). */
   terminologyService?: EclEditorConfig['terminologyService'];
-  /** Maximum number of concurrent in-flight FHIR requests. Default: 5 */
+  /** Maximum number of concurrent in-flight FHIR requests. Default: 25 */
   maxConcurrency?: number;
 }
 

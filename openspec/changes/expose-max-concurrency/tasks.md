@@ -5,6 +5,7 @@
 - [x] 1.3 Pass `maxConcurrency: currentMaxConcurrency` to the initial `new FhirTerminologyService(...)` call in `registerEclLanguage()`
 - [x] 1.4 In `updateConfig()`, update `currentMaxConcurrency` when `newConfig.maxConcurrency` is present
 - [x] 1.5 Extend the `updateConfig()` service-recreation condition to also trigger when `newConfig.maxConcurrency !== undefined`, passing the updated `currentMaxConcurrency` to the new service
+- [x] 1.6 Track the other service-defining options (`fhirServerUrl`, `snomedVersion`, `corsProxy`, `onResolvedSnomedVersion`) in closure state alongside `currentMaxConcurrency`, so a single-field `updateConfig` (e.g. `maxConcurrency` only) recreates the service without reverting previously-updated fields to their construction-time values
 
 ## 2. ecl-editor-react — EclEditor component
 
@@ -13,6 +14,7 @@
 - [x] 2.3 Include `maxConcurrency` in the initial `registerEclLanguage()` call in `handleMount`
 - [x] 2.4 Include `maxConcurrency` in the `updateConfig()` call inside the `useEffect` that handles prop changes
 - [x] 2.5 Add `maxConcurrency` to both the `useCallback` and `useEffect` dependency arrays
+- [x] 2.6 Add `EclEditorProvider` (`EclEditorContext.tsx`) supplying a context-level default `maxConcurrency`; resolve `maxConcurrencyProp ?? ctx.maxConcurrency` in `EclEditor`; export `EclEditorProvider`, `EclEditorProviderProps`, `EclEditorContextValue` from the package index
 
 ## 3. ecl-lsp-server — config pipeline
 
@@ -20,11 +22,11 @@
 - [x] 3.2 Read `maxConcurrency` from the config object in `extractTerminologyConfig()` — accept it from both VSCode-style (`config.maxConcurrency`) and Eclipse-style (`initializationOptions.maxConcurrency`)
 - [x] 3.3 Validate the extracted value: accept only positive integers; if invalid, set to `undefined` (do not throw)
 - [x] 3.4 Update `applyTerminologyConfig()` to accept and pass `maxConcurrency` to `new FhirTerminologyService(...)`
-- [x] 3.5 Include the active `maxConcurrency` value in the `connection.console.log` line in `applyTerminologyConfig()` (e.g. `maxConcurrency: ${cfg.maxConcurrency ?? 5}`)
+- [x] 3.5 Include the active `maxConcurrency` value in the `connection.console.log` line in `applyTerminologyConfig()` (e.g. `maxConcurrency: ${cfg.maxConcurrency ?? 25}`)
 
 ## 4. clients/vscode — setting declaration
 
-- [x] 4.1 Add `ecl.terminology.maxConcurrency` to `contributes.configuration` in `clients/vscode/package.json`: `type: integer`, `minimum: 1`, `default: 5`, with a description string
+- [x] 4.1 Add `ecl.terminology.maxConcurrency` to `contributes.configuration` in `clients/vscode/package.json`: `type: integer`, `minimum: 1`, `default: 25`, with a description string
 - [x] 4.2 Read `ecl.terminology.maxConcurrency` from workspace configuration in `clients/vscode/src/extension.ts` and include it in the config sent to the LSP server
 
 ## 5. ecl-slack-bot — config and env var

@@ -62,16 +62,23 @@ export function registerEclLanguage(
   const disposables: Monaco.IDisposable[] = [];
   let terminologyService: ITerminologyService | null = config.terminologyService ?? null;
   let formattingOptions: Partial<FormattingOptions> = config.formattingOptions ?? {};
+  // Track the latest service-defining options in the closure so an update that
+  // changes only one of them (e.g. maxConcurrency) recreates the service without
+  // reverting the others to their original construction-time values.
   let currentMaxConcurrency: number | undefined = config.maxConcurrency;
+  let currentFhirServerUrl: string | undefined = config.fhirServerUrl;
+  let currentSnomedVersion: string | undefined = config.snomedVersion;
+  let currentCorsProxy: string | undefined = config.corsProxy;
+  let currentOnResolvedSnomedVersion = config.onResolvedSnomedVersion;
   const diagnosticsAdapters = new Map<string, MonacoDiagnosticsAdapter>();
 
   // Create terminology service if not provided
-  if (!terminologyService && config.fhirServerUrl !== undefined) {
-    const url = config.corsProxy ? `${config.corsProxy}${config.fhirServerUrl}` : config.fhirServerUrl;
+  if (!terminologyService && currentFhirServerUrl !== undefined) {
+    const url = currentCorsProxy ? `${currentCorsProxy}${currentFhirServerUrl}` : currentFhirServerUrl;
     terminologyService = new FhirTerminologyService({
       baseUrl: url,
-      snomedVersion: config.snomedVersion,
-      onResolvedVersion: config.onResolvedSnomedVersion,
+      snomedVersion: currentSnomedVersion,
+      onResolvedVersion: currentOnResolvedSnomedVersion,
       maxConcurrency: currentMaxConcurrency,
     });
   }
@@ -155,25 +162,39 @@ export function registerEclLanguage(
       if (newConfig.formattingOptions) {
         formattingOptions = { ...formattingOptions, ...newConfig.formattingOptions };
       }
+      // Fold any provided service-defining options into the tracked closure state
+      // before deciding whether to recreate, so a single-field update preserves the rest.
       if (newConfig.maxConcurrency !== undefined) {
         currentMaxConcurrency = newConfig.maxConcurrency;
+      }
+      if (newConfig.fhirServerUrl !== undefined) {
+        currentFhirServerUrl = newConfig.fhirServerUrl;
+      }
+      if (newConfig.snomedVersion !== undefined) {
+        currentSnomedVersion = newConfig.snomedVersion;
+      }
+      if (newConfig.corsProxy !== undefined) {
+        currentCorsProxy = newConfig.corsProxy;
+      }
+      if (newConfig.onResolvedSnomedVersion !== undefined) {
+        currentOnResolvedSnomedVersion = newConfig.onResolvedSnomedVersion;
       }
       if (newConfig.terminologyService !== undefined) {
         terminologyService = newConfig.terminologyService;
       } else if (
         newConfig.fhirServerUrl !== undefined ||
         newConfig.snomedVersion !== undefined ||
-        newConfig.maxConcurrency !== undefined
+        newConfig.maxConcurrency !== undefined ||
+        newConfig.corsProxy !== undefined
       ) {
-        const url =
-          (newConfig.corsProxy ?? config.corsProxy)
-            ? `${newConfig.corsProxy ?? config.corsProxy}${newConfig.fhirServerUrl ?? config.fhirServerUrl ?? 'https://tx.ontoserver.csiro.au/fhir'}`
-            : (newConfig.fhirServerUrl ?? config.fhirServerUrl);
+        const url = currentCorsProxy
+          ? `${currentCorsProxy}${currentFhirServerUrl ?? 'https://tx.ontoserver.csiro.au/fhir'}`
+          : currentFhirServerUrl;
         if (url) {
           terminologyService = new FhirTerminologyService({
             baseUrl: url,
-            snomedVersion: newConfig.snomedVersion ?? config.snomedVersion,
-            onResolvedVersion: newConfig.onResolvedSnomedVersion ?? config.onResolvedSnomedVersion,
+            snomedVersion: currentSnomedVersion,
+            onResolvedVersion: currentOnResolvedSnomedVersion,
             maxConcurrency: currentMaxConcurrency,
           });
         }

@@ -883,4 +883,25 @@ describe('registerEclLanguage — maxConcurrency', () => {
     expect(after).toBe(original);
     handle.dispose();
   });
+
+  it('maxConcurrency-only update preserves a previously-updated fhirServerUrl', () => {
+    const monaco = createMockMonaco();
+    const handle = registerEclLanguage(monaco as any, {
+      fhirServerUrl: 'http://original.example/fhir',
+    });
+
+    // Change the server URL, then later change only maxConcurrency.
+    handle.updateConfig({ fhirServerUrl: 'http://updated.example/fhir' });
+    const afterUrlChange = handle.getTerminologyService();
+
+    handle.updateConfig({ maxConcurrency: 8 });
+    const svc = handle.getTerminologyService();
+
+    // The maxConcurrency change must recreate the service...
+    expect(svc).not.toBe(afterUrlChange);
+    // ...and the recreation must keep the updated URL, not revert to the
+    // original construction-time value.
+    expect((svc as unknown as { baseUrl: string }).baseUrl).toBe('http://updated.example/fhir');
+    handle.dispose();
+  });
 });

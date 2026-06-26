@@ -21,7 +21,7 @@ export interface EclEditorConfig {
   corsProxy?: string;
   /** Callback when SNOMED CT version is resolved from server response. */
   onResolvedSnomedVersion?: (uri: string) => void;
-  /** Maximum number of concurrent in-flight FHIR requests. Default: 5 */
+  /** Maximum number of concurrent in-flight FHIR requests. Default: 25 */
   maxConcurrency?: number;
 }
 

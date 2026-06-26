@@ -2,7 +2,7 @@
 
 ### Requirement: Slack bot config exposes maxConcurrency
 
-The Slack bot's runtime config object SHALL include an optional `maxConcurrency?: number` field. When `FhirTerminologyService` is constructed per-request, the bot MUST pass `maxConcurrency` if it is set in config. If omitted, the service default of 5 applies.
+The Slack bot's runtime config object SHALL include an optional `maxConcurrency?: number` field. When `FhirTerminologyService` is constructed per-request, the bot MUST pass `maxConcurrency` if it is set in config. If omitted, the service default of 25 applies.
 
 #### Scenario: maxConcurrency set in bot config
 
@@ -12,7 +12,7 @@ The Slack bot's runtime config object SHALL include an optional `maxConcurrency?
 #### Scenario: maxConcurrency absent from bot config
 
 - **WHEN** the bot config does not include `maxConcurrency`
-- **THEN** `FhirTerminologyService` is constructed without the option and uses its default of 5
+- **THEN** `FhirTerminologyService` is constructed without the option and uses its default of 25
 
 ### Requirement: Slack bot reads maxConcurrency from environment variable
 

@@ -155,7 +155,7 @@ export class FhirTerminologyService implements ITerminologyService {
   private readonly queue: ConcurrencyQueue;
 
   constructor(options: FhirTerminologyServiceOptions = {}) {
-    const maxConcurrency = options.maxConcurrency ?? 5;
+    const maxConcurrency = options.maxConcurrency ?? 25;
     if (maxConcurrency <= 0) throw new Error(`maxConcurrency must be > 0, got ${maxConcurrency}`);
     this.queue = new ConcurrencyQueue(maxConcurrency);
     this.baseUrl = options.baseUrl ?? 'https://tx.ontoserver.csiro.au/fhir';

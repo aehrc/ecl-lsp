@@ -221,7 +221,7 @@ function applyTerminologyConfig(cfg: {
     },
   });
   connection.console.log(
-    `Terminology server: ${cfg.serverUrl ?? 'https://tx.ontoserver.csiro.au/fhir'} (timeout: ${cfg.timeout ?? 2000}ms, maxConcurrency: ${cfg.maxConcurrency ?? 5})` +
+    `Terminology server: ${cfg.serverUrl ?? 'https://tx.ontoserver.csiro.au/fhir'} (timeout: ${cfg.timeout ?? 2000}ms, maxConcurrency: ${cfg.maxConcurrency ?? 25})` +
       (cfg.snomedVersion ? ` (SNOMED version: ${cfg.snomedVersion})` : ''),
   );
 }

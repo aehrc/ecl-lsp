@@ -167,7 +167,7 @@
         },
         "ecl.terminology.maxConcurrency": {
           "type": "integer",
-          "default": 5,
+          "default": 25,
           "minimum": 1,
           "description": "Maximum number of concurrent FHIR terminology requests. Lower values reduce server load at the cost of slower validation on large expressions."
         },

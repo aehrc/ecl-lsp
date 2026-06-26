@@ -1,4 +1,5 @@
 import { useRef, useEffect, useCallback } from 'react';
+import { useEclEditorContext } from './EclEditorContext';
 import Editor, { type OnMount, type OnChange } from '@monaco-editor/react';
 import type * as Monaco from 'monaco-editor';
 import { registerEclLanguage, ECL_LANGUAGE_ID, registerToggleTermsAction } from '@aehrc/ecl-editor-core';
@@ -70,8 +71,11 @@ export function EclEditor({
   lineNumbers = true,
   options,
   terminologyService,
-  maxConcurrency,
+  maxConcurrency: maxConcurrencyProp,
 }: Readonly<EclEditorProps>) {
+  const ctx = useEclEditorContext();
+  const maxConcurrency = maxConcurrencyProp ?? ctx.maxConcurrency;
+
   const registrationRef = useRef<EclEditorDisposable | null>(null);
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<typeof Monaco | null>(null);

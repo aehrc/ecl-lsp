@@ -62,14 +62,27 @@ export interface AppConfig {
   fhirServerUrl: string;
   snomedEdition?: string;
   maxEvalResults: number;
+  maxConcurrency?: number;
 }
 
 export function loadConfig(): AppConfig {
+  const rawConcurrency = process.env.ECL_MAX_CONCURRENCY;
+  let maxConcurrency: number | undefined;
+  if (rawConcurrency !== undefined) {
+    const parsed = Number.parseInt(rawConcurrency, 10);
+    if (Number.isInteger(parsed) && parsed > 0) {
+      maxConcurrency = parsed;
+    } else {
+      console.warn(`ECL_MAX_CONCURRENCY="${rawConcurrency}" is not a positive integer — ignoring`);
+    }
+  }
+
   return {
     slackBotToken: process.env.SLACK_BOT_TOKEN ?? '',
     slackAppToken: process.env.SLACK_APP_TOKEN ?? '',
     fhirServerUrl: process.env.FHIR_SERVER_URL ?? 'https://tx.ontoserver.csiro.au/fhir',
     snomedEdition: process.env.SNOMED_EDITION || undefined, // eslint-disable-line @typescript-eslint/prefer-nullish-coalescing -- empty string should be treated as unset
     maxEvalResults: Number.parseInt(process.env.MAX_EVAL_RESULTS ?? '5', 10) || 5,
+    maxConcurrency,
   };
 }

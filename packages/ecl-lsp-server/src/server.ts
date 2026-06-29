@@ -72,6 +72,7 @@ import type {
 // LSP-specific modules (not in ecl-core)
 import { buildCodeLenses } from './code-lens';
 import { tokenLegend, computeSemanticTokens } from './semantic-tokens';
+import { extractTerminologyConfig } from './terminology-config';
 
 // ── Type mapping: Core types to LSP types ───────────────────────────────
 
@@ -200,34 +201,19 @@ let cachedInitOptions: Record<string, unknown> = {};
 let clientSupportsCodeLensRefresh = false;
 let clientUserAgent: string | undefined;
 
-/**
- * Extract terminology config from a source object, handling both VSCode-style
- * (workspace.getConfiguration section keys) and Eclipse-style (initializationOptions flat keys).
- */
-function extractTerminologyConfig(config: Record<string, unknown> | null | undefined): {
-  serverUrl: string | undefined;
-  timeout: number | undefined;
-  snomedVersion: string | undefined;
-} {
-  if (!config) return { serverUrl: undefined, timeout: undefined, snomedVersion: undefined };
-  // VSCode: { serverUrl, timeout, snomedVersion } from section 'ecl.terminology'
-  // Eclipse initializationOptions: { fhirTerminologyServerUrl, timeout, snomedVersion }
-  const rawUrl = config.serverUrl ?? config.fhirTerminologyServerUrl;
-  const serverUrl = typeof rawUrl === 'string' && rawUrl.trim() ? rawUrl.trim() : undefined;
-  const rawTimeout = config.timeout;
-  const timeout = typeof rawTimeout === 'number' && rawTimeout >= 500 ? rawTimeout : undefined;
-  const rawVersion = config.snomedVersion;
-  const snomedVersion = typeof rawVersion === 'string' && rawVersion.trim() ? rawVersion.trim() : undefined;
-  return { serverUrl, timeout, snomedVersion };
-}
-
-function applyTerminologyConfig(cfg: { serverUrl?: string; timeout?: number; snomedVersion?: string }): void {
+function applyTerminologyConfig(cfg: {
+  serverUrl?: string;
+  timeout?: number;
+  snomedVersion?: string;
+  maxConcurrency?: number;
+}): void {
   snomedEditionLabel = cfg.snomedVersion ?? 'server default';
   terminologyService = new FhirTerminologyService({
     baseUrl: cfg.serverUrl,
     timeout: cfg.timeout,
     userAgent: clientUserAgent,
     snomedVersion: cfg.snomedVersion,
+    maxConcurrency: cfg.maxConcurrency,
     onResolvedVersion: (versionUri) => {
       connection.console.log(`Resolved SNOMED version: ${versionUri}`);
       snomedEditionLabel = versionUri;
@@ -235,7 +221,7 @@ function applyTerminologyConfig(cfg: { serverUrl?: string; timeout?: number; sno
     },
   });
   connection.console.log(
-    `Terminology server: ${cfg.serverUrl ?? 'https://tx.ontoserver.csiro.au/fhir'} (timeout: ${cfg.timeout ?? 2000}ms)` +
+    `Terminology server: ${cfg.serverUrl ?? 'https://tx.ontoserver.csiro.au/fhir'} (timeout: ${cfg.timeout ?? 2000}ms, maxConcurrency: ${cfg.maxConcurrency ?? 25})` +
       (cfg.snomedVersion ? ` (SNOMED version: ${cfg.snomedVersion})` : ''),
   );
 }

@@ -59,8 +59,8 @@
   },
   "devDependencies": {
     "@monaco-editor/react": "^4.7.0",
-    "@playwright/test": "^1.60.0",
-    "@storybook/react-vite": "^10.3.3",
+    "@playwright/test": "^1.61.1",
+    "@storybook/react-vite": "^10.4.6",
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.3.0",
     "@types/react": "^19.2.16",
@@ -75,6 +75,6 @@
     "vite": "^6.3.5",
     "vite-plugin-dts": "^4.5.4",
     "vite-plugin-node-polyfills": "^0.28.0",
-    "vitest": "^4.1.2"
+    "vitest": "^4.1.9"
   }
 }

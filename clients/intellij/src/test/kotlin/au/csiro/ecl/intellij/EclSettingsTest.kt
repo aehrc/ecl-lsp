@@ -33,6 +33,12 @@ class EclSettingsTest {
     }
 
     @Test
+    fun stateDefaultsEvaluateEclIsAuto() {
+        val state = EclSettings.State()
+        assertEquals("auto", state.evaluateEcl)
+    }
+
+    @Test
     fun stateDefaultsSemanticValidationIsEnabled() {
         val state = EclSettings.State()
         assertTrue(state.semanticValidationEnabled)

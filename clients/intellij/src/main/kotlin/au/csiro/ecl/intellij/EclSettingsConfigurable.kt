@@ -46,6 +46,11 @@ class EclSettingsConfigurable : BoundConfigurable("ECL Language Server") {
                     .align(AlignX.FILL)
                     .comment("Edition/version URI (empty = server default). Use the status bar widget to select interactively.")
             }
+            row("Evaluate ECL strategy:") {
+                comboBox(listOf("auto", "implicit-url", "post-valueset-filter"))
+                    .bindItem(settings.state::evaluateEcl)
+                    .comment("auto = implicit URL with fallback to POST; implicit-url = force implicit URL; post-valueset-filter = force POST filter")
+            }
             row {
                 checkBox("Enable semantic validation")
                     .bindSelected(settings.state::semanticValidationEnabled)

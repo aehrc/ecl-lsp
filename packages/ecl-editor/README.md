@@ -44,19 +44,26 @@ When loaded via `<script>` (non-module), the element auto-registers as `<ecl-edi
 
 ## Attributes
 
-| Attribute             | Type      | Default                                 | Description                                      |
-| --------------------- | --------- | --------------------------------------- | ------------------------------------------------ |
-| `value`               | `string`  | `''`                                    | Editor content                                   |
-| `fhir-server-url`     | `string`  | `'https://tx.ontoserver.csiro.au/fhir'` | FHIR terminology server URL                      |
-| `snomed-version`      | `string`  | `''`                                    | SNOMED CT edition/version URI                    |
-| `theme`               | `string`  | `'vs'`                                  | Monaco theme (`'vs'`, `'vs-dark'`, `'hc-black'`) |
-| `height`              | `string`  | `'300px'`                               | Editor height                                    |
-| `width`               | `string`  | `'100%'`                                | Editor width                                     |
-| `read-only`           | `boolean` | `false`                                 | Read-only mode                                   |
-| `minimap`             | `boolean` | `false`                                 | Show minimap                                     |
-| `line-numbers`        | `boolean` | `true`                                  | Show line numbers                                |
-| `semantic-validation` | `boolean` | `true`                                  | Enable semantic validation                       |
-| `cors-proxy`          | `string`  |                                         | CORS proxy URL prefix                            |
+| Attribute             | Type      | Default                                 | Description                                                              |
+| --------------------- | --------- | --------------------------------------- | ------------------------------------------------------------------------ |
+| `value`               | `string`  | `''`                                    | Editor content                                                           |
+| `fhir-server-url`     | `string`  | `'https://tx.ontoserver.csiro.au/fhir'` | FHIR terminology server URL                                              |
+| `snomed-version`      | `string`  | `''`                                    | SNOMED CT edition/version URI                                            |
+| `evaluate-ecl`        | `string`  | `'auto'`                                | ECL evaluation strategy (`auto`, `implicit-url`, `post-valueset-filter`) |
+| `theme`               | `string`  | `'vs'`                                  | Monaco theme (`'vs'`, `'vs-dark'`, `'hc-black'`)                         |
+| `height`              | `string`  | `'300px'`                               | Editor height                                                            |
+| `width`               | `string`  | `'100%'`                                | Editor width                                                             |
+| `read-only`           | `boolean` | `false`                                 | Read-only mode                                                           |
+| `minimap`             | `boolean` | `false`                                 | Show minimap                                                             |
+| `line-numbers`        | `boolean` | `true`                                  | Show line numbers                                                        |
+| `semantic-validation` | `boolean` | `true`                                  | Enable semantic validation                                               |
+| `cors-proxy`          | `string`  |                                         | CORS proxy URL prefix                                                    |
+
+`evaluate-ecl` options:
+
+- `auto` (default): try implicit ValueSet URL first, then fallback to POST ValueSet filter
+- `implicit-url`: force implicit ValueSet URL
+- `post-valueset-filter`: force POST ValueSet filter
 
 ## Events
 

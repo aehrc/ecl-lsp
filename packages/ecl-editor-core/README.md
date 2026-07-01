@@ -48,6 +48,7 @@ Registers the ECL language with Monaco. Returns an `EclEditorDisposable` with `d
 interface EclEditorConfig {
   fhirServerUrl?: string; // Default: 'https://tx.ontoserver.csiro.au/fhir'
   snomedVersion?: string; // SNOMED CT edition/version URI
+  evaluateEcl?: 'auto' | 'implicit-url' | 'post-valueset-filter'; // Default: 'auto'
   terminologyService?: ITerminologyService; // Custom service (bypasses fhirServerUrl)
   formattingOptions?: Partial<FormattingOptions>;
   semanticValidation?: boolean; // Default: true
@@ -56,6 +57,12 @@ interface EclEditorConfig {
   onResolvedSnomedVersion?: (uri: string) => void;
 }
 ```
+
+`evaluateEcl` controls how ECL is expanded on the terminology server:
+
+- `auto` (default): try implicit ValueSet URL first, then fallback to POST ValueSet filter when needed
+- `implicit-url`: force implicit ValueSet URL only
+- `post-valueset-filter`: force POST ValueSet filter only
 
 ### `DiagnosticsEngine`
 

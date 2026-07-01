@@ -41,22 +41,23 @@ npm link -w packages/ecl-lsp-server
 
 Configure at **Settings** > **Languages & Frameworks** > **ECL Language Server**.
 
-| Setting                   | Default                               | Description                                   |
-| ------------------------- | ------------------------------------- | --------------------------------------------- |
-| Server URL                | `https://tx.ontoserver.csiro.au/fhir` | FHIR terminology server base URL              |
-| Timeout (ms)              | 2000                                  | Concept lookup request timeout                |
-| SNOMED CT Edition         | (empty = server default)              | Edition/version URI                           |
-| Semantic validation       | enabled                               | Attribute scope and value constraint checking |
-| Result limit              | 200                                   | Max concepts returned from ECL evaluation     |
-| Indent size               | 2                                     | Spaces per indentation level                  |
-| Indent style              | space                                 | Spaces or tabs                                |
-| Max line length           | 80                                    | Line breaking threshold (0 = unlimited)       |
-| Space around operators    | true                                  | Spaces around AND, OR, MINUS                  |
-| Align terms               | true                                  | Vertically align pipe-delimited terms         |
-| Wrap comments             | false                                 | Wrap long line comments                       |
-| Break on operators        | false                                 | Force newline before operators                |
-| Break on refinement comma | false                                 | Force newline after commas in refinements     |
-| Break after colon         | false                                 | Force newline after refinement colon          |
+| Setting                   | Default                               | Description                                       |
+| ------------------------- | ------------------------------------- | ------------------------------------------------- |
+| Server URL                | `https://tx.ontoserver.csiro.au/fhir` | FHIR terminology server base URL                  |
+| Timeout (ms)              | 2000                                  | Concept lookup request timeout                    |
+| SNOMED CT Edition         | (empty = server default)              | Edition/version URI                               |
+| Evaluate ECL strategy     | auto                                  | `auto`, `implicit-url`, or `post-valueset-filter` |
+| Semantic validation       | enabled                               | Attribute scope and value constraint checking     |
+| Result limit              | 200                                   | Max concepts returned from ECL evaluation         |
+| Indent size               | 2                                     | Spaces per indentation level                      |
+| Indent style              | space                                 | Spaces or tabs                                    |
+| Max line length           | 80                                    | Line breaking threshold (0 = unlimited)           |
+| Space around operators    | true                                  | Spaces around AND, OR, MINUS                      |
+| Align terms               | true                                  | Vertically align pipe-delimited terms             |
+| Wrap comments             | false                                 | Wrap long line comments                           |
+| Break on operators        | false                                 | Force newline before operators                    |
+| Break on refinement comma | false                                 | Force newline after commas in refinements         |
+| Break after colon         | false                                 | Force newline after refinement colon              |
 
 ## SNOMED CT Edition Selection
 

@@ -28,27 +28,34 @@ function App() {
 
 ## Props
 
-| Prop                      | Type                                      | Default                                 | Description                                      |
-| ------------------------- | ----------------------------------------- | --------------------------------------- | ------------------------------------------------ |
-| `value`                   | `string`                                  |                                         | Controlled editor value                          |
-| `defaultValue`            | `string`                                  |                                         | Uncontrolled initial value                       |
-| `onChange`                | `(value: string) => void`                 |                                         | Called when content changes                      |
-| `fhirServerUrl`           | `string`                                  | `'https://tx.ontoserver.csiro.au/fhir'` | FHIR terminology server URL                      |
-| `snomedVersion`           | `string`                                  | `''`                                    | SNOMED CT edition/version URI                    |
-| `formattingOptions`       | `Partial<FormattingOptions>`              |                                         | ECL formatting options                           |
-| `semanticValidation`      | `boolean`                                 | `true`                                  | Enable semantic validation                       |
-| `semanticDebounceMs`      | `number`                                  | `500`                                   | Semantic validation debounce (ms)                |
-| `corsProxy`               | `string`                                  |                                         | CORS proxy URL prefix                            |
-| `onDiagnostics`           | `(diagnostics: CoreDiagnostic[]) => void` |                                         | Called when diagnostics update                   |
-| `onResolvedSnomedVersion` | `(uri: string) => void`                   |                                         | Called when SNOMED version is resolved           |
-| `readOnly`                | `boolean`                                 | `false`                                 | Read-only mode                                   |
-| `theme`                   | `string`                                  | `'vs'`                                  | Monaco theme (`'vs'`, `'vs-dark'`, `'hc-black'`) |
-| `height`                  | `string \| number`                        | `'300px'`                               | Editor height                                    |
-| `width`                   | `string \| number`                        | `'100%'`                                | Editor width                                     |
-| `minimap`                 | `boolean`                                 | `false`                                 | Show minimap                                     |
-| `lineNumbers`             | `boolean`                                 | `true`                                  | Show line numbers                                |
-| `options`                 | `IStandaloneEditorConstructionOptions`    |                                         | Additional Monaco editor options                 |
-| `terminologyService`      | `ITerminologyService`                     |                                         | Custom terminology service                       |
+| Prop                      | Type                                                 | Default                                 | Description                                      |
+| ------------------------- | ---------------------------------------------------- | --------------------------------------- | ------------------------------------------------ |
+| `value`                   | `string`                                             |                                         | Controlled editor value                          |
+| `defaultValue`            | `string`                                             |                                         | Uncontrolled initial value                       |
+| `onChange`                | `(value: string) => void`                            |                                         | Called when content changes                      |
+| `fhirServerUrl`           | `string`                                             | `'https://tx.ontoserver.csiro.au/fhir'` | FHIR terminology server URL                      |
+| `snomedVersion`           | `string`                                             | `''`                                    | SNOMED CT edition/version URI                    |
+| `evaluateEcl`             | `'auto' \| 'implicit-url' \| 'post-valueset-filter'` | `'auto'`                                | ECL evaluation strategy                          |
+| `formattingOptions`       | `Partial<FormattingOptions>`                         |                                         | ECL formatting options                           |
+| `semanticValidation`      | `boolean`                                            | `true`                                  | Enable semantic validation                       |
+| `semanticDebounceMs`      | `number`                                             | `500`                                   | Semantic validation debounce (ms)                |
+| `corsProxy`               | `string`                                             |                                         | CORS proxy URL prefix                            |
+| `onDiagnostics`           | `(diagnostics: CoreDiagnostic[]) => void`            |                                         | Called when diagnostics update                   |
+| `onResolvedSnomedVersion` | `(uri: string) => void`                              |                                         | Called when SNOMED version is resolved           |
+| `readOnly`                | `boolean`                                            | `false`                                 | Read-only mode                                   |
+| `theme`                   | `string`                                             | `'vs'`                                  | Monaco theme (`'vs'`, `'vs-dark'`, `'hc-black'`) |
+| `height`                  | `string \| number`                                   | `'300px'`                               | Editor height                                    |
+| `width`                   | `string \| number`                                   | `'100%'`                                | Editor width                                     |
+| `minimap`                 | `boolean`                                            | `false`                                 | Show minimap                                     |
+| `lineNumbers`             | `boolean`                                            | `true`                                  | Show line numbers                                |
+| `options`                 | `IStandaloneEditorConstructionOptions`               |                                         | Additional Monaco editor options                 |
+| `terminologyService`      | `ITerminologyService`                                |                                         | Custom terminology service                       |
+
+`evaluateEcl` options:
+
+- `auto` (default): try implicit ValueSet URL first, then fallback to POST ValueSet filter
+- `implicit-url`: force implicit ValueSet URL
+- `post-valueset-filter`: force POST ValueSet filter
 
 ## Keyboard Shortcuts
 

@@ -41,6 +41,7 @@ class EclExtensionPointTest : BasePlatformTestCase() {
         assertEquals("https://tx.ontoserver.csiro.au/fhir", state.serverUrl)
         assertEquals(2000, state.timeout)
         assertEquals("", state.snomedVersion)
+        assertEquals("auto", state.evaluateEcl)
         assertTrue(state.semanticValidationEnabled)
         assertEquals(200, state.resultLimit)
         assertEquals(2, state.indentSize)

@@ -70,6 +70,7 @@ export function registerEclLanguage(
     terminologyService = new FhirTerminologyService({
       baseUrl: url,
       snomedVersion: config.snomedVersion,
+      eclEvaluationStrategy: config.evaluateEcl,
       onResolvedVersion: config.onResolvedSnomedVersion,
     });
   }
@@ -155,7 +156,11 @@ export function registerEclLanguage(
       }
       if (newConfig.terminologyService !== undefined) {
         terminologyService = newConfig.terminologyService;
-      } else if (newConfig.fhirServerUrl !== undefined || newConfig.snomedVersion !== undefined) {
+      } else if (
+        newConfig.fhirServerUrl !== undefined ||
+        newConfig.snomedVersion !== undefined ||
+        newConfig.evaluateEcl !== undefined
+      ) {
         const url =
           (newConfig.corsProxy ?? config.corsProxy)
             ? `${newConfig.corsProxy ?? config.corsProxy}${newConfig.fhirServerUrl ?? config.fhirServerUrl ?? 'https://tx.ontoserver.csiro.au/fhir'}`
@@ -164,6 +169,7 @@ export function registerEclLanguage(
           terminologyService = new FhirTerminologyService({
             baseUrl: url,
             snomedVersion: newConfig.snomedVersion ?? config.snomedVersion,
+            eclEvaluationStrategy: newConfig.evaluateEcl ?? config.evaluateEcl,
             onResolvedVersion: newConfig.onResolvedSnomedVersion ?? config.onResolvedSnomedVersion,
           });
         }

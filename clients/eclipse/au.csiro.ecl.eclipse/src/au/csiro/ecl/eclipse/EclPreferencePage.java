@@ -22,7 +22,7 @@ import org.eclipse.ui.IWorkbenchPreferencePage;
  * <p>Settings are organized into groups matching the IntelliJ plugin:
  * <ul>
  *   <li>Server — Node.js path (optional)</li>
- *   <li>FHIR Terminology — server URL, timeout, SNOMED version, semantic validation</li>
+ *   <li>FHIR Terminology — server URL, timeout, SNOMED version, evaluate strategy, semantic validation</li>
  *   <li>Evaluation — result limit</li>
  *   <li>Formatting — indent, line length, alignment, line breaking</li>
  * </ul>
@@ -37,6 +37,7 @@ public class EclPreferencePage extends FieldEditorPreferencePage
     public static final String PREF_FHIR_URL = "ecl.fhirUrl";
     public static final String PREF_TIMEOUT = "ecl.timeout";
     public static final String PREF_SNOMED_VERSION = "ecl.snomedVersion";
+    public static final String PREF_EVALUATE_ECL = "ecl.evaluateEcl";
     public static final String PREF_SEMANTIC_VALIDATION = "ecl.semanticValidation";
 
     // Evaluation
@@ -83,6 +84,13 @@ public class EclPreferencePage extends FieldEditorPreferencePage
 
         addField(new StringFieldEditor(PREF_SNOMED_VERSION,
                 "SNOMED CT version URI:", fhirGroup));
+
+        addField(new ComboFieldEditor(PREF_EVALUATE_ECL,
+                "Evaluate ECL strategy:", new String[][]{
+                        {"Auto (implicit URL with POST fallback)", "auto"},
+                        {"Implicit URL only", "implicit-url"},
+                        {"POST ValueSet filter only", "post-valueset-filter"}
+                }, fhirGroup));
 
         addField(new BooleanFieldEditor(PREF_SEMANTIC_VALIDATION,
                 "Enable semantic validation (inactive/unknown concept checks)",

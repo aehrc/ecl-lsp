@@ -53,6 +53,7 @@ describe('EclEditorElement', () => {
       expect(attrs).toContain('value');
       expect(attrs).toContain('fhir-server-url');
       expect(attrs).toContain('snomed-version');
+      expect(attrs).toContain('evaluate-ecl');
       expect(attrs).toContain('theme');
       expect(attrs).toContain('height');
       expect(attrs).toContain('width');
@@ -63,8 +64,8 @@ describe('EclEditorElement', () => {
       expect(attrs).toContain('cors-proxy');
     });
 
-    it('should return exactly 11 observed attributes', () => {
-      expect(EclEditorElement.observedAttributes).toHaveLength(11);
+    it('should return exactly 12 observed attributes', () => {
+      expect(EclEditorElement.observedAttributes).toHaveLength(12);
     });
   });
 

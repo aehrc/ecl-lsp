@@ -6,6 +6,8 @@ import type { EclEditorConfig, EclEditorDisposable } from '@aehrc/ecl-editor-cor
 import type { CoreDiagnostic } from '@aehrc/ecl-core';
 import type { FormattingOptions } from '@aehrc/ecl-core';
 
+type EvaluateEclStrategy = 'auto' | 'implicit-url' | 'post-valueset-filter';
+
 export interface EclEditorProps {
   /** Controlled value. */
   value?: string;
@@ -17,6 +19,8 @@ export interface EclEditorProps {
   fhirServerUrl?: string;
   /** SNOMED CT version URI. */
   snomedVersion?: string;
+  /** ECL evaluation strategy. */
+  evaluateEcl?: EvaluateEclStrategy;
   /** Formatting options. */
   formattingOptions?: Partial<FormattingOptions>;
   /** Enable semantic validation. Default: true */
@@ -54,6 +58,7 @@ export function EclEditor({
   onChange,
   fhirServerUrl,
   snomedVersion,
+  evaluateEcl,
   formattingOptions,
   semanticValidation,
   semanticDebounceMs,
@@ -88,6 +93,7 @@ export function EclEditor({
       registrationRef.current ??= registerEclLanguage(monaco, {
         fhirServerUrl,
         snomedVersion,
+        evaluateEcl,
         formattingOptions,
         semanticValidation,
         semanticDebounceMs,
@@ -104,6 +110,7 @@ export function EclEditor({
     [
       fhirServerUrl,
       snomedVersion,
+      evaluateEcl,
       formattingOptions,
       semanticValidation,
       semanticDebounceMs,
@@ -118,6 +125,7 @@ export function EclEditor({
     registrationRef.current?.updateConfig({
       fhirServerUrl,
       snomedVersion,
+      evaluateEcl,
       formattingOptions,
       semanticValidation,
       semanticDebounceMs,
@@ -128,6 +136,7 @@ export function EclEditor({
   }, [
     fhirServerUrl,
     snomedVersion,
+    evaluateEcl,
     formattingOptions,
     semanticValidation,
     semanticDebounceMs,

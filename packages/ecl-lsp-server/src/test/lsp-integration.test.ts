@@ -18,6 +18,7 @@ const DEFAULT_SETTINGS = {
     serverUrl: 'https://tx.ontoserver.csiro.au/fhir',
     timeout: 2000,
     snomedVersion: '',
+    evaluateEcl: 'auto',
   },
   'ecl.formatting': {
     indentSize: 2,

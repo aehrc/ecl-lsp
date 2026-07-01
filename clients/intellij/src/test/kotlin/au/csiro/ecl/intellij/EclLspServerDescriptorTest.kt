@@ -114,6 +114,7 @@ class EclLspServerDescriptorTest : BasePlatformTestCase() {
         assertTrue(map.containsKey("serverUrl"))
         assertTrue(map.containsKey("timeout"))
         assertTrue(map.containsKey("snomedVersion"))
+        assertTrue(map.containsKey("evaluateEcl"))
     }
 
     fun testWorkspaceConfigurationReturnsFormattingSettings() {

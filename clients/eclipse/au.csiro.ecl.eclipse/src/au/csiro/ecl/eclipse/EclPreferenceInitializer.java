@@ -24,6 +24,7 @@ public class EclPreferenceInitializer extends AbstractPreferenceInitializer {
                 "https://tx.ontoserver.csiro.au/fhir");
         store.setDefault(EclPreferencePage.PREF_TIMEOUT, 2000);
         store.setDefault(EclPreferencePage.PREF_SNOMED_VERSION, "");
+        store.setDefault(EclPreferencePage.PREF_EVALUATE_ECL, "auto");
         store.setDefault(EclPreferencePage.PREF_SEMANTIC_VALIDATION, true);
 
         // Evaluation

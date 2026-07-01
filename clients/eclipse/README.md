@@ -46,12 +46,13 @@ Configure at **Window** > **Preferences** > **ECL Language Server**.
 
 ### FHIR Terminology
 
-| Setting             | Default                               | Description                                   |
-| ------------------- | ------------------------------------- | --------------------------------------------- |
-| Server URL          | `https://tx.ontoserver.csiro.au/fhir` | FHIR terminology server URL                   |
-| Timeout (ms)        | `2000`                                | Concept lookup request timeout                |
-| SNOMED CT Edition   | (empty = server default)              | Edition/version URI                           |
-| Semantic validation | enabled                               | Attribute scope and value constraint checking |
+| Setting               | Default                               | Description                                       |
+| --------------------- | ------------------------------------- | ------------------------------------------------- |
+| Server URL            | `https://tx.ontoserver.csiro.au/fhir` | FHIR terminology server URL                       |
+| Timeout (ms)          | `2000`                                | Concept lookup request timeout                    |
+| SNOMED CT Edition     | (empty = server default)              | Edition/version URI                               |
+| Evaluate ECL strategy | `auto`                                | `auto`, `implicit-url`, or `post-valueset-filter` |
+| Semantic validation   | enabled                               | Attribute scope and value constraint checking     |
 
 ### Evaluation
 

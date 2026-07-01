@@ -49,6 +49,7 @@ class EclLspServerDescriptor(project: Project) :
                 "serverUrl" to settings.state.serverUrl,
                 "timeout" to settings.state.timeout,
                 "snomedVersion" to settings.state.snomedVersion,
+                "evaluateEcl" to settings.state.evaluateEcl,
             )
             "ecl.formatting" -> mapOf(
                 "indentSize" to settings.state.indentSize,

@@ -57,11 +57,12 @@ All settings are under the `ecl.*` namespace in VSCode settings.
 
 ### Terminology
 
-| Setting                         | Default                               | Description                   |
-| ------------------------------- | ------------------------------------- | ----------------------------- |
-| `ecl.terminology.serverUrl`     | `https://tx.ontoserver.csiro.au/fhir` | FHIR terminology server URL   |
-| `ecl.terminology.timeout`       | `2000`                                | Concept lookup timeout (ms)   |
-| `ecl.terminology.snomedVersion` | `""` (server default)                 | SNOMED CT edition/version URI |
+| Setting                         | Default                               | Description                                                                |
+| ------------------------------- | ------------------------------------- | -------------------------------------------------------------------------- |
+| `ecl.terminology.serverUrl`     | `https://tx.ontoserver.csiro.au/fhir` | FHIR terminology server URL                                                |
+| `ecl.terminology.timeout`       | `2000`                                | Concept lookup timeout (ms)                                                |
+| `ecl.terminology.snomedVersion` | `""` (server default)                 | SNOMED CT edition/version URI                                              |
+| `ecl.terminology.evaluateEcl`   | `"auto"`                              | ECL evaluation strategy: `auto`, `implicit-url`, or `post-valueset-filter` |
 
 ### Validation
 

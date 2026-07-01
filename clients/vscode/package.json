@@ -234,6 +234,16 @@
           "default": "",
           "description": "SNOMED CT edition/version URI. Edition-only (e.g. http://snomed.info/sct/32506021000036107) uses the latest version. Pinned (e.g. http://snomed.info/sct/32506021000036107/version/20260131) uses that exact release. Empty uses the server default."
         },
+        "ecl.terminology.evaluateEcl": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "implicit-url",
+            "post-valueset-filter"
+          ],
+          "default": "auto",
+          "description": "ECL evaluation strategy: auto (try implicit URL then fallback), implicit-url (force implicit ValueSet URL), or post-valueset-filter (always use POST ValueSet filter)."
+        },
         "ecl.semanticValidation.enabled": {
           "type": "boolean",
           "default": true,

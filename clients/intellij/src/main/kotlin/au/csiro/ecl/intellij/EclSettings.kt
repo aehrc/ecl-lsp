@@ -18,6 +18,7 @@ class EclSettings : SimplePersistentStateComponent<EclSettings.State>(State()) {
         var serverUrl by string("https://tx.ontoserver.csiro.au/fhir")
         var timeout by property(2000)
         var snomedVersion by string("")
+        var evaluateEcl by string("auto")
         var semanticValidationEnabled by property(true)
 
         // Evaluation

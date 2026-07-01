@@ -127,6 +127,11 @@ public class EclStreamConnectionProvider extends ProcessStreamConnectionProvider
             options.put("snomedVersion", snomedVersion);
         }
 
+        String evaluateEcl = store.getString(EclPreferencePage.PREF_EVALUATE_ECL);
+        if (evaluateEcl != null && !evaluateEcl.isEmpty()) {
+            options.put("evaluateEcl", evaluateEcl);
+        }
+
         boolean semanticValidation = store.getBoolean(EclPreferencePage.PREF_SEMANTIC_VALIDATION);
         options.put("semanticValidation", semanticValidation);
 

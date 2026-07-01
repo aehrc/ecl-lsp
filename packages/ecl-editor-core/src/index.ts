@@ -2,7 +2,7 @@
 // ABN 41 687 119 230. SPDX-License-Identifier: Apache-2.0
 
 // Types
-export type { EclEditorConfig, EclEditorDisposable } from './types';
+export type { EclEditorConfig, EclEditorDisposable, EvaluateEclStrategy } from './types';
 
 // Diagnostics engine (framework-agnostic)
 export { DiagnosticsEngine } from './diagnostics-engine';

@@ -45,6 +45,7 @@ export class DiagnosticsEngine {
     return new FhirTerminologyService({
       baseUrl: url,
       snomedVersion: config.snomedVersion,
+      eclEvaluationStrategy: config.evaluateEcl,
       onResolvedVersion: config.onResolvedSnomedVersion,
     });
   }
@@ -62,11 +63,13 @@ export class DiagnosticsEngine {
     } else if (
       config.fhirServerUrl !== undefined ||
       config.snomedVersion !== undefined ||
+      config.evaluateEcl !== undefined ||
       config.corsProxy !== undefined
     ) {
       this.terminologyService = this.createTerminologyService({
         fhirServerUrl: config.fhirServerUrl,
         snomedVersion: config.snomedVersion,
+        evaluateEcl: config.evaluateEcl,
         corsProxy: config.corsProxy,
         onResolvedSnomedVersion: config.onResolvedSnomedVersion,
       });

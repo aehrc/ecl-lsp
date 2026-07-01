@@ -40,11 +40,12 @@ The server reads configuration via `workspace/didChangeConfiguration` under the 
 
 ### Terminology
 
-| Setting                         | Default                               | Description                                            |
-| ------------------------------- | ------------------------------------- | ------------------------------------------------------ |
-| `ecl.terminology.serverUrl`     | `https://tx.ontoserver.csiro.au/fhir` | FHIR terminology server base URL                       |
-| `ecl.terminology.timeout`       | `2000`                                | Concept lookup timeout in milliseconds (500-30000)     |
-| `ecl.terminology.snomedVersion` | `""`                                  | SNOMED CT edition/version URI (empty = server default) |
+| Setting                         | Default                               | Description                                                                |
+| ------------------------------- | ------------------------------------- | -------------------------------------------------------------------------- |
+| `ecl.terminology.serverUrl`     | `https://tx.ontoserver.csiro.au/fhir` | FHIR terminology server base URL                                           |
+| `ecl.terminology.timeout`       | `2000`                                | Concept lookup timeout in milliseconds (500-30000)                         |
+| `ecl.terminology.snomedVersion` | `""`                                  | SNOMED CT edition/version URI (empty = server default)                     |
+| `ecl.terminology.evaluateEcl`   | `"auto"`                              | ECL evaluation strategy: `auto`, `implicit-url`, or `post-valueset-filter` |
 
 ### Formatting
 

@@ -3,12 +3,16 @@
 
 import type { ITerminologyService, FormattingOptions } from '@aehrc/ecl-core';
 
+export type EvaluateEclStrategy = 'auto' | 'implicit-url' | 'post-valueset-filter';
+
 /** Configuration for the ECL editor integration. */
 export interface EclEditorConfig {
   /** FHIR server URL. Default: 'https://tx.ontoserver.csiro.au/fhir' */
   fhirServerUrl?: string;
   /** SNOMED CT version URI (e.g. 'http://snomed.info/sct/32506021000036107/version/20240731') */
   snomedVersion?: string;
+  /** ECL evaluation strategy for terminology servers. Default: 'auto' */
+  evaluateEcl?: EvaluateEclStrategy;
   /** Custom terminology service override (bypasses fhirServerUrl). */
   terminologyService?: ITerminologyService;
   /** Formatting options. */

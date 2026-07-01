@@ -221,7 +221,14 @@ function getInitializationSection(section: `ecl.${string}`): Record<string, unkn
   return asRecord(settingsEclRoot?.[shortSection]);
 }
 
-function getInitializationTerminologyConfig(): { serverUrl?: string; timeout?: number; snomedVersion?: string } {
+type EvaluateEclStrategy = 'auto' | 'implicit-url' | 'post-valueset-filter';
+
+function getInitializationTerminologyConfig(): {
+  serverUrl?: string;
+  timeout?: number;
+  snomedVersion?: string;
+  evaluateEcl?: EvaluateEclStrategy;
+} {
   const sectionConfig = getInitializationSection('ecl.terminology');
   if (!sectionConfig) {
     return extractTerminologyConfig(cachedInitOptions);
@@ -249,26 +256,39 @@ function extractTerminologyConfig(config: Record<string, unknown> | null | undef
   serverUrl: string | undefined;
   timeout: number | undefined;
   snomedVersion: string | undefined;
+  evaluateEcl: EvaluateEclStrategy | undefined;
 } {
-  if (!config) return { serverUrl: undefined, timeout: undefined, snomedVersion: undefined };
-  // VSCode: { serverUrl, timeout, snomedVersion } from section 'ecl.terminology'
-  // Eclipse initializationOptions: { fhirTerminologyServerUrl, timeout, snomedVersion }
+  if (!config) return { serverUrl: undefined, timeout: undefined, snomedVersion: undefined, evaluateEcl: undefined };
+  // VSCode: { serverUrl, timeout, snomedVersion, evaluateEcl } from section 'ecl.terminology'
+  // Eclipse initializationOptions: { fhirTerminologyServerUrl, timeout, snomedVersion, evaluateEcl }
   const rawUrl = config.serverUrl ?? config.fhirTerminologyServerUrl;
   const serverUrl = typeof rawUrl === 'string' && rawUrl.trim() ? rawUrl.trim() : undefined;
   const rawTimeout = config.timeout;
   const timeout = typeof rawTimeout === 'number' && rawTimeout >= 500 ? rawTimeout : undefined;
   const rawVersion = config.snomedVersion;
   const snomedVersion = typeof rawVersion === 'string' && rawVersion.trim() ? rawVersion.trim() : undefined;
-  return { serverUrl, timeout, snomedVersion };
+  // Support both evaluateEcl (client-facing setting key) and eclEvaluationStrategy (core option name).
+  const rawEvaluate = config.evaluateEcl ?? config.eclEvaluationStrategy;
+  const evaluateEcl =
+    rawEvaluate === 'auto' || rawEvaluate === 'implicit-url' || rawEvaluate === 'post-valueset-filter'
+      ? rawEvaluate
+      : undefined;
+  return { serverUrl, timeout, snomedVersion, evaluateEcl };
 }
 
-function applyTerminologyConfig(cfg: { serverUrl?: string; timeout?: number; snomedVersion?: string }): void {
+function applyTerminologyConfig(cfg: {
+  serverUrl?: string;
+  timeout?: number;
+  snomedVersion?: string;
+  evaluateEcl?: EvaluateEclStrategy;
+}): void {
   snomedEditionLabel = cfg.snomedVersion ?? 'server default';
   terminologyService = new FhirTerminologyService({
     baseUrl: cfg.serverUrl,
     timeout: cfg.timeout,
     userAgent: clientUserAgent,
     snomedVersion: cfg.snomedVersion,
+    eclEvaluationStrategy: cfg.evaluateEcl,
     onResolvedVersion: (versionUri) => {
       connection.console.log(`Resolved SNOMED version: ${versionUri}`);
       snomedEditionLabel = versionUri;
@@ -277,7 +297,8 @@ function applyTerminologyConfig(cfg: { serverUrl?: string; timeout?: number; sno
   });
   connection.console.log(
     `Terminology server: ${cfg.serverUrl ?? 'https://tx.ontoserver.csiro.au/fhir'} (timeout: ${cfg.timeout ?? 2000}ms)` +
-      (cfg.snomedVersion ? ` (SNOMED version: ${cfg.snomedVersion})` : ''),
+      (cfg.snomedVersion ? ` (SNOMED version: ${cfg.snomedVersion})` : '') +
+      ` (evaluateEcl: ${cfg.evaluateEcl ?? 'auto'})`,
   );
 }
 
@@ -289,7 +310,12 @@ async function initTerminologyService(): Promise<void> {
     });
     const cfg = extractTerminologyConfig(config as Record<string, unknown>);
     // If workspace config returned actual values, use them
-    if (cfg.serverUrl !== undefined || cfg.timeout !== undefined || cfg.snomedVersion !== undefined) {
+    if (
+      cfg.serverUrl !== undefined ||
+      cfg.timeout !== undefined ||
+      cfg.snomedVersion !== undefined ||
+      cfg.evaluateEcl !== undefined
+    ) {
       applyTerminologyConfig(cfg);
     } else {
       // Fall back to initializationOptions (Eclipse and other clients)

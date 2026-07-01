@@ -13,6 +13,7 @@ const OBSERVED_ATTRS = [
   'value',
   'fhir-server-url',
   'snomed-version',
+  'evaluate-ecl',
   'theme',
   'height',
   'width',
@@ -25,6 +26,13 @@ const OBSERVED_ATTRS = [
 
 /** Shared language registration singleton — prevents duplicate tooltips when multiple editors exist. */
 let sharedRegistration: EclEditorDisposable | null = null;
+
+function parseEvaluateEcl(value: string | null): 'auto' | 'implicit-url' | 'post-valueset-filter' | undefined {
+  if (value === 'auto' || value === 'implicit-url' || value === 'post-valueset-filter') {
+    return value;
+  }
+  return undefined;
+}
 
 export class EclEditorElement extends HTMLElement {
   static get observedAttributes(): string[] {
@@ -113,6 +121,7 @@ export class EclEditorElement extends HTMLElement {
       this.registration.updateConfig({
         fhirServerUrl: this.getAttribute('fhir-server-url') ?? undefined,
         snomedVersion: this.getAttribute('snomed-version') ?? undefined,
+        evaluateEcl: parseEvaluateEcl(this.getAttribute('evaluate-ecl')),
         corsProxy: this.getAttribute('cors-proxy') ?? undefined,
         semanticValidation: this.getAttribute('semantic-validation') !== 'false',
       });
@@ -230,6 +239,7 @@ export class EclEditorElement extends HTMLElement {
       (sharedRegistration = registerEclLanguage(monaco, {
         fhirServerUrl: this.getAttribute('fhir-server-url') ?? undefined,
         snomedVersion: this.getAttribute('snomed-version') ?? undefined,
+        evaluateEcl: parseEvaluateEcl(this.getAttribute('evaluate-ecl')),
         corsProxy: this.getAttribute('cors-proxy') ?? undefined,
         semanticValidation: this.getAttribute('semantic-validation') !== 'false',
         onDiagnostics: (diagnostics) => {

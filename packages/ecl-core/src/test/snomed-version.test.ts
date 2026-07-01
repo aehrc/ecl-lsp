@@ -18,12 +18,14 @@ function createMockServer(): {
   server: http.Server;
   requests: CapturedRequest[];
   setResponse: (status: number, body: unknown) => void;
+  setResponses: (responses: { status: number; body: unknown }[]) => void;
   start: () => Promise<string>;
   stop: () => Promise<void>;
 } {
   const requests: CapturedRequest[] = [];
   let responseStatus = 200;
   let responseBody: unknown = {};
+  let responseQueue: { status: number; body: unknown }[] = [];
 
   const server = http.createServer((req, res) => {
     let body = '';
@@ -32,8 +34,11 @@ function createMockServer(): {
     });
     req.on('end', () => {
       requests.push({ method: req.method ?? 'GET', url: req.url ?? '', body: body || undefined });
-      res.writeHead(responseStatus, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(responseBody));
+      const queued = responseQueue.shift();
+      const status = queued?.status ?? responseStatus;
+      const payload = queued?.body ?? responseBody;
+      res.writeHead(status, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(payload));
     });
   });
 
@@ -41,8 +46,12 @@ function createMockServer(): {
     server,
     requests,
     setResponse(status: number, body: unknown) {
+      responseQueue = [];
       responseStatus = status;
       responseBody = body;
+    },
+    setResponses(responses: { status: number; body: unknown }[]) {
+      responseQueue = [...responses];
     },
     start(): Promise<string> {
       return new Promise((resolve) => {
@@ -260,6 +269,123 @@ describe('FhirTerminologyService — SNOMED version threading', () => {
         url.includes(encodeURIComponent('http://snomed.info/sct/32506021000036107?fhir_vs=ecl/')),
         `URL should contain edition-only implicit VS URL: ${url}`,
       );
+    });
+
+    it('should fallback to POST ValueSet/$expand when implicit ValueSet URL is unsupported', async () => {
+      const svc = new FhirTerminologyService({ baseUrl, timeout: 2000 });
+      mock.setResponses([
+        {
+          status: 404,
+          body: {
+            resourceType: 'OperationOutcome',
+            issue: [{ diagnostics: 'ValueSet not found: http://snomed.info/sct?fhir_vs=ecl/<< 50043002' }],
+          },
+        },
+        { status: 200, body: MOCK_EXPAND_RESPONSE },
+      ]);
+
+      const result = await svc.evaluateEcl('<< 50043002 AND << 19829001', 5);
+
+      assert.strictEqual(result.total, 2);
+      assert.strictEqual(mock.requests.length, 2, 'Should retry once with POST');
+      assert.strictEqual(mock.requests[0].method, 'GET');
+      assert.strictEqual(mock.requests[1].method, 'POST');
+      assert.ok(
+        mock.requests[1].url.startsWith('/ValueSet/$expand?count=5'),
+        `POST fallback should target ValueSet/$expand with count: ${mock.requests[1].url}`,
+      );
+      const postBody = JSON.parse(mock.requests[1].body ?? '{}');
+      assert.strictEqual(postBody.resourceType, 'ValueSet');
+      assert.strictEqual(postBody.compose.include[0].system, 'http://snomed.info/sct');
+      assert.deepStrictEqual(postBody.compose.include[0].filter, [
+        { property: 'constraint', op: '=', value: '<< 50043002 AND << 19829001' },
+      ]);
+    });
+
+    it('should retry POST expand with expression filter when constraint filter is unsupported', async () => {
+      const svc = new FhirTerminologyService({ baseUrl, timeout: 2000 });
+      mock.setResponses([
+        {
+          status: 404,
+          body: {
+            resourceType: 'OperationOutcome',
+            issue: [{ diagnostics: 'ValueSet not found: http://snomed.info/sct?fhir_vs=ecl/<< 50043002' }],
+          },
+        },
+        {
+          status: 400,
+          body: {
+            resourceType: 'OperationOutcome',
+            issue: [{ diagnostics: 'Unknown filter property constraint' }],
+          },
+        },
+        { status: 200, body: MOCK_EXPAND_RESPONSE },
+      ]);
+
+      const result = await svc.evaluateEcl('<< 50043002');
+
+      assert.strictEqual(result.total, 2);
+      assert.strictEqual(mock.requests.length, 3, 'Should attempt implicit GET and two POST retries');
+      const firstPostBody = JSON.parse(mock.requests[1].body ?? '{}');
+      const secondPostBody = JSON.parse(mock.requests[2].body ?? '{}');
+      assert.strictEqual(firstPostBody.compose.include[0].filter[0].property, 'constraint');
+      assert.strictEqual(secondPostBody.compose.include[0].filter[0].property, 'expression');
+    });
+
+    it('should include configured version in POST ValueSet fallback body', async () => {
+      const version = 'http://snomed.info/sct/32506021000036107/version/20260131';
+      const svc = new FhirTerminologyService({ baseUrl, timeout: 2000, snomedVersion: version });
+      mock.setResponses([
+        {
+          status: 404,
+          body: {
+            resourceType: 'OperationOutcome',
+            issue: [{ diagnostics: 'ValueSet not found: http://snomed.info/sct?fhir_vs=ecl/<< 50043002' }],
+          },
+        },
+        { status: 200, body: MOCK_EXPAND_RESPONSE },
+      ]);
+
+      await svc.evaluateEcl('<< 50043002');
+
+      const postBody = JSON.parse(mock.requests[1].body ?? '{}');
+      assert.strictEqual(postBody.compose.include[0].version, version);
+    });
+
+    it('should support forcing POST ValueSet strategy', async () => {
+      const svc = new FhirTerminologyService({
+        baseUrl,
+        timeout: 2000,
+        eclEvaluationStrategy: 'post-valueset-filter',
+      });
+      mock.setResponse(200, MOCK_EXPAND_RESPONSE);
+
+      await svc.evaluateEcl('<< 50043002');
+
+      assert.strictEqual(mock.requests.length, 1);
+      assert.strictEqual(mock.requests[0].method, 'POST');
+    });
+
+    it('should support forcing implicit URL strategy without fallback retries', async () => {
+      const svc = new FhirTerminologyService({
+        baseUrl,
+        timeout: 2000,
+        eclEvaluationStrategy: 'implicit-url',
+      });
+      mock.setResponses([
+        {
+          status: 404,
+          body: {
+            resourceType: 'OperationOutcome',
+            issue: [{ diagnostics: 'ValueSet not found: http://snomed.info/sct?fhir_vs=ecl/<< 50043002' }],
+          },
+        },
+        { status: 200, body: MOCK_EXPAND_RESPONSE },
+      ]);
+
+      await assert.rejects(() => svc.evaluateEcl('<< 50043002'), /FHIR evaluation failed/);
+      assert.strictEqual(mock.requests.length, 1, 'Should not retry with POST when implicit-url is forced');
+      assert.strictEqual(mock.requests[0].method, 'GET');
     });
   });
 

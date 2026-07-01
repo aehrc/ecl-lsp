@@ -95,6 +95,7 @@ export interface FhirTerminologyServiceOptions {
   timeout?: number;
   userAgent?: string;
   snomedVersion?: string;
+  eclEvaluationStrategy?: 'implicit-url' | 'post-valueset-filter' | 'auto';
   onResolvedVersion?: (versionUri: string) => void;
 }
 
@@ -120,6 +121,7 @@ export class FhirTerminologyService implements ITerminologyService {
   private readonly searchTimeout: number;
   private readonly searchCacheTTL: number; // milliseconds
   private readonly snomedVersion: string | undefined;
+  private readonly eclEvaluationStrategy: 'implicit-url' | 'post-valueset-filter' | 'auto';
   private readonly onResolvedVersion: ((versionUri: string) => void) | undefined;
   private resolvedVersion: string | null = null;
 
@@ -131,6 +133,7 @@ export class FhirTerminologyService implements ITerminologyService {
     this.searchTimeout = 5000; // 5 seconds for search queries
     this.searchCacheTTL = 5 * 60 * 1000; // 5 minutes
     this.snomedVersion = options.snomedVersion?.trim() ? options.snomedVersion.trim() : undefined;
+    this.eclEvaluationStrategy = options.eclEvaluationStrategy ?? 'auto';
     this.onResolvedVersion = options.onResolvedVersion;
   }
 
@@ -585,30 +588,82 @@ export class FhirTerminologyService implements ITerminologyService {
       return { total: 0, concepts: [], truncated: false };
     }
 
-    const implicitVsUrl = `${this.snomedSystemUrl}?fhir_vs=ecl/${expression.trim()}`;
-    const url = `${this.baseUrl}/ValueSet/$expand?url=${encodeURIComponent(implicitVsUrl)}&count=${limit}`;
+    const trimmedExpression = expression.trim();
 
-    const response = await this.fetchWithTimeout(url, this.evaluationTimeout);
-
-    if (!response.ok) {
-      const data = (await response.json().catch(() => null)) as FhirOperationOutcomeResponse | null;
-      const issue = data?.issue?.[0]?.diagnostics ?? data?.issue?.[0]?.details?.text ?? `HTTP ${response.status}`;
-
-      // Clean up FHIR OperationOutcome messages: strip server UUIDs and add context
-      // when filter syntax is rejected by the server's ECL parser
-      if (expression.includes('{{') && /no viable alternative/i.test(issue)) {
-        // Strip UUID prefix like "[d4ac2525-...]: "
-        const cleaned = issue.replace(/^\[[0-9a-f-]+\]:\s*/i, '');
-        throw new Error(
-          `FHIR evaluation failed: ${cleaned}\n` +
-            'Note: Some ECL 2.2 filter syntax (e.g. {{ D id = ... }}) may not be supported by this terminology server.',
-        );
-      }
-
-      throw new Error(`FHIR evaluation failed: ${issue}`);
+    if (this.eclEvaluationStrategy === 'post-valueset-filter') {
+      return await this.evaluateEclViaPostExpand(trimmedExpression, limit);
     }
 
-    const data = (await response.json()) as FhirValueSetResponse;
+    const implicitResponse = await this.evaluateEclViaImplicitUrl(trimmedExpression, limit);
+    if (implicitResponse.ok) {
+      const data = (await implicitResponse.json()) as FhirValueSetResponse;
+      return this.parseEvaluationResponse(data);
+    }
+
+    const implicitIssue = await this.extractOperationOutcomeIssue(implicitResponse);
+    if (
+      this.eclEvaluationStrategy === 'auto' &&
+      this.shouldFallbackToPostExpand(implicitResponse.status, implicitIssue)
+    ) {
+      return await this.evaluateEclViaPostExpand(trimmedExpression, limit);
+    }
+
+    throw this.createEvaluationError(trimmedExpression, implicitIssue);
+  }
+
+  private async evaluateEclViaImplicitUrl(expression: string, limit: number): Promise<Response> {
+    const implicitVsUrl = `${this.snomedSystemUrl}?fhir_vs=ecl/${expression}`;
+    const url = `${this.baseUrl}/ValueSet/$expand?url=${encodeURIComponent(implicitVsUrl)}&count=${limit}`;
+    return await this.fetchWithTimeout(url, this.evaluationTimeout);
+  }
+
+  private async evaluateEclViaPostExpand(expression: string, limit: number): Promise<EvaluationResponse> {
+    const constraintResponse = await this.postValueSetExpand(expression, limit, 'constraint');
+    if (constraintResponse.ok) {
+      const data = (await constraintResponse.json()) as FhirValueSetResponse;
+      return this.parseEvaluationResponse(data);
+    }
+
+    const constraintIssue = await this.extractOperationOutcomeIssue(constraintResponse);
+    if (this.shouldRetryPostExpandWithExpression(constraintResponse.status, constraintIssue)) {
+      const expressionResponse = await this.postValueSetExpand(expression, limit, 'expression');
+      if (expressionResponse.ok) {
+        const data = (await expressionResponse.json()) as FhirValueSetResponse;
+        return this.parseEvaluationResponse(data);
+      }
+      const expressionIssue = await this.extractOperationOutcomeIssue(expressionResponse);
+      throw this.createEvaluationError(expression, expressionIssue);
+    }
+
+    throw this.createEvaluationError(expression, constraintIssue);
+  }
+
+  private async postValueSetExpand(
+    expression: string,
+    limit: number,
+    property: 'constraint' | 'expression',
+  ): Promise<Response> {
+    const include: Record<string, unknown> = {
+      system: 'http://snomed.info/sct', // eslint-disable-line sonarjs/no-clear-text-protocols -- FHIR system URI, not a network URL
+      filter: [{ property, op: '=', value: expression }],
+    };
+    if (this.snomedVersion) {
+      include.version = this.snomedVersion;
+    }
+    const valueSet = {
+      resourceType: 'ValueSet',
+      compose: { include: [include] },
+    };
+
+    const url = `${this.baseUrl}/ValueSet/$expand?count=${limit}`;
+    return await this.fetchWithTimeout(url, this.evaluationTimeout, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/fhir+json', Accept: 'application/fhir+json' },
+      body: JSON.stringify(valueSet),
+    });
+  }
+
+  private parseEvaluationResponse(data: FhirValueSetResponse): EvaluationResponse {
     const expansion = data.expansion ?? {};
     this.captureResolvedVersion(expansion.parameter);
     const total = typeof expansion.total === 'number' ? expansion.total : 0;
@@ -619,11 +674,44 @@ export class FhirTerminologyService implements ITerminologyService {
       display: item.display ?? '',
     }));
 
-    return {
-      total,
-      concepts,
-      truncated: total > concepts.length,
-    };
+    return { total, concepts, truncated: total > concepts.length };
+  }
+
+  private async extractOperationOutcomeIssue(response: Response): Promise<string> {
+    const data = (await response.json().catch(() => null)) as FhirOperationOutcomeResponse | null;
+    return data?.issue?.[0]?.diagnostics ?? data?.issue?.[0]?.details?.text ?? `HTTP ${response.status}`;
+  }
+
+  private shouldFallbackToPostExpand(status: number, issue: string): boolean {
+    return (
+      status === 404 ||
+      status === 414 ||
+      /value\s*set\s*not\s*found/i.test(issue) ||
+      /fhir_vs=ecl/i.test(issue) ||
+      /(?:implicit.*valueset.*not\s*supported|not\s*supported.*implicit.*valueset)/i.test(issue)
+    );
+  }
+
+  private shouldRetryPostExpandWithExpression(status: number, issue: string): boolean {
+    return (
+      status === 400 &&
+      ((/unknown|unsupported|invalid/i.test(issue) && /constraint/i.test(issue)) ||
+        /(?:\bfilter\s+property\b|\bproperty\b.*\bfilter\b)/i.test(issue))
+    );
+  }
+
+  private createEvaluationError(expression: string, issue: string): Error {
+    // Clean up FHIR OperationOutcome messages: strip server UUIDs and add context
+    // when filter syntax is rejected by the server's ECL parser
+    if (expression.includes('{{') && /no viable alternative/i.test(issue)) {
+      // Strip UUID prefix like "[d4ac2525-...]: "
+      const cleaned = issue.replace(/^\[[0-9a-f-]+\]:\s*/i, '');
+      return new Error(
+        `FHIR evaluation failed: ${cleaned}\n` +
+          'Note: Some ECL 2.2 filter syntax (e.g. {{ D id = ... }}) may not be supported by this terminology server.',
+      );
+    }
+    return new Error(`FHIR evaluation failed: ${issue}`);
   }
 
   private async searchByFilter(filter: string): Promise<SearchResponse> {

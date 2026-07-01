@@ -152,9 +152,7 @@ async function getFormattingOptions(conn: Connection): Promise<FormattingOptions
   }
 
   // Fall back to initializationOptions
-  if (!config && cachedInitOptions.formatting && typeof cachedInitOptions.formatting === 'object') {
-    config = cachedInitOptions.formatting as Record<string, unknown>;
-  }
+  config ??= asRecord(cachedInitOptions.formatting) ?? getInitializationSection('ecl.formatting') ?? null;
 
   if (!config) return defaultFormattingOptions;
 
@@ -199,6 +197,49 @@ let snomedEditionLabel = 'server default';
 let cachedInitOptions: Record<string, unknown> = {};
 let clientSupportsCodeLensRefresh = false;
 let clientUserAgent: string | undefined;
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object' ? (value as Record<string, unknown>) : undefined;
+}
+
+function getInitializationSection(section: `ecl.${string}`): Record<string, unknown> | undefined {
+  const direct = asRecord(cachedInitOptions[section]);
+  if (direct) return direct;
+
+  const shortSection = section.slice('ecl.'.length);
+  const eclRoot = asRecord(cachedInitOptions.ecl);
+  const nested = asRecord(eclRoot?.[shortSection]);
+  if (nested) return nested;
+
+  const settingsRoot = asRecord(cachedInitOptions.settings);
+  if (!settingsRoot) return undefined;
+
+  const settingsDirect = asRecord(settingsRoot[section]);
+  if (settingsDirect) return settingsDirect;
+
+  const settingsEclRoot = asRecord(settingsRoot.ecl);
+  return asRecord(settingsEclRoot?.[shortSection]);
+}
+
+function getInitializationTerminologyConfig(): { serverUrl?: string; timeout?: number; snomedVersion?: string } {
+  const sectionConfig = getInitializationSection('ecl.terminology');
+  if (!sectionConfig) {
+    return extractTerminologyConfig(cachedInitOptions);
+  }
+  // Merge section config over top-level keys so both styles can be mixed.
+  return extractTerminologyConfig({ ...cachedInitOptions, ...sectionConfig });
+}
+
+function getInitializationSemanticValidationEnabled(): boolean {
+  const sectionConfig = getInitializationSection('ecl.semanticValidation');
+  if (sectionConfig) {
+    return sectionConfig.enabled !== false;
+  }
+  const raw = cachedInitOptions.semanticValidation;
+  if (typeof raw === 'boolean') return raw;
+  if (raw && typeof raw === 'object') return (raw as Record<string, unknown>).enabled !== false;
+  return true;
+}
 
 /**
  * Extract terminology config from a source object, handling both VSCode-style
@@ -252,13 +293,13 @@ async function initTerminologyService(): Promise<void> {
       applyTerminologyConfig(cfg);
     } else {
       // Fall back to initializationOptions (Eclipse and other clients)
-      const initCfg = extractTerminologyConfig(cachedInitOptions);
+      const initCfg = getInitializationTerminologyConfig();
       applyTerminologyConfig(initCfg);
     }
   } catch {
     // workspace.getConfiguration not supported — use initializationOptions
     connection.console.log('workspace.getConfiguration not available, using initializationOptions');
-    const initCfg = extractTerminologyConfig(cachedInitOptions);
+    const initCfg = getInitializationTerminologyConfig();
     applyTerminologyConfig(initCfg);
   }
 
@@ -270,13 +311,13 @@ async function initTerminologyService(): Promise<void> {
     const scObj = semanticConfig as Record<string, unknown> | null;
     if (scObj?.enabled === undefined) {
       // Fall back to initializationOptions
-      semanticValidationEnabled = cachedInitOptions.semanticValidation !== false;
+      semanticValidationEnabled = getInitializationSemanticValidationEnabled();
     } else {
       semanticValidationEnabled = scObj.enabled !== false;
     }
     connection.console.log(`Semantic validation: ${semanticValidationEnabled ? 'enabled' : 'disabled'}`);
   } catch {
-    semanticValidationEnabled = cachedInitOptions.semanticValidation !== false;
+    semanticValidationEnabled = getInitializationSemanticValidationEnabled();
   }
 }
 

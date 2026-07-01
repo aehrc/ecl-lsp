@@ -40,7 +40,10 @@ const DEFAULT_SETTINGS = {
 
 // ── Server lifecycle helpers ────────────────────────────────────────────
 
-function startServer(): { process: ChildProcess; connection: MessageConnection } {
+function startServer(workspaceSettings: Record<string, unknown> = DEFAULT_SETTINGS): {
+  process: ChildProcess;
+  connection: MessageConnection;
+} {
   const serverPath = path.resolve(__dirname, '..', 'server.js');
   // eslint-disable-next-line sonarjs/no-os-command-from-path -- node is required from PATH for spawning the LSP server process
   const proc = spawn('node', [serverPath, '--stdio'], {
@@ -55,7 +58,7 @@ function startServer(): { process: ChildProcess; connection: MessageConnection }
   connection.onRequest('workspace/configuration', (params: { items: { section?: string }[] }) => {
     return params.items.map((item) => {
       const section = item.section ?? '';
-      return (DEFAULT_SETTINGS as Record<string, unknown>)[section] ?? {};
+      return workspaceSettings[section] ?? {};
     });
   });
 
@@ -83,6 +86,26 @@ async function initializeServer(connection: MessageConnection): Promise<void> {
   });
   await connection.sendNotification('initialized', {});
   // Give the server time to process initialization (workspace/configuration requests)
+  await new Promise((resolve) => setTimeout(resolve, 500));
+}
+
+async function initializeServerWithOptions(
+  connection: MessageConnection,
+  initializationOptions: Record<string, unknown>,
+): Promise<void> {
+  await connection.sendRequest('initialize', {
+    processId: process.pid,
+    rootPath: null,
+    rootUri: null,
+    initializationOptions,
+    capabilities: {
+      textDocument: {
+        formatting: {},
+      },
+      workspace: { configuration: false },
+    },
+  });
+  await connection.sendNotification('initialized', {});
   await new Promise((resolve) => setTimeout(resolve, 500));
 }
 
@@ -264,6 +287,32 @@ describe('LSP Protocol Integration', () => {
       assert.ok(edits.length > 0, 'should return formatting edits');
       // The formatted text should have proper spacing
       assert.ok(edits[0].newText.includes('<< 404684003'), 'formatted text should have space after operator');
+    });
+
+    it('should read wrapped initializationOptions formatting config when workspace config is unavailable', async () => {
+      const { process: proc, connection } = startServer({});
+      try {
+        await initializeServerWithOptions(connection, {
+          settings: {
+            ecl: {
+              formatting: {
+                spaceAroundOperators: false,
+              },
+            },
+          },
+        });
+        await openDocument(connection, 'file:///test-init-options-format.ecl', '< 404684003 AND < 123037004');
+        const result = await connection.sendRequest('textDocument/formatting', {
+          textDocument: { uri: 'file:///test-init-options-format.ecl' },
+          options: { tabSize: 2, insertSpaces: true },
+        });
+        const edits = result as { range: unknown; newText: string }[];
+        assert.ok(edits.length > 0, 'should return formatting edits');
+        assert.ok(!edits[0].newText.includes(' AND '), 'formatted text should apply initializationOptions formatting');
+      } finally {
+        connection.dispose();
+        proc.kill('SIGTERM');
+      }
     });
   });
 

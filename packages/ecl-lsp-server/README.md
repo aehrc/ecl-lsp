@@ -38,6 +38,26 @@ The server communicates over stdio using the LSP protocol. Connect it to any LSP
 
 The server reads settings from `workspace/configuration` requests under the `ecl` namespace.
 
+### Where settings can be supplied (and trade-offs)
+
+The same parameter can be provided through different client integration points:
+
+1. **Workspace settings** (preferred)  
+   Example: `ecl.terminology.snomedVersion` in VSCode settings, IntelliJ plugin settings, Eclipse preferences.  
+   **Trade-off:** best for interactive use because changes can be pushed at runtime (`workspace/didChangeConfiguration`) without restarting the server.
+
+2. **Initialization options — ECL section shape**  
+   Examples:
+   - `initializationOptions.settings.ecl.terminology.snomedVersion`
+   - `initializationOptions["ecl.terminology"].snomedVersion`
+     **Trade-off:** useful for wrappers that construct settings once at startup; generally requires reconnect/restart to apply changes.
+
+3. **Initialization options — flat compatibility shape**  
+   Example: `initializationOptions.snomedVersion` (and `fhirTerminologyServerUrl`, `timeout`) used by some clients.  
+   **Trade-off:** simplest for minimal clients and legacy integrations, but less self-describing and harder to extend than sectioned `ecl.*` config.
+
+When both workspace settings and initialization options are present, **workspace settings win**.
+
 ### Terminology
 
 | Setting                         | Default                               | Description                   |

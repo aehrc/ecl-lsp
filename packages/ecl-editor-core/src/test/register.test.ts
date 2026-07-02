@@ -151,7 +151,7 @@ describe('registerEclLanguage() updateConfig() — partial config merging regres
     disposable.dispose();
   });
 
-  it('should propagate the full merged config (not the raw partial) to existing diagnostics adapters', () => {
+  it('should propagate the raw partial (not the merged config) to existing diagnostics adapters (issue #59 final review, Finding 2)', () => {
     const model = toEclModel('< 404684003');
     const { monaco } = createMockMonacoModule([model]);
     const disposable = registerEclLanguage(monaco, {
@@ -163,9 +163,10 @@ describe('registerEclLanguage() updateConfig() — partial config merging regres
     expect(mockedAdapterCtor).toHaveBeenCalledTimes(1);
     const adapterInstance = mockedAdapterCtor.mock.results[0].value as { updateConfig: ReturnType<typeof vi.fn> };
 
-    // A raw partial `{ evaluateEcl }` forwarded as-is would leave the adapter's engine unable
-    // to tell that fhirServerUrl is still meant to be set — asserting the forwarded object
-    // carries it proves the merged currentConfig (not the raw partial) was forwarded.
+    // DiagnosticsEngine.updateConfig now does its own internal merge against its own stored
+    // effective config (see diagnostics-engine.test.ts), so register.ts only needs to forward
+    // the raw partial that was actually passed to this call — NOT the full merged
+    // `currentConfig` — and the engine keeps its terminology service alive via its own merge.
     disposable.updateConfig({ evaluateEcl: 'implicit-url' });
 
     expect(adapterInstance.updateConfig).toHaveBeenCalledTimes(1);
@@ -173,8 +174,61 @@ describe('registerEclLanguage() updateConfig() — partial config merging regres
       fhirServerUrl?: string;
       evaluateEcl?: string;
     };
-    expect(forwarded.fhirServerUrl).toBe('https://tx.example.com/fhir');
+    // The raw partial only ever contained `evaluateEcl` — forwarding the merged config would
+    // have also carried the registration-time fhirServerUrl along.
+    expect(forwarded.fhirServerUrl).toBeUndefined();
     expect(forwarded.evaluateEcl).toBe('implicit-url');
+
+    disposable.dispose();
+  });
+
+  it('should not forward an unrelated registration-time fhirServerUrl (or terminologyService) on a semanticDebounceMs-only update (issue #59 final review, Finding 2)', () => {
+    const model = toEclModel('< 404684003');
+    const { monaco } = createMockMonacoModule([model]);
+    const customService = { evaluateEcl: vi.fn() };
+    const disposable = registerEclLanguage(monaco, {
+      fhirServerUrl: 'https://tx.example.com/fhir',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- minimal stub, only identity matters for this test
+      terminologyService: customService as any,
+      semanticValidation: false,
+    });
+
+    const mockedAdapterCtor = vi.mocked(MonacoDiagnosticsAdapter);
+    const adapterInstance = mockedAdapterCtor.mock.results[0].value as { updateConfig: ReturnType<typeof vi.fn> };
+
+    // An update that touches only semanticDebounceMs must forward ONLY that key — forwarding
+    // the merged config would carry the registration-time fhirServerUrl/terminologyService
+    // along on every update, making DiagnosticsEngine.updateConfig think a rebuild is needed
+    // (discarding caches and any evaluation-strategy memoization) even though nothing relevant
+    // changed.
+    disposable.updateConfig({ semanticDebounceMs: 200 });
+
+    expect(adapterInstance.updateConfig).toHaveBeenCalledTimes(1);
+    const forwarded = adapterInstance.updateConfig.mock.calls[0][0] as Record<string, unknown>;
+    expect(forwarded).toEqual({ semanticDebounceMs: 200 });
+    expect(forwarded.fhirServerUrl).toBeUndefined();
+    expect(forwarded.terminologyService).toBeUndefined();
+
+    disposable.dispose();
+  });
+
+  it('should not forward unrelated keys on a formattingOptions-only update (issue #59 final review, Finding 2)', () => {
+    const model = toEclModel('< 404684003');
+    const { monaco } = createMockMonacoModule([model]);
+    const disposable = registerEclLanguage(monaco, {
+      fhirServerUrl: 'https://tx.example.com/fhir',
+      semanticValidation: false,
+    });
+
+    const mockedAdapterCtor = vi.mocked(MonacoDiagnosticsAdapter);
+    const adapterInstance = mockedAdapterCtor.mock.results[0].value as { updateConfig: ReturnType<typeof vi.fn> };
+
+    disposable.updateConfig({ formattingOptions: { maxLineLength: 80 } });
+
+    expect(adapterInstance.updateConfig).toHaveBeenCalledTimes(1);
+    const forwarded = adapterInstance.updateConfig.mock.calls[0][0] as Record<string, unknown>;
+    expect(forwarded).toEqual({ formattingOptions: { maxLineLength: 80 } });
+    expect(forwarded.fhirServerUrl).toBeUndefined();
 
     disposable.dispose();
   });

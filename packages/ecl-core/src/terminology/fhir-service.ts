@@ -134,7 +134,14 @@ export class FhirTerminologyService implements ITerminologyService {
   private resolvedVersion: string | null = null;
   /** Filter property that worked last time a POST ValueSet/$expand was used; skips the retry once known. */
   private postFilterProperty: 'constraint' | 'expression' | null = null;
-  /** Strategy that worked last time in 'auto' mode; skips straight to it on subsequent calls. */
+  /**
+   * Strategy that worked last time in 'auto' mode. When 'post-valueset-filter', subsequent
+   * calls skip straight to POST (the implicit GET is assumed permanently unavailable). When
+   * 'implicit-url', it is only a fast-path hint — the implicit GET is still attempted first,
+   * and a per-request failure still gets a chance to fall back to POST (see `evaluateEcl` and
+   * `searchByFilter`), since GET failures like HTTP 414 can be a property of the expression
+   * rather than of server support.
+   */
   private resolvedEvaluationStrategy: 'implicit-url' | 'post-valueset-filter' | null = null;
 
   constructor(options: FhirTerminologyServiceOptions = {}) {
@@ -624,10 +631,11 @@ export class FhirTerminologyService implements ITerminologyService {
       return await this.evaluateEclViaPostExpand(trimmedExpression, limit, deadline);
     }
 
-    // Forced implicit-url strategy, or a strategy already resolved (in 'auto' mode) to
-    // implicit-url: go straight to the implicit GET with no fallback attempt.
-    if (this.eclEvaluationStrategy === 'implicit-url' || this.resolvedEvaluationStrategy === 'implicit-url') {
-      const timeoutMs = this.remainingTimeoutOrThrow(deadline);
+    // Forced implicit-url strategy: go straight to the implicit GET with no fallback attempt.
+    // (A memoized `resolvedEvaluationStrategy === 'implicit-url'` in 'auto' mode is deliberately
+    // NOT treated the same way here — see the 'auto' mode handling below.)
+    if (this.eclEvaluationStrategy === 'implicit-url') {
+      const timeoutMs = this.remainingTimeoutOrThrowWrapped(deadline, trimmedExpression);
       const response = await this.evaluateEclViaImplicitUrl(trimmedExpression, limit, timeoutMs);
       if (response.ok) {
         this.resolvedEvaluationStrategy = 'implicit-url';
@@ -643,9 +651,11 @@ export class FhirTerminologyService implements ITerminologyService {
       return await this.evaluateEclViaPostExpand(trimmedExpression, limit, deadline);
     }
 
-    // 'auto' mode, strategy not yet resolved: try implicit GET, fall back to POST on a
-    // narrow set of "implicit ValueSet unsupported" signals.
-    const timeoutMs = this.remainingTimeoutOrThrow(deadline);
+    // 'auto' mode: try implicit GET, whether or not 'implicit-url' was memoized by an earlier
+    // call — that memoization is a fast-path hint, not a lock. A per-request implicit-GET
+    // failure (e.g. HTTP 414 URI-too-long) is a property of THIS expression, not evidence the
+    // server can never do implicit GETs, so it must still get a chance to fall back to POST.
+    const timeoutMs = this.remainingTimeoutOrThrowWrapped(deadline, trimmedExpression);
     const implicitResponse = await this.evaluateEclViaImplicitUrl(trimmedExpression, limit, timeoutMs);
     if (implicitResponse.ok) {
       this.resolvedEvaluationStrategy = 'implicit-url';
@@ -673,13 +683,32 @@ export class FhirTerminologyService implements ITerminologyService {
     }
   }
 
-  /** Throws the shared evaluation-timeout error if the deadline has already passed; otherwise returns the remaining ms. */
+  /**
+   * Throws the shared evaluation-timeout issue if the deadline has already passed; otherwise
+   * returns the remaining ms. Throws the bare issue text (not yet wrapped by
+   * {@link createEvaluationError}) — every call site is inside a path that wraps it exactly
+   * once, either directly (see {@link remainingTimeoutOrThrowWrapped}) or via an enclosing
+   * try/catch that calls `createEvaluationError`.
+   */
   private remainingTimeoutOrThrow(deadline: number): number {
     const remaining = deadline - Date.now();
     if (remaining <= 0) {
-      throw new Error('FHIR evaluation failed: evaluation timed out');
+      throw new Error('evaluation timed out');
     }
     return remaining;
+  }
+
+  /**
+   * {@link remainingTimeoutOrThrow}, wrapped with {@link createEvaluationError} for call sites
+   * that aren't already inside an enclosing try/catch that does so — otherwise the timeout
+   * issue would propagate with no "FHIR evaluation failed:" prefix at all.
+   */
+  private remainingTimeoutOrThrowWrapped(deadline: number, expression: string): number {
+    try {
+      return this.remainingTimeoutOrThrow(deadline);
+    } catch (error) {
+      throw this.createEvaluationError(expression, error instanceof Error ? error.message : String(error));
+    }
   }
 
   private async evaluateEclViaImplicitUrl(expression: string, limit: number, timeoutMs: number): Promise<Response> {
@@ -838,7 +867,9 @@ export class FhirTerminologyService implements ITerminologyService {
       return await this.searchByFilterViaPostExpand(filter);
     }
 
-    if (this.eclEvaluationStrategy === 'implicit-url' || this.resolvedEvaluationStrategy === 'implicit-url') {
+    // Forced implicit-url strategy: go straight to GET with no fallback attempt. (A memoized
+    // 'implicit-url' in 'auto' mode is deliberately NOT treated the same way — see below.)
+    if (this.eclEvaluationStrategy === 'implicit-url') {
       const response = await this.searchByFilterViaImplicitUrl(filter);
       if (!response.ok) {
         throw new Error(`FHIR request failed: ${response.status}`);
@@ -847,8 +878,11 @@ export class FhirTerminologyService implements ITerminologyService {
       return this.parseSearchResponse((await response.json()) as FhirValueSetResponse);
     }
 
-    // 'auto' mode, strategy not yet resolved: try implicit GET, fall back to POST on the same
-    // narrow signals evaluateEcl uses.
+    // 'auto' mode: try implicit GET, whether or not 'implicit-url' was memoized by an earlier
+    // call (that memoization is a fast-path hint, not a lock — see evaluateEcl for why, and
+    // note this GET uses a different `?fhir_vs&filter=` form than evaluateEcl's `?fhir_vs=ecl/…`,
+    // so a memoization from one must not lock the other out of its own fallback). Fall back to
+    // POST on the same narrow signals evaluateEcl uses.
     const implicitResponse = await this.searchByFilterViaImplicitUrl(filter);
     if (implicitResponse.ok) {
       this.resolvedEvaluationStrategy = 'implicit-url';
@@ -857,7 +891,8 @@ export class FhirTerminologyService implements ITerminologyService {
 
     const issue = await this.extractOperationOutcomeIssue(implicitResponse);
     if (!this.shouldFallbackToPostExpand(implicitResponse.status, issue)) {
-      throw new Error(`FHIR request failed: ${implicitResponse.status}`);
+      const suffix = issue ? ` - ${issue}` : '';
+      throw new Error(`FHIR request failed: ${implicitResponse.status}${suffix}`);
     }
 
     const result = await this.searchByFilterViaPostExpand(filter);

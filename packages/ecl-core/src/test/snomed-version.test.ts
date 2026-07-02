@@ -932,6 +932,96 @@ describe('FhirTerminologyService — evaluateEcl strategy heuristics & memoizati
     assert.strictEqual(mock.requests[1].method, 'GET');
   });
 
+  it('does not let a memoized implicit-url success lock out POST fallback on a later per-request failure (issue #59 final review, Finding 1)', async () => {
+    const svc = new FhirTerminologyService({ baseUrl, timeout: 2000 });
+
+    // First call: implicit GET succeeds, memoizing 'implicit-url'.
+    mock.setResponse(200, MOCK_EXPAND_RESPONSE);
+    await svc.evaluateEcl('<< 404684003');
+    assert.strictEqual(mock.requests.length, 1);
+    assert.strictEqual(mock.requests[0].method, 'GET');
+
+    // Second call: a longer expression trips a 414 (URI too long) — a property of THIS
+    // expression, not evidence the server can't do implicit GETs at all. Must still fall back
+    // to POST rather than throwing straight away.
+    mock.setResponses([
+      {
+        status: 414,
+        body: {
+          resourceType: 'OperationOutcome',
+          issue: [{ diagnostics: 'URI Too Long' }],
+        },
+      },
+      { status: 200, body: MOCK_EXPAND_RESPONSE },
+    ]);
+
+    const result = await svc.evaluateEcl('<< 50043002 AND << 19829001 MINUS << 404684003');
+
+    assert.strictEqual(mock.requests.length, 3, 'second call: implicit GET (414) then POST fallback');
+    assert.strictEqual(mock.requests[1].method, 'GET');
+    assert.strictEqual(mock.requests[2].method, 'POST');
+    assert.strictEqual(result.total, 2);
+  });
+
+  it('does not let a memoized implicit-url success lock out POST fallback on a later per-request 404 (issue #59 final review, Finding 1)', async () => {
+    const svc = new FhirTerminologyService({ baseUrl, timeout: 2000 });
+
+    mock.setResponse(200, MOCK_EXPAND_RESPONSE);
+    await svc.evaluateEcl('<< 404684003');
+    assert.strictEqual(mock.requests.length, 1);
+
+    mock.setResponses([NOT_FOUND_ISSUE, { status: 200, body: MOCK_EXPAND_RESPONSE }]);
+
+    const result = await svc.evaluateEcl('<< 50043002');
+
+    assert.strictEqual(mock.requests.length, 3, 'second call: implicit GET (404) then POST fallback');
+    assert.strictEqual(mock.requests[1].method, 'GET');
+    assert.strictEqual(mock.requests[2].method, 'POST');
+    assert.strictEqual(result.total, 2);
+  });
+
+  it('forced implicit-url strategy still throws with no fallback even after a prior successful call (issue #59 final review, Finding 1)', async () => {
+    const svc = new FhirTerminologyService({
+      baseUrl,
+      timeout: 2000,
+      eclEvaluationStrategy: 'implicit-url',
+    });
+
+    mock.setResponse(200, MOCK_EXPAND_RESPONSE);
+    await svc.evaluateEcl('<< 404684003');
+    assert.strictEqual(mock.requests.length, 1);
+
+    mock.setResponse(414, {
+      resourceType: 'OperationOutcome',
+      issue: [{ diagnostics: 'URI Too Long' }],
+    });
+
+    await assert.rejects(() => svc.evaluateEcl('<< 50043002 AND << 19829001'), /FHIR evaluation failed/);
+    assert.strictEqual(mock.requests.length, 2, 'forced strategy must not attempt a POST fallback');
+    assert.strictEqual(mock.requests[1].method, 'GET');
+  });
+
+  it('a timed-out evaluation surfaces exactly one "FHIR evaluation failed:" prefix (issue #59 final review, Finding 3)', async () => {
+    const svc = new FhirTerminologyService({ baseUrl, timeout: 2000 });
+    // Force the internal deadline to have already elapsed before evaluateEcl's first
+    // remaining-timeout check runs, without needing to wait out the real 15s evaluation
+    // timeout.
+    (svc as any).evaluationTimeout = -1;
+
+    let caught: Error | null = null;
+    try {
+      await svc.evaluateEcl('<< 404684003');
+    } catch (error) {
+      caught = error as Error;
+    }
+
+    assert.ok(caught, 'evaluateEcl should reject');
+    assert.strictEqual(mock.requests.length, 0, 'no request should be made once the deadline has already passed');
+    const occurrences = caught.message.split('FHIR evaluation failed:').length - 1;
+    assert.strictEqual(occurrences, 1, `message should contain exactly one prefix: ${caught.message}`);
+    assert.match(caught.message, /evaluation timed out/);
+  });
+
   it('memoizes the filter property after constraint→expression retry succeeds: next evaluation POSTs once with expression', async () => {
     const svc = new FhirTerminologyService({
       baseUrl,
@@ -1175,5 +1265,53 @@ describe('FhirTerminologyService — searchByFilter strategy awareness', () => {
       { id: '404684003', fsn: 'Clinical finding', pt: 'Clinical finding' },
       { id: '19829001', fsn: 'Disorder of lung', pt: 'Disorder of lung' },
     ]);
+  });
+
+  it('does not let a memoized implicit-url success lock out POST fallback on a later search failure (issue #59 final review, Finding 1)', async () => {
+    const svc = new FhirTerminologyService({ baseUrl, timeout: 2000 });
+
+    // First search: implicit GET succeeds, memoizing 'implicit-url'.
+    mock.setResponse(200, MOCK_SEARCH_EXPAND_RESPONSE);
+    await svc.searchConcepts('clinical');
+    assert.strictEqual(mock.requests.length, 1);
+    assert.strictEqual(mock.requests[0].method, 'GET');
+
+    // Second search (different, uncached query): implicit GET fails with a 404 that matches
+    // the fallback heuristic — must still fall back to POST, not throw straight away just
+    // because 'implicit-url' was memoized by the first search.
+    mock.setResponses([NOT_FOUND_ISSUE, { status: 200, body: MOCK_SEARCH_EXPAND_RESPONSE }]);
+
+    const result = await svc.searchConcepts('lung disorder');
+
+    assert.strictEqual(mock.requests.length, 3, 'second search: implicit GET (404) then POST fallback');
+    assert.strictEqual(mock.requests[1].method, 'GET');
+    assert.strictEqual(mock.requests[2].method, 'POST');
+    assert.deepStrictEqual(result.results, [
+      { id: '404684003', fsn: 'Clinical finding', pt: 'Clinical finding' },
+      { id: '19829001', fsn: 'Disorder of lung', pt: 'Disorder of lung' },
+    ]);
+  });
+
+  it('includes the extracted OperationOutcome issue text when auto-mode fallback does not fire (issue #59 final review, Finding 4)', async () => {
+    const svc = new FhirTerminologyService({ baseUrl, timeout: 2000 });
+    mock.setResponse(400, {
+      resourceType: 'OperationOutcome',
+      issue: [{ diagnostics: 'Bad request for http://snomed.info/sct?fhir_vs&filter=clinical' }],
+    });
+
+    // `searchConcepts` wraps every error into a generic "Terminology server unavailable"
+    // message, so call the private `searchByFilter` directly to observe the raw thrown message
+    // that Finding 4 is about.
+    let caught: Error | null = null;
+    try {
+      await (svc as any).searchByFilter('clinical');
+    } catch (error) {
+      caught = error as Error;
+    }
+
+    assert.ok(caught, 'searchByFilter should reject');
+    assert.strictEqual(mock.requests.length, 1, 'no POST fallback should be attempted for a genuine 400');
+    assert.match(caught.message, /^FHIR request failed: 400/);
+    assert.match(caught.message, /Bad request for http:\/\/snomed\.info\/sct\?fhir_vs&filter=clinical/);
   });
 });

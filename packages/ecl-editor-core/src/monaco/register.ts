@@ -159,9 +159,18 @@ export function registerEclLanguage(
      * `newConfig` is merged into the mutable `currentConfig` (see {@link mergeEclEditorConfig}):
      * a key applies only when its value is `!== undefined`, so a value cannot be unset by passing
      * `undefined`, and sequential partial updates accumulate rather than reverting fields left
-     * unspecified back to the immutable registration-time config. Adapters receive the full merged
-     * `currentConfig` (not the raw partial) so a later evaluateEcl/snomedVersion-only update still
-     * carries an earlier-set fhirServerUrl.
+     * unspecified back to the immutable registration-time config.
+     *
+     * Adapters receive the raw `newConfig` partial (NOT the merged `currentConfig`) —
+     * `DiagnosticsEngine.updateConfig` does its own internal merge against its own stored
+     * effective config and only rebuilds its terminology service when the raw partial actually
+     * touches a relevant key (`fhirServerUrl` / `snomedVersion` / `evaluateEcl` / `corsProxy` /
+     * `terminologyService`). Forwarding the full merged config instead would make every update
+     * (even an unrelated `semanticDebounceMs`-only or `formattingOptions`-only change) look like
+     * it touches those keys once any of them has ever been set, discarding caches and any
+     * strategy memoization on the terminology service for no reason. It would also cause a
+     * registration-time custom `terminologyService` to ride along — and be reapplied — on every
+     * unrelated forward.
      */
     updateConfig(newConfig: Partial<EclEditorConfig>): void {
       currentConfig = mergeEclEditorConfig(currentConfig, newConfig);
@@ -189,9 +198,10 @@ export function registerEclLanguage(
         }
       }
 
-      // Propagate to diagnostics adapters
+      // Propagate to diagnostics adapters — forward the raw partial, not the merged config
+      // (see the doc comment above for why).
       for (const adapter of diagnosticsAdapters.values()) {
-        adapter.updateConfig(currentConfig);
+        adapter.updateConfig(newConfig);
       }
     },
   };

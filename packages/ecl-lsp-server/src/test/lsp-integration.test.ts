@@ -462,6 +462,43 @@ describe('LSP Protocol Integration', () => {
       });
       assert.ok(result !== null, 'server should still respond after config change');
     });
+
+    it('should merge per-field: workspace-only evaluateEcl combines with initializationOptions server URL/version', async () => {
+      // Workspace config answers with ONLY evaluateEcl (e.g. a client that doesn't
+      // know about serverUrl/snomedVersion settings), while initializationOptions
+      // carries the FHIR server URL and pinned SNOMED version (Eclipse-style flat keys).
+      // Both must be honored — neither should silently fall back to server defaults.
+      const { process: proc, connection } = startServer({
+        'ecl.terminology': { evaluateEcl: 'implicit-url' },
+      });
+      const logMessages: string[] = [];
+      connection.onNotification('window/logMessage', (params: { message: string }) => {
+        logMessages.push(params.message);
+      });
+      try {
+        await initializeServerWithOptions(connection, {
+          fhirTerminologyServerUrl: 'https://example.org/fhir',
+          snomedVersion: 'http://snomed.info/sct/32506021000036107',
+        });
+        const terminologyLog = logMessages.find((message) => message.includes('Terminology server:'));
+        assert.ok(terminologyLog, 'expected a terminology server log message');
+        assert.ok(
+          terminologyLog?.includes('https://example.org/fhir'),
+          'should use initializationOptions server URL, not the default',
+        );
+        assert.ok(
+          terminologyLog?.includes('http://snomed.info/sct/32506021000036107'),
+          'should use initializationOptions SNOMED version, not "server default"',
+        );
+        assert.ok(
+          terminologyLog?.includes('evaluateEcl: implicit-url'),
+          'should use workspace-provided evaluateEcl, not the "auto" default',
+        );
+      } finally {
+        connection.dispose();
+        proc.kill('SIGTERM');
+      }
+    });
   });
 
   // ── Extended: Custom request handlers ─────────────────────────────────

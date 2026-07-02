@@ -309,19 +309,17 @@ async function initTerminologyService(): Promise<void> {
       section: 'ecl.terminology',
     });
     const cfg = extractTerminologyConfig(config as Record<string, unknown>);
-    // If workspace config returned actual values, use them
-    if (
-      cfg.serverUrl !== undefined ||
-      cfg.timeout !== undefined ||
-      cfg.snomedVersion !== undefined ||
-      cfg.evaluateEcl !== undefined
-    ) {
-      applyTerminologyConfig(cfg);
-    } else {
-      // Fall back to initializationOptions (Eclipse and other clients)
-      const initCfg = getInitializationTerminologyConfig();
-      applyTerminologyConfig(initCfg);
-    }
+    // Merge per-field: a workspace value wins when defined, otherwise fall back to
+    // initializationOptions (Eclipse and other clients). This avoids a client that only
+    // answers with a subset of fields (e.g. just evaluateEcl) silently reverting the
+    // other fields to server defaults.
+    const initCfg = getInitializationTerminologyConfig();
+    applyTerminologyConfig({
+      serverUrl: cfg.serverUrl ?? initCfg.serverUrl,
+      timeout: cfg.timeout ?? initCfg.timeout,
+      snomedVersion: cfg.snomedVersion ?? initCfg.snomedVersion,
+      evaluateEcl: cfg.evaluateEcl ?? initCfg.evaluateEcl,
+    });
   } catch {
     // workspace.getConfiguration not supported — use initializationOptions
     connection.console.log('workspace.getConfiguration not available, using initializationOptions');

@@ -31,8 +31,8 @@ export {
 } from './parser/position-detector';
 
 // Terminology
-export { FhirTerminologyService } from './terminology/fhir-service';
-export type { FhirTerminologyServiceOptions } from './terminology/fhir-service';
+export { FhirTerminologyService, isEclEvaluationStrategy } from './terminology/fhir-service';
+export type { FhirTerminologyServiceOptions, EclEvaluationStrategy } from './terminology/fhir-service';
 export type {
   ITerminologyService,
   ConceptInfo,

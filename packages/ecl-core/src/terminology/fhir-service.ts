@@ -90,12 +90,20 @@ interface CacheEntry<T> {
   timestamp: number;
 }
 
+/** Strategy used by {@link FhirTerminologyService.evaluateEcl} to evaluate ECL expressions. */
+export type EclEvaluationStrategy = 'auto' | 'implicit-url' | 'post-valueset-filter';
+
+/** Type guard for {@link EclEvaluationStrategy}. */
+export function isEclEvaluationStrategy(value: unknown): value is EclEvaluationStrategy {
+  return value === 'auto' || value === 'implicit-url' || value === 'post-valueset-filter';
+}
+
 export interface FhirTerminologyServiceOptions {
   baseUrl?: string;
   timeout?: number;
   userAgent?: string;
   snomedVersion?: string;
-  eclEvaluationStrategy?: 'implicit-url' | 'post-valueset-filter' | 'auto';
+  eclEvaluationStrategy?: EclEvaluationStrategy;
   onResolvedVersion?: (versionUri: string) => void;
 }
 
@@ -121,9 +129,13 @@ export class FhirTerminologyService implements ITerminologyService {
   private readonly searchTimeout: number;
   private readonly searchCacheTTL: number; // milliseconds
   private readonly snomedVersion: string | undefined;
-  private readonly eclEvaluationStrategy: 'implicit-url' | 'post-valueset-filter' | 'auto';
+  private readonly eclEvaluationStrategy: EclEvaluationStrategy;
   private readonly onResolvedVersion: ((versionUri: string) => void) | undefined;
   private resolvedVersion: string | null = null;
+  /** Filter property that worked last time a POST ValueSet/$expand was used; skips the retry once known. */
+  private postFilterProperty: 'constraint' | 'expression' | null = null;
+  /** Strategy that worked last time in 'auto' mode; skips straight to it on subsequent calls. */
+  private resolvedEvaluationStrategy: 'implicit-url' | 'post-valueset-filter' | null = null;
 
   constructor(options: FhirTerminologyServiceOptions = {}) {
     this.baseUrl = options.baseUrl ?? 'https://tx.ontoserver.csiro.au/fhir';
@@ -441,26 +453,37 @@ export class FhirTerminologyService implements ITerminologyService {
     }
   }
 
-  private async bulkExpand(conceptIds: string[]): Promise<Map<string, ConceptInfo>> {
-    const url = `${this.baseUrl}/ValueSet/$expand?property=inactive&activeOnly=false`;
-
+  /**
+   * Build a `{ resourceType: 'ValueSet', compose: { include: [...] } }` body (merging
+   * `includeExtra` into the single `include` entry) and POST it to `ValueSet/$expand`.
+   * Shared by `bulkExpand` and `postValueSetExpand` to avoid duplicating the compose/POST
+   * construction.
+   */
+  private async postComposeExpand(includeExtra: object, query: string, timeoutMs: number): Promise<Response> {
     const include: Record<string, unknown> = {
       system: 'http://snomed.info/sct', // eslint-disable-line sonarjs/no-clear-text-protocols -- FHIR system URI, not a network URL
-      concept: conceptIds.map((code) => ({ code })),
+      ...(this.snomedVersion && { version: this.snomedVersion }),
+      ...includeExtra,
     };
-    if (this.snomedVersion) {
-      include.version = this.snomedVersion;
-    }
     const valueSet = {
       resourceType: 'ValueSet',
       compose: { include: [include] },
     };
 
-    const response = await this.fetchWithTimeout(url, this.timeout, {
+    const url = `${this.baseUrl}/ValueSet/$expand?${query}`;
+    return await this.fetchWithTimeout(url, timeoutMs, {
       method: 'POST',
       headers: { 'Content-Type': 'application/fhir+json' },
       body: JSON.stringify(valueSet),
     });
+  }
+
+  private async bulkExpand(conceptIds: string[]): Promise<Map<string, ConceptInfo>> {
+    const response = await this.postComposeExpand(
+      { concept: conceptIds.map((code) => ({ code })) },
+      'property=inactive&activeOnly=false',
+      this.timeout,
+    );
 
     if (!response.ok) {
       throw new Error(`Bulk expand failed: HTTP ${response.status}`);
@@ -589,78 +612,157 @@ export class FhirTerminologyService implements ITerminologyService {
     }
 
     const trimmedExpression = expression.trim();
+    const deadline = Date.now() + this.evaluationTimeout;
 
     if (this.eclEvaluationStrategy === 'post-valueset-filter') {
-      return await this.evaluateEclViaPostExpand(trimmedExpression, limit);
+      return await this.evaluateEclViaPostExpand(trimmedExpression, limit, deadline);
     }
 
-    const implicitResponse = await this.evaluateEclViaImplicitUrl(trimmedExpression, limit);
+    // Forced implicit-url strategy, or a strategy already resolved (in 'auto' mode) to
+    // implicit-url: go straight to the implicit GET with no fallback attempt.
+    if (this.eclEvaluationStrategy === 'implicit-url' || this.resolvedEvaluationStrategy === 'implicit-url') {
+      const timeoutMs = this.remainingTimeoutOrThrow(deadline);
+      const response = await this.evaluateEclViaImplicitUrl(trimmedExpression, limit, timeoutMs);
+      if (response.ok) {
+        this.resolvedEvaluationStrategy = 'implicit-url';
+        const data = (await response.json()) as FhirValueSetResponse;
+        return this.parseEvaluationResponse(data);
+      }
+      const issue = await this.extractOperationOutcomeIssue(response);
+      throw this.createEvaluationError(trimmedExpression, issue);
+    }
+
+    // 'auto' mode with the POST strategy already resolved: skip the doomed implicit GET.
+    if (this.resolvedEvaluationStrategy === 'post-valueset-filter') {
+      return await this.evaluateEclViaPostExpand(trimmedExpression, limit, deadline);
+    }
+
+    // 'auto' mode, strategy not yet resolved: try implicit GET, fall back to POST on a
+    // narrow set of "implicit ValueSet unsupported" signals.
+    const timeoutMs = this.remainingTimeoutOrThrow(deadline);
+    const implicitResponse = await this.evaluateEclViaImplicitUrl(trimmedExpression, limit, timeoutMs);
     if (implicitResponse.ok) {
+      this.resolvedEvaluationStrategy = 'implicit-url';
       const data = (await implicitResponse.json()) as FhirValueSetResponse;
       return this.parseEvaluationResponse(data);
     }
 
     const implicitIssue = await this.extractOperationOutcomeIssue(implicitResponse);
-    if (
-      this.eclEvaluationStrategy === 'auto' &&
-      this.shouldFallbackToPostExpand(implicitResponse.status, implicitIssue)
-    ) {
-      return await this.evaluateEclViaPostExpand(trimmedExpression, limit);
+    if (!this.shouldFallbackToPostExpand(implicitResponse.status, implicitIssue)) {
+      throw this.createEvaluationError(trimmedExpression, implicitIssue);
     }
 
-    throw this.createEvaluationError(trimmedExpression, implicitIssue);
+    try {
+      const result = await this.evaluateEclViaPostExpandCore(trimmedExpression, limit, deadline);
+      this.resolvedEvaluationStrategy = 'post-valueset-filter';
+      return result;
+    } catch (error) {
+      // Preserve the original implicit-GET diagnostic — the POST path's failure alone can
+      // be misleading (e.g. a follow-up filter-property rejection masking the real issue).
+      const postIssue = error instanceof Error ? error.message : String(error);
+      throw this.createEvaluationError(
+        trimmedExpression,
+        `${postIssue} (implicit ValueSet URL attempt failed: ${implicitIssue})`,
+      );
+    }
   }
 
-  private async evaluateEclViaImplicitUrl(expression: string, limit: number): Promise<Response> {
+  /** Throws the shared evaluation-timeout error if the deadline has already passed; otherwise returns the remaining ms. */
+  private remainingTimeoutOrThrow(deadline: number): number {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) {
+      throw new Error('FHIR evaluation failed: evaluation timed out');
+    }
+    return remaining;
+  }
+
+  private async evaluateEclViaImplicitUrl(expression: string, limit: number, timeoutMs: number): Promise<Response> {
     const implicitVsUrl = `${this.snomedSystemUrl}?fhir_vs=ecl/${expression}`;
     const url = `${this.baseUrl}/ValueSet/$expand?url=${encodeURIComponent(implicitVsUrl)}&count=${limit}`;
-    return await this.fetchWithTimeout(url, this.evaluationTimeout);
+    return await this.fetchWithTimeout(url, timeoutMs);
   }
 
-  private async evaluateEclViaPostExpand(expression: string, limit: number): Promise<EvaluationResponse> {
-    const constraintResponse = await this.postValueSetExpand(expression, limit, 'constraint');
+  /** Wraps {@link evaluateEclViaPostExpandCore}, formatting any thrown issue via {@link createEvaluationError}. */
+  private async evaluateEclViaPostExpand(
+    expression: string,
+    limit: number,
+    deadline: number,
+  ): Promise<EvaluationResponse> {
+    try {
+      return await this.evaluateEclViaPostExpandCore(expression, limit, deadline);
+    } catch (error) {
+      const issue = error instanceof Error ? error.message : String(error);
+      throw this.createEvaluationError(expression, issue);
+    }
+  }
+
+  /**
+   * POST ValueSet/$expand with filter-property memoization and retry semantics.
+   *
+   * - If a filter property is already memoized, use it exclusively — a failure there is a
+   *   genuine expression error, not a candidate for another retry.
+   * - Otherwise try `constraint` first. On success, memoize `'constraint'`. On a 400 whose
+   *   diagnostics narrowly indicate an unsupported filter *property* (not just any mention of
+   *   "constraint" — which is also part of the ECL language name and appears in genuine syntax
+   *   errors), retry once with `expression` and memoize on success.
+   * - If the retry also fails, throw the FIRST (`constraint`) attempt's issue — never the
+   *   retry's — so the user's real diagnostic survives.
+   *
+   * Throws a raw issue string (not yet wrapped by {@link createEvaluationError}); callers
+   * decide how to present it.
+   */
+  private async evaluateEclViaPostExpandCore(
+    expression: string,
+    limit: number,
+    deadline: number,
+  ): Promise<EvaluationResponse> {
+    if (this.postFilterProperty) {
+      const timeoutMs = this.remainingTimeoutOrThrow(deadline);
+      const response = await this.postValueSetExpand(expression, limit, this.postFilterProperty, timeoutMs);
+      if (response.ok) {
+        const data = (await response.json()) as FhirValueSetResponse;
+        return this.parseEvaluationResponse(data);
+      }
+      throw new Error(await this.extractOperationOutcomeIssue(response));
+    }
+
+    const constraintTimeoutMs = this.remainingTimeoutOrThrow(deadline);
+    const constraintResponse = await this.postValueSetExpand(expression, limit, 'constraint', constraintTimeoutMs);
     if (constraintResponse.ok) {
+      this.postFilterProperty = 'constraint';
       const data = (await constraintResponse.json()) as FhirValueSetResponse;
       return this.parseEvaluationResponse(data);
     }
 
     const constraintIssue = await this.extractOperationOutcomeIssue(constraintResponse);
-    if (this.shouldRetryPostExpandWithExpression(constraintResponse.status, constraintIssue)) {
-      const expressionResponse = await this.postValueSetExpand(expression, limit, 'expression');
-      if (expressionResponse.ok) {
-        const data = (await expressionResponse.json()) as FhirValueSetResponse;
-        return this.parseEvaluationResponse(data);
-      }
-      const expressionIssue = await this.extractOperationOutcomeIssue(expressionResponse);
-      throw this.createEvaluationError(expression, expressionIssue);
+    if (!this.shouldRetryPostExpandWithExpression(constraintResponse.status, constraintIssue)) {
+      throw new Error(constraintIssue);
     }
 
-    throw this.createEvaluationError(expression, constraintIssue);
+    const expressionTimeoutMs = this.remainingTimeoutOrThrow(deadline);
+    const expressionResponse = await this.postValueSetExpand(expression, limit, 'expression', expressionTimeoutMs);
+    if (expressionResponse.ok) {
+      this.postFilterProperty = 'expression';
+      const data = (await expressionResponse.json()) as FhirValueSetResponse;
+      return this.parseEvaluationResponse(data);
+    }
+
+    // The retry also failed — surface the FIRST (constraint) issue, not the retry's, since
+    // the constraint attempt is the more informative diagnostic for a genuine ECL error.
+    throw new Error(constraintIssue);
   }
 
   private async postValueSetExpand(
     expression: string,
     limit: number,
     property: 'constraint' | 'expression',
+    timeoutMs: number,
   ): Promise<Response> {
-    const include: Record<string, unknown> = {
-      system: 'http://snomed.info/sct', // eslint-disable-line sonarjs/no-clear-text-protocols -- FHIR system URI, not a network URL
-      filter: [{ property, op: '=', value: expression }],
-    };
-    if (this.snomedVersion) {
-      include.version = this.snomedVersion;
-    }
-    const valueSet = {
-      resourceType: 'ValueSet',
-      compose: { include: [include] },
-    };
-
-    const url = `${this.baseUrl}/ValueSet/$expand?count=${limit}`;
-    return await this.fetchWithTimeout(url, this.evaluationTimeout, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/fhir+json', Accept: 'application/fhir+json' },
-      body: JSON.stringify(valueSet),
-    });
+    return await this.postComposeExpand(
+      { filter: [{ property, op: '=', value: expression }] },
+      `count=${limit}`,
+      timeoutMs,
+    );
   }
 
   private parseEvaluationResponse(data: FhirValueSetResponse): EvaluationResponse {
@@ -687,17 +789,18 @@ export class FhirTerminologyService implements ITerminologyService {
       status === 404 ||
       status === 414 ||
       /value\s*set\s*not\s*found/i.test(issue) ||
-      /fhir_vs=ecl/i.test(issue) ||
       /(?:implicit.*valueset.*not\s*supported|not\s*supported.*implicit.*valueset)/i.test(issue)
     );
   }
 
+  /**
+   * Narrowly matches a 400 whose diagnostics indicate the `constraint` filter *property*
+   * itself is unsupported (e.g. "Unknown filter property constraint") — as opposed to a
+   * genuine ECL syntax rejection like "Invalid expression constraint: mismatched input …",
+   * where "constraint" is just part of the language's name and must NOT trigger a retry.
+   */
   private shouldRetryPostExpandWithExpression(status: number, issue: string): boolean {
-    return (
-      status === 400 &&
-      ((/unknown|unsupported|invalid/i.test(issue) && /constraint/i.test(issue)) ||
-        /(?:\bfilter\s+property\b|\bproperty\b.*\bfilter\b)/i.test(issue))
-    );
+    return status === 400 && /propert(y|ies)/i.test(issue) && /constraint/i.test(issue);
   }
 
   private createEvaluationError(expression: string, issue: string): Error {

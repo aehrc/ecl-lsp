@@ -869,3 +869,165 @@ describe('FhirTerminologyService — resolved version extraction', () => {
     );
   });
 });
+
+describe('FhirTerminologyService — evaluateEcl strategy heuristics & memoization', () => {
+  let mock: ReturnType<typeof createMockServer>;
+  let baseUrl: string;
+
+  beforeEach(async () => {
+    mock = createMockServer();
+    baseUrl = await mock.start();
+  });
+
+  afterEach(async () => {
+    await mock.stop();
+  });
+
+  const NOT_FOUND_ISSUE = {
+    status: 404,
+    body: {
+      resourceType: 'OperationOutcome',
+      issue: [{ diagnostics: 'ValueSet not found: http://snomed.info/sct?fhir_vs=ecl/<< 50043002' }],
+    },
+  };
+
+  it('auto mode memoizes the POST strategy after first fallback: second call issues no implicit GET', async () => {
+    const svc = new FhirTerminologyService({ baseUrl, timeout: 2000 });
+    mock.setResponses([NOT_FOUND_ISSUE, { status: 200, body: MOCK_EXPAND_RESPONSE }]);
+
+    await svc.evaluateEcl('<< 50043002');
+    assert.strictEqual(mock.requests.length, 2, 'first call: GET then POST fallback');
+    assert.strictEqual(mock.requests[0].method, 'GET');
+    assert.strictEqual(mock.requests[1].method, 'POST');
+
+    mock.setResponse(200, MOCK_EXPAND_RESPONSE);
+    await svc.evaluateEcl('<< 50043002');
+
+    assert.strictEqual(mock.requests.length, 3, 'second call should issue exactly one request (no implicit GET)');
+    assert.strictEqual(mock.requests[2].method, 'POST', 'memoized strategy should go straight to POST');
+  });
+
+  it('auto mode memoizes the implicit-url strategy after first GET success: second call issues exactly one GET', async () => {
+    const svc = new FhirTerminologyService({ baseUrl, timeout: 2000 });
+    mock.setResponse(200, MOCK_EXPAND_RESPONSE);
+
+    await svc.evaluateEcl('<< 404684003');
+    assert.strictEqual(mock.requests.length, 1);
+    assert.strictEqual(mock.requests[0].method, 'GET');
+
+    await svc.evaluateEcl('<< 19829001');
+
+    assert.strictEqual(mock.requests.length, 2, 'second call should issue exactly one GET');
+    assert.strictEqual(mock.requests[1].method, 'GET');
+  });
+
+  it('memoizes the filter property after constraint→expression retry succeeds: next evaluation POSTs once with expression', async () => {
+    const svc = new FhirTerminologyService({
+      baseUrl,
+      timeout: 2000,
+      eclEvaluationStrategy: 'post-valueset-filter',
+    });
+    mock.setResponses([
+      {
+        status: 400,
+        body: {
+          resourceType: 'OperationOutcome',
+          issue: [{ diagnostics: 'Unknown filter property constraint' }],
+        },
+      },
+      { status: 200, body: MOCK_EXPAND_RESPONSE },
+    ]);
+
+    await svc.evaluateEcl('<< 50043002');
+    assert.strictEqual(mock.requests.length, 2, 'first call: constraint POST then expression POST retry');
+
+    mock.setResponse(200, MOCK_EXPAND_RESPONSE);
+    await svc.evaluateEcl('<< 50043002');
+
+    assert.strictEqual(mock.requests.length, 3, 'second call should POST exactly once');
+    const secondCallBody = JSON.parse(mock.requests[2].body ?? '{}');
+    assert.strictEqual(secondCallBody.compose.include[0].filter[0].property, 'expression');
+  });
+
+  it('does not trigger the expression retry on a genuine ECL syntax error, and surfaces that diagnostic', async () => {
+    const svc = new FhirTerminologyService({
+      baseUrl,
+      timeout: 2000,
+      eclEvaluationStrategy: 'post-valueset-filter',
+    });
+    mock.setResponse(400, {
+      resourceType: 'OperationOutcome',
+      issue: [{ diagnostics: 'Invalid expression constraint: mismatched input' }],
+    });
+
+    await assert.rejects(() => svc.evaluateEcl('<< 50043002 AND'), /Invalid expression constraint: mismatched input/);
+    assert.strictEqual(mock.requests.length, 1, 'should not retry with expression filter on a syntax error');
+  });
+
+  it('throws the FIRST (constraint) issue when the narrow heuristic fires and the retry also fails', async () => {
+    const svc = new FhirTerminologyService({
+      baseUrl,
+      timeout: 2000,
+      eclEvaluationStrategy: 'post-valueset-filter',
+    });
+    mock.setResponses([
+      {
+        status: 400,
+        body: {
+          resourceType: 'OperationOutcome',
+          issue: [{ diagnostics: 'Unknown filter property constraint' }],
+        },
+      },
+      {
+        status: 400,
+        body: {
+          resourceType: 'OperationOutcome',
+          issue: [{ diagnostics: 'Unknown filter property expression' }],
+        },
+      },
+    ]);
+
+    await assert.rejects(() => svc.evaluateEcl('<< 50043002'), /Unknown filter property constraint/);
+    assert.strictEqual(mock.requests.length, 2, 'should attempt constraint then expression once each');
+  });
+
+  it('does not fall back to POST when a 400 on the implicit path merely echoes the request URL', async () => {
+    const svc = new FhirTerminologyService({ baseUrl, timeout: 2000 });
+    mock.setResponse(400, {
+      resourceType: 'OperationOutcome',
+      issue: [{ diagnostics: 'Bad request for http://snomed.info/sct?fhir_vs=ecl/<< 50043002' }],
+    });
+
+    await assert.rejects(
+      () => svc.evaluateEcl('<< 50043002'),
+      /Bad request for http:\/\/snomed\.info\/sct\?fhir_vs=ecl\/<< 50043002/,
+    );
+    assert.strictEqual(mock.requests.length, 1, 'no POST fallback should be attempted');
+  });
+
+  it('preserves the implicit-GET diagnostic when the POST fallback ultimately fails', async () => {
+    const svc = new FhirTerminologyService({ baseUrl, timeout: 2000 });
+    mock.setResponses([
+      NOT_FOUND_ISSUE,
+      {
+        status: 500,
+        body: {
+          resourceType: 'OperationOutcome',
+          issue: [{ diagnostics: 'Internal server error during POST expand' }],
+        },
+      },
+    ]);
+
+    let caught: Error | null = null;
+    try {
+      await svc.evaluateEcl('<< 50043002');
+    } catch (error) {
+      caught = error as Error;
+    }
+    assert.ok(caught, 'evaluateEcl should reject');
+    const message = caught.message;
+    assert.match(message, /Internal server error during POST expand/);
+    assert.match(message, /implicit ValueSet URL attempt failed/i);
+    assert.match(message, /ValueSet not found: http:\/\/snomed\.info\/sct\?fhir_vs=ecl\/<< 50043002/);
+  });
+});

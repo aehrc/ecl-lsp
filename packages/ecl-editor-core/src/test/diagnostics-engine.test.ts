@@ -3,8 +3,42 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { DiagnosticsEngine } from '../diagnostics-engine';
+import { FhirTerminologyService } from '@aehrc/ecl-core';
 import type { CoreDiagnostic } from '@aehrc/ecl-core';
 import type { ITerminologyService, ConceptInfo } from '@aehrc/ecl-core';
+
+// Spy on FhirTerminologyService construction so tests can assert exactly which options
+// `createTerminologyService()` was rebuilt with, without making real network calls.
+vi.mock('@aehrc/ecl-core', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@aehrc/ecl-core')>();
+  return {
+    ...actual,
+    // A named function expression (not an arrow function) so `new FhirTerminologyService(...)`
+    // in production code invokes it as a real constructor and uses its returned object.
+    FhirTerminologyService: vi.fn().mockImplementation(function FhirTerminologyServiceMock() {
+      return {
+        async getConceptInfo() {
+          return null;
+        },
+        async validateConcepts(ids: string[]) {
+          return new Map(ids.map((id) => [id, null]));
+        },
+        async searchConcepts() {
+          return { results: [], hasMore: false };
+        },
+        async evaluateEcl() {
+          return { total: 0, concepts: [], truncated: false };
+        },
+      };
+    }),
+  };
+});
+
+interface FhirTerminologyServiceCtorOptions {
+  baseUrl?: string;
+  snomedVersion?: string;
+  eclEvaluationStrategy?: string;
+}
 
 // --- Mock terminology service ---
 
@@ -464,6 +498,55 @@ describe('DiagnosticsEngine', () => {
           d.severity === 'warning' && (d.message.includes('Unknown concept') || d.message.includes('Inactive concept')),
       );
       expect(semanticWarnings).toHaveLength(0);
+      engine.dispose();
+    });
+
+    it('should keep the terminology service alive and apply the strategy on an evaluateEcl-only update (issue #59 review, Finding 2)', async () => {
+      const received: CoreDiagnostic[][] = [];
+      const engine = new DiagnosticsEngine(
+        { fhirServerUrl: 'https://tx.example.com/fhir', semanticValidation: true, semanticDebounceMs: 50 },
+        (diags) => received.push([...diags]),
+      );
+
+      const mockedCtor = vi.mocked(FhirTerminologyService);
+
+      // A partial update touching ONLY evaluateEcl must not drop the fhirServerUrl set at
+      // construction (previously createTerminologyService was called with just the partial,
+      // so fhirServerUrl was undefined and the service was nulled out).
+      engine.updateConfig({ evaluateEcl: 'implicit-url' });
+
+      const lastArgs = mockedCtor.mock.calls.at(-1)?.[0] as FhirTerminologyServiceCtorOptions;
+      expect(lastArgs.baseUrl).toBe('https://tx.example.com/fhir');
+      expect(lastArgs.eclEvaluationStrategy).toBe('implicit-url');
+
+      // Semantic validation must still run — i.e. the rebuilt service is non-null and used.
+      engine.update('< 404684003');
+      vi.advanceTimersByTime(100);
+      await vi.waitFor(() => {
+        expect(received.length).toBeGreaterThanOrEqual(2);
+      });
+
+      engine.dispose();
+    });
+
+    it('should not revert an earlier partial update when a later, independent partial update is applied (issue #59 review, Finding 2)', () => {
+      const engine = new DiagnosticsEngine(
+        { fhirServerUrl: 'https://tx.example.com/fhir', semanticValidation: false },
+        () => {},
+      );
+
+      const mockedCtor = vi.mocked(FhirTerminologyService);
+
+      engine.updateConfig({ evaluateEcl: 'implicit-url' });
+      engine.updateConfig({ snomedVersion: 'http://snomed.info/sct/32506021000036107/version/20240731' });
+
+      const lastArgs = mockedCtor.mock.calls.at(-1)?.[0] as FhirTerminologyServiceCtorOptions;
+      // fhirServerUrl from construction, and evaluateEcl from the first partial update, must
+      // both still be present after the second, independent partial update.
+      expect(lastArgs.baseUrl).toBe('https://tx.example.com/fhir');
+      expect(lastArgs.eclEvaluationStrategy).toBe('implicit-url');
+      expect(lastArgs.snomedVersion).toBe('http://snomed.info/sct/32506021000036107/version/20240731');
+
       engine.dispose();
     });
   });

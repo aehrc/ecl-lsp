@@ -5,6 +5,7 @@ import type * as Monaco from 'monaco-editor';
 import { FhirTerminologyService } from '@aehrc/ecl-core';
 import type { ITerminologyService, FormattingOptions, CoreDiagnostic } from '@aehrc/ecl-core';
 import type { EclEditorConfig, EclEditorDisposable } from '../types';
+import { mergeEclEditorConfig } from '../types';
 import { createCompletionProvider } from './completion-provider';
 import { createHoverProvider } from './hover-provider';
 import { createDocumentFormattingProvider, createDocumentRangeFormattingProvider } from './formatting-provider';
@@ -62,6 +63,10 @@ export function registerEclLanguage(
   const disposables: Monaco.IDisposable[] = [];
   let terminologyService: ITerminologyService | null = config.terminologyService ?? null;
   let formattingOptions: Partial<FormattingOptions> = config.formattingOptions ?? {};
+  // Mutable effective config, merged with every `updateConfig()` partial (see mergeEclEditorConfig).
+  // All updateConfig fallbacks — and adapters attached to new models — read this, not `config`,
+  // so sequential partial updates accumulate instead of reverting to the immutable registration config.
+  let currentConfig: EclEditorConfig = config;
   const diagnosticsAdapters = new Map<string, MonacoDiagnosticsAdapter>();
 
   // Create terminology service if not provided
@@ -106,7 +111,7 @@ export function registerEclLanguage(
     if (model.getLanguageId() !== ECL_LANGUAGE_ID) return;
     const key = model.uri.toString();
     if (diagnosticsAdapters.has(key)) return;
-    const adapter = new MonacoDiagnosticsAdapter(monaco, model, config, config.onDiagnostics);
+    const adapter = new MonacoDiagnosticsAdapter(monaco, model, currentConfig, config.onDiagnostics);
     diagnosticsAdapters.set(key, adapter);
   }
 
@@ -150,7 +155,17 @@ export function registerEclLanguage(
       disposables.length = 0;
     },
 
+    /**
+     * `newConfig` is merged into the mutable `currentConfig` (see {@link mergeEclEditorConfig}):
+     * a key applies only when its value is `!== undefined`, so a value cannot be unset by passing
+     * `undefined`, and sequential partial updates accumulate rather than reverting fields left
+     * unspecified back to the immutable registration-time config. Adapters receive the full merged
+     * `currentConfig` (not the raw partial) so a later evaluateEcl/snomedVersion-only update still
+     * carries an earlier-set fhirServerUrl.
+     */
     updateConfig(newConfig: Partial<EclEditorConfig>): void {
+      currentConfig = mergeEclEditorConfig(currentConfig, newConfig);
+
       if (newConfig.formattingOptions) {
         formattingOptions = { ...formattingOptions, ...newConfig.formattingOptions };
       }
@@ -161,23 +176,22 @@ export function registerEclLanguage(
         newConfig.snomedVersion !== undefined ||
         newConfig.evaluateEcl !== undefined
       ) {
-        const url =
-          (newConfig.corsProxy ?? config.corsProxy)
-            ? `${newConfig.corsProxy ?? config.corsProxy}${newConfig.fhirServerUrl ?? config.fhirServerUrl ?? 'https://tx.ontoserver.csiro.au/fhir'}`
-            : (newConfig.fhirServerUrl ?? config.fhirServerUrl);
+        const url = currentConfig.corsProxy
+          ? `${currentConfig.corsProxy}${currentConfig.fhirServerUrl ?? 'https://tx.ontoserver.csiro.au/fhir'}`
+          : currentConfig.fhirServerUrl;
         if (url) {
           terminologyService = new FhirTerminologyService({
             baseUrl: url,
-            snomedVersion: newConfig.snomedVersion ?? config.snomedVersion,
-            eclEvaluationStrategy: newConfig.evaluateEcl ?? config.evaluateEcl,
-            onResolvedVersion: newConfig.onResolvedSnomedVersion ?? config.onResolvedSnomedVersion,
+            snomedVersion: currentConfig.snomedVersion,
+            eclEvaluationStrategy: currentConfig.evaluateEcl,
+            onResolvedVersion: currentConfig.onResolvedSnomedVersion,
           });
         }
       }
 
       // Propagate to diagnostics adapters
       for (const adapter of diagnosticsAdapters.values()) {
-        adapter.updateConfig(newConfig);
+        adapter.updateConfig(currentConfig);
       }
     },
   };

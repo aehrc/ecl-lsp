@@ -14,6 +14,7 @@ import {
 } from '@aehrc/ecl-core';
 import type { CoreDiagnostic, ITerminologyService } from '@aehrc/ecl-core';
 import type { EclEditorConfig } from './types';
+import { mergeEclEditorConfig } from './types';
 
 /**
  * Two-phase diagnostics engine for ECL text.
@@ -26,10 +27,13 @@ export class DiagnosticsEngine {
   private debounceMs: number;
   private semanticValidation: boolean;
   private terminologyService: ITerminologyService | null;
+  /** Effective config as of construction, merged with every subsequent `updateConfig()` partial. */
+  private config: EclEditorConfig;
   private readonly onDiagnostics: (diagnostics: CoreDiagnostic[]) => void;
 
   constructor(config: EclEditorConfig, onDiagnostics: (diagnostics: CoreDiagnostic[]) => void) {
     this.onDiagnostics = onDiagnostics;
+    this.config = { ...config };
     this.semanticValidation = config.semanticValidation !== false;
     this.debounceMs = config.semanticDebounceMs ?? 500;
     this.terminologyService = config.terminologyService ?? this.createTerminologyService(config);
@@ -50,8 +54,18 @@ export class DiagnosticsEngine {
     });
   }
 
-  /** Update configuration (e.g. switch SNOMED version, toggle semantic validation). */
+  /**
+   * Update configuration (e.g. switch SNOMED version, toggle semantic validation).
+   *
+   * `config` is merged into the engine's stored effective config (see {@link mergeEclEditorConfig}):
+   * a key applies only when its value is `!== undefined`, so a value cannot be unset by passing
+   * `undefined`. This also means the terminology service is always rebuilt from the full merged
+   * config (not just the partial), so e.g. an `evaluateEcl`-only update preserves a `fhirServerUrl`
+   * set at construction or by an earlier partial update.
+   */
   updateConfig(config: Partial<EclEditorConfig>): void {
+    this.config = mergeEclEditorConfig(this.config, config);
+
     if (config.semanticValidation !== undefined) {
       this.semanticValidation = config.semanticValidation;
     }
@@ -66,13 +80,7 @@ export class DiagnosticsEngine {
       config.evaluateEcl !== undefined ||
       config.corsProxy !== undefined
     ) {
-      this.terminologyService = this.createTerminologyService({
-        fhirServerUrl: config.fhirServerUrl,
-        snomedVersion: config.snomedVersion,
-        evaluateEcl: config.evaluateEcl,
-        corsProxy: config.corsProxy,
-        onResolvedSnomedVersion: config.onResolvedSnomedVersion,
-      });
+      this.terminologyService = this.createTerminologyService(this.config);
     }
   }
 

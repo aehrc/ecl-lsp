@@ -27,6 +27,29 @@ export interface EclEditorConfig {
   onResolvedSnomedVersion?: (uri: string) => void;
 }
 
+/**
+ * Merge a partial config update into a base config.
+ *
+ * A key in `partial` applies only when its value is `!== undefined` — this mirrors the `??`
+ * fallback idiom used throughout the config-consuming code (`createTerminologyService`,
+ * Monaco provider options, etc.). Consequently **a config value cannot be unset by passing
+ * `undefined`**: once a key has been set (at construction or via a prior partial update),
+ * only supplying an explicit replacement value changes it.
+ */
+export function mergeEclEditorConfig(base: EclEditorConfig, partial: Partial<EclEditorConfig>): EclEditorConfig {
+  return {
+    fhirServerUrl: partial.fhirServerUrl ?? base.fhirServerUrl,
+    snomedVersion: partial.snomedVersion ?? base.snomedVersion,
+    evaluateEcl: partial.evaluateEcl ?? base.evaluateEcl,
+    terminologyService: partial.terminologyService ?? base.terminologyService,
+    formattingOptions: partial.formattingOptions ?? base.formattingOptions,
+    semanticValidation: partial.semanticValidation ?? base.semanticValidation,
+    semanticDebounceMs: partial.semanticDebounceMs ?? base.semanticDebounceMs,
+    corsProxy: partial.corsProxy ?? base.corsProxy,
+    onResolvedSnomedVersion: partial.onResolvedSnomedVersion ?? base.onResolvedSnomedVersion,
+  };
+}
+
 /** Disposable handle returned by registerEclLanguage(). */
 export interface EclEditorDisposable {
   /** Dispose all registered providers and clean up resources. */

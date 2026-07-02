@@ -352,6 +352,9 @@ export class FhirTerminologyService implements ITerminologyService {
   ): Promise<{ code: string; display: string }[]> {
     try {
       const cmUrl = `${this.snomedSystemUrl}?fhir_cm=${refsetId}`;
+      // Implicit ValueSet URI used as the $translate *target* parameter, not as an expand — this
+      // is accepted even by servers that reject implicit ValueSet expansion (the `eclEvaluationStrategy`
+      // option only governs $expand), so it intentionally does not participate in that strategy.
       const targetUrl = 'http://snomed.info/sct?fhir_vs'; // eslint-disable-line sonarjs/no-clear-text-protocols -- FHIR system URI, not a network URL
       const url =
         `${this.baseUrl}/ConceptMap/$translate` +
@@ -820,16 +823,70 @@ export class FhirTerminologyService implements ITerminologyService {
     return new Error(`FHIR evaluation failed: ${issue}`);
   }
 
+  /**
+   * Text search backing `searchConcepts`. Strategy-aware like `evaluateEcl`: forced or
+   * memoized `post-valueset-filter` goes straight to POST; forced or memoized `implicit-url`
+   * goes straight to GET with no fallback; unresolved `auto` tries the implicit GET first and
+   * falls back to POST on the same narrow signals used by `evaluateEcl`, memoizing the result
+   * (shared `resolvedEvaluationStrategy`) for both future searches and evaluations.
+   */
   private async searchByFilter(filter: string): Promise<SearchResponse> {
-    const url = `${this.baseUrl}/ValueSet/$expand?url=${this.snomedSystemUrl}?fhir_vs&filter=${encodeURIComponent(filter)}&count=21&includeDesignations=true&activeOnly=true`;
+    if (
+      this.eclEvaluationStrategy === 'post-valueset-filter' ||
+      this.resolvedEvaluationStrategy === 'post-valueset-filter'
+    ) {
+      return await this.searchByFilterViaPostExpand(filter);
+    }
 
-    const response = await this.fetchWithTimeout(url, this.searchTimeout);
+    if (this.eclEvaluationStrategy === 'implicit-url' || this.resolvedEvaluationStrategy === 'implicit-url') {
+      const response = await this.searchByFilterViaImplicitUrl(filter);
+      if (!response.ok) {
+        throw new Error(`FHIR request failed: ${response.status}`);
+      }
+      this.resolvedEvaluationStrategy = 'implicit-url';
+      return this.parseSearchResponse((await response.json()) as FhirValueSetResponse);
+    }
+
+    // 'auto' mode, strategy not yet resolved: try implicit GET, fall back to POST on the same
+    // narrow signals evaluateEcl uses.
+    const implicitResponse = await this.searchByFilterViaImplicitUrl(filter);
+    if (implicitResponse.ok) {
+      this.resolvedEvaluationStrategy = 'implicit-url';
+      return this.parseSearchResponse((await implicitResponse.json()) as FhirValueSetResponse);
+    }
+
+    const issue = await this.extractOperationOutcomeIssue(implicitResponse);
+    if (!this.shouldFallbackToPostExpand(implicitResponse.status, issue)) {
+      throw new Error(`FHIR request failed: ${implicitResponse.status}`);
+    }
+
+    const result = await this.searchByFilterViaPostExpand(filter);
+    this.resolvedEvaluationStrategy = 'post-valueset-filter';
+    return result;
+  }
+
+  private async searchByFilterViaImplicitUrl(filter: string): Promise<Response> {
+    const url = `${this.baseUrl}/ValueSet/$expand?url=${this.snomedSystemUrl}?fhir_vs&filter=${encodeURIComponent(filter)}&count=21&includeDesignations=true&activeOnly=true`;
+    return await this.fetchWithTimeout(url, this.searchTimeout);
+  }
+
+  /** POST ValueSet/$expand form of the text search, using the Task-2 shared compose/POST helper. */
+  private async searchByFilterViaPostExpand(filter: string): Promise<SearchResponse> {
+    const response = await this.postComposeExpand(
+      {},
+      `filter=${encodeURIComponent(filter)}&count=21&includeDesignations=true&activeOnly=true`,
+      this.searchTimeout,
+    );
 
     if (!response.ok) {
       throw new Error(`FHIR request failed: ${response.status}`);
     }
 
-    const data = (await response.json()) as FhirValueSetResponse;
+    return this.parseSearchResponse((await response.json()) as FhirValueSetResponse);
+  }
+
+  /** Shared response mapping for both the GET and POST forms of `searchByFilter`. */
+  private parseSearchResponse(data: FhirValueSetResponse): SearchResponse {
     const expansion = data.expansion ?? {};
     this.captureResolvedVersion(expansion.parameter);
     const contains = expansion.contains ?? [];

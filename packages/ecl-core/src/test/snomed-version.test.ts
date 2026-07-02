@@ -1042,3 +1042,138 @@ describe('FhirTerminologyService — evaluateEcl strategy heuristics & memoizati
     assert.match(message, /ValueSet not found: http:\/\/snomed\.info\/sct\?fhir_vs=ecl\/<< 50043002/);
   });
 });
+
+describe('FhirTerminologyService — searchByFilter strategy awareness', () => {
+  let mock: ReturnType<typeof createMockServer>;
+  let baseUrl: string;
+
+  beforeEach(async () => {
+    mock = createMockServer();
+    baseUrl = await mock.start();
+  });
+
+  afterEach(async () => {
+    await mock.stop();
+  });
+
+  const NOT_FOUND_ISSUE = {
+    status: 404,
+    body: {
+      resourceType: 'OperationOutcome',
+      issue: [{ diagnostics: 'ValueSet not found: http://snomed.info/sct?fhir_vs&filter=clinical' }],
+    },
+  };
+
+  const MOCK_SEARCH_EXPAND_RESPONSE = {
+    resourceType: 'ValueSet',
+    expansion: {
+      total: 2,
+      contains: [
+        { code: '404684003', display: 'Clinical finding' },
+        { code: '19829001', display: 'Disorder of lung' },
+      ],
+    },
+  };
+
+  it('should issue a POST ValueSet/$expand with no implicit GET when post-valueset-filter is forced', async () => {
+    const svc = new FhirTerminologyService({
+      baseUrl,
+      timeout: 2000,
+      eclEvaluationStrategy: 'post-valueset-filter',
+    });
+    mock.setResponse(200, MOCK_SEARCH_EXPAND_RESPONSE);
+
+    const result = await svc.searchConcepts('clinical');
+
+    assert.strictEqual(mock.requests.length, 1, 'should issue exactly one request, no implicit GET');
+    assert.strictEqual(mock.requests[0].method, 'POST');
+    assert.ok(
+      mock.requests[0].url.startsWith(
+        `/ValueSet/$expand?filter=${encodeURIComponent('clinical')}&count=21&includeDesignations=true&activeOnly=true`,
+      ),
+      `POST search should target ValueSet/$expand with filter/count query: ${mock.requests[0].url}`,
+    );
+
+    const postBody = JSON.parse(mock.requests[0].body ?? '{}');
+    assert.strictEqual(postBody.resourceType, 'ValueSet');
+    assert.strictEqual(postBody.compose.include[0].system, 'http://snomed.info/sct');
+    assert.strictEqual(postBody.compose.include[0].filter, undefined, 'search compose include has no ECL filter');
+
+    // Results parsed identically to the GET path.
+    assert.strictEqual(result.hasMore, false);
+    assert.deepStrictEqual(result.results, [
+      { id: '404684003', fsn: 'Clinical finding', pt: 'Clinical finding' },
+      { id: '19829001', fsn: 'Disorder of lung', pt: 'Disorder of lung' },
+    ]);
+  });
+
+  it('should include configured version in POST search compose include', async () => {
+    const version = 'http://snomed.info/sct/32506021000036107/version/20260131';
+    const svc = new FhirTerminologyService({
+      baseUrl,
+      timeout: 2000,
+      snomedVersion: version,
+      eclEvaluationStrategy: 'post-valueset-filter',
+    });
+    mock.setResponse(200, MOCK_SEARCH_EXPAND_RESPONSE);
+
+    await svc.searchConcepts('clinical');
+
+    const postBody = JSON.parse(mock.requests[0].body ?? '{}');
+    assert.strictEqual(postBody.compose.include[0].version, version);
+  });
+
+  it('should fall back to POST search on an implicit 404 in auto mode, and memoize for a later evaluateEcl call', async () => {
+    const svc = new FhirTerminologyService({ baseUrl, timeout: 2000 });
+    mock.setResponses([NOT_FOUND_ISSUE, { status: 200, body: MOCK_SEARCH_EXPAND_RESPONSE }]);
+
+    const result = await svc.searchConcepts('clinical');
+
+    assert.strictEqual(mock.requests.length, 2, 'search: implicit GET then POST fallback');
+    assert.strictEqual(mock.requests[0].method, 'GET');
+    assert.strictEqual(mock.requests[1].method, 'POST');
+    assert.deepStrictEqual(result.results, [
+      { id: '404684003', fsn: 'Clinical finding', pt: 'Clinical finding' },
+      { id: '19829001', fsn: 'Disorder of lung', pt: 'Disorder of lung' },
+    ]);
+
+    // Shared memoization: a subsequent evaluateEcl call should go straight to POST, no
+    // implicit GET attempt.
+    mock.setResponse(200, MOCK_EXPAND_RESPONSE);
+    await svc.evaluateEcl('<< 50043002');
+
+    assert.strictEqual(mock.requests.length, 3, 'evaluateEcl should issue exactly one request (no implicit GET)');
+    assert.strictEqual(mock.requests[2].method, 'POST', 'memoized strategy should carry over to evaluateEcl');
+  });
+
+  it('should not retry with POST when implicit-url is forced for search', async () => {
+    const svc = new FhirTerminologyService({
+      baseUrl,
+      timeout: 2000,
+      eclEvaluationStrategy: 'implicit-url',
+    });
+    mock.setResponses([NOT_FOUND_ISSUE, { status: 200, body: MOCK_SEARCH_EXPAND_RESPONSE }]);
+
+    await assert.rejects(() => svc.searchConcepts('clinical'), /Terminology server unavailable/);
+    assert.strictEqual(mock.requests.length, 1, 'should not retry with POST when implicit-url is forced');
+    assert.strictEqual(mock.requests[0].method, 'GET');
+  });
+
+  it('should keep using the default implicit GET search unchanged when nothing has failed', async () => {
+    const svc = new FhirTerminologyService({ baseUrl, timeout: 2000 });
+    mock.setResponse(200, MOCK_SEARCH_EXPAND_RESPONSE);
+
+    const result = await svc.searchConcepts('clinical');
+
+    assert.strictEqual(mock.requests.length, 1);
+    assert.strictEqual(mock.requests[0].method, 'GET');
+    assert.ok(
+      mock.requests[0].url.includes(`filter=${encodeURIComponent('clinical')}`),
+      `GET search URL should include filter: ${mock.requests[0].url}`,
+    );
+    assert.deepStrictEqual(result.results, [
+      { id: '404684003', fsn: 'Clinical finding', pt: 'Clinical finding' },
+      { id: '19829001', fsn: 'Disorder of lung', pt: 'Disorder of lung' },
+    ]);
+  });
+});

@@ -515,7 +515,8 @@ describe('DiagnosticsEngine', () => {
       // so fhirServerUrl was undefined and the service was nulled out).
       engine.updateConfig({ evaluateEcl: 'implicit-url' });
 
-      const lastArgs = mockedCtor.mock.calls.at(-1)?.[0] as FhirTerminologyServiceCtorOptions;
+      const lastCall = mockedCtor.mock.calls[mockedCtor.mock.calls.length - 1];
+      const lastArgs = lastCall?.[0] as FhirTerminologyServiceCtorOptions;
       expect(lastArgs.baseUrl).toBe('https://tx.example.com/fhir');
       expect(lastArgs.eclEvaluationStrategy).toBe('implicit-url');
 
@@ -540,7 +541,8 @@ describe('DiagnosticsEngine', () => {
       engine.updateConfig({ evaluateEcl: 'implicit-url' });
       engine.updateConfig({ snomedVersion: 'http://snomed.info/sct/32506021000036107/version/20240731' });
 
-      const lastArgs = mockedCtor.mock.calls.at(-1)?.[0] as FhirTerminologyServiceCtorOptions;
+      const lastCall2 = mockedCtor.mock.calls[mockedCtor.mock.calls.length - 1];
+      const lastArgs = lastCall2?.[0] as FhirTerminologyServiceCtorOptions;
       // fhirServerUrl from construction, and evaluateEcl from the first partial update, must
       // both still be present after the second, independent partial update.
       expect(lastArgs.baseUrl).toBe('https://tx.example.com/fhir');

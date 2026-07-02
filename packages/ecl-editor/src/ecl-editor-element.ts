@@ -1,8 +1,13 @@
 // Copyright 2026 Commonwealth Scientific and Industrial Research Organisation (CSIRO)
 // ABN 41 687 119 230. SPDX-License-Identifier: Apache-2.0
 
-import { registerEclLanguage, ECL_LANGUAGE_ID, registerToggleTermsAction } from '@aehrc/ecl-editor-core';
-import type { EclEditorDisposable } from '@aehrc/ecl-editor-core';
+import {
+  registerEclLanguage,
+  ECL_LANGUAGE_ID,
+  registerToggleTermsAction,
+  isEclEvaluationStrategy,
+} from '@aehrc/ecl-editor-core';
+import type { EclEditorDisposable, EvaluateEclStrategy } from '@aehrc/ecl-editor-core';
 import type { CoreDiagnostic } from '@aehrc/ecl-core';
 
 // Monaco is expected as a peer dependency or from CDN.
@@ -27,11 +32,8 @@ const OBSERVED_ATTRS = [
 /** Shared language registration singleton — prevents duplicate tooltips when multiple editors exist. */
 let sharedRegistration: EclEditorDisposable | null = null;
 
-function parseEvaluateEcl(value: string | null): 'auto' | 'implicit-url' | 'post-valueset-filter' | undefined {
-  if (value === 'auto' || value === 'implicit-url' || value === 'post-valueset-filter') {
-    return value;
-  }
-  return undefined;
+function parseEvaluateEcl(value: string | null): EvaluateEclStrategy | undefined {
+  return isEclEvaluationStrategy(value) ? value : undefined;
 }
 
 export class EclEditorElement extends HTMLElement {

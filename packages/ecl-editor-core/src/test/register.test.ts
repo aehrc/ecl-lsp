@@ -111,7 +111,8 @@ describe('registerEclLanguage() updateConfig() — partial config merging regres
     disposable.updateConfig({ evaluateEcl: 'implicit-url' });
     expect(disposable.getTerminologyService()).not.toBeNull();
 
-    let lastArgs = mockedCtor.mock.calls.at(-1)?.[0] as FhirTerminologyServiceCtorOptions;
+    let lastCall = mockedCtor.mock.calls[mockedCtor.mock.calls.length - 1];
+    let lastArgs = lastCall?.[0] as FhirTerminologyServiceCtorOptions;
     expect(lastArgs.baseUrl).toBe('https://tx.example.com/fhir');
     expect(lastArgs.eclEvaluationStrategy).toBe('implicit-url');
 
@@ -120,7 +121,8 @@ describe('registerEclLanguage() updateConfig() — partial config merging regres
     // registration-time config, which never had evaluateEcl set, reverting it to undefined).
     disposable.updateConfig({ snomedVersion: 'http://snomed.info/sct/32506021000036107/version/20240731' });
 
-    lastArgs = mockedCtor.mock.calls.at(-1)?.[0] as FhirTerminologyServiceCtorOptions;
+    lastCall = mockedCtor.mock.calls[mockedCtor.mock.calls.length - 1];
+    lastArgs = lastCall?.[0] as FhirTerminologyServiceCtorOptions;
     expect(lastArgs.baseUrl).toBe('https://tx.example.com/fhir');
     expect(lastArgs.eclEvaluationStrategy).toBe('implicit-url');
     expect(lastArgs.snomedVersion).toBe('http://snomed.info/sct/32506021000036107/version/20240731');

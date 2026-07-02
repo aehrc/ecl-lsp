@@ -58,6 +58,7 @@ import {
   validateBoolean,
   defaultFormattingOptions,
   getOperatorHoverDoc,
+  isEclEvaluationStrategy,
 } from '@aehrc/ecl-core';
 import type {
   ITerminologyService,
@@ -67,6 +68,7 @@ import type {
   CoreRange,
   FormattingOptions,
   ParseError,
+  EclEvaluationStrategy,
 } from '@aehrc/ecl-core';
 
 // LSP-specific modules (not in ecl-core)
@@ -221,13 +223,11 @@ function getInitializationSection(section: `ecl.${string}`): Record<string, unkn
   return asRecord(settingsEclRoot?.[shortSection]);
 }
 
-type EvaluateEclStrategy = 'auto' | 'implicit-url' | 'post-valueset-filter';
-
 function getInitializationTerminologyConfig(): {
   serverUrl?: string;
   timeout?: number;
   snomedVersion?: string;
-  evaluateEcl?: EvaluateEclStrategy;
+  evaluateEcl?: EclEvaluationStrategy;
 } {
   const sectionConfig = getInitializationSection('ecl.terminology');
   if (!sectionConfig) {
@@ -256,7 +256,7 @@ function extractTerminologyConfig(config: Record<string, unknown> | null | undef
   serverUrl: string | undefined;
   timeout: number | undefined;
   snomedVersion: string | undefined;
-  evaluateEcl: EvaluateEclStrategy | undefined;
+  evaluateEcl: EclEvaluationStrategy | undefined;
 } {
   if (!config) return { serverUrl: undefined, timeout: undefined, snomedVersion: undefined, evaluateEcl: undefined };
   // VSCode: { serverUrl, timeout, snomedVersion, evaluateEcl } from section 'ecl.terminology'
@@ -269,10 +269,7 @@ function extractTerminologyConfig(config: Record<string, unknown> | null | undef
   const snomedVersion = typeof rawVersion === 'string' && rawVersion.trim() ? rawVersion.trim() : undefined;
   // Support both evaluateEcl (client-facing setting key) and eclEvaluationStrategy (core option name).
   const rawEvaluate = config.evaluateEcl ?? config.eclEvaluationStrategy;
-  const evaluateEcl =
-    rawEvaluate === 'auto' || rawEvaluate === 'implicit-url' || rawEvaluate === 'post-valueset-filter'
-      ? rawEvaluate
-      : undefined;
+  const evaluateEcl = isEclEvaluationStrategy(rawEvaluate) ? rawEvaluate : undefined;
   return { serverUrl, timeout, snomedVersion, evaluateEcl };
 }
 
@@ -280,7 +277,7 @@ function applyTerminologyConfig(cfg: {
   serverUrl?: string;
   timeout?: number;
   snomedVersion?: string;
-  evaluateEcl?: EvaluateEclStrategy;
+  evaluateEcl?: EclEvaluationStrategy;
 }): void {
   snomedEditionLabel = cfg.snomedVersion ?? 'server default';
   terminologyService = new FhirTerminologyService({

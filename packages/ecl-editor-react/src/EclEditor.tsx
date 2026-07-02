@@ -2,11 +2,9 @@ import { useRef, useEffect, useCallback } from 'react';
 import Editor, { type OnMount, type OnChange } from '@monaco-editor/react';
 import type * as Monaco from 'monaco-editor';
 import { registerEclLanguage, ECL_LANGUAGE_ID, registerToggleTermsAction } from '@aehrc/ecl-editor-core';
-import type { EclEditorConfig, EclEditorDisposable } from '@aehrc/ecl-editor-core';
+import type { EclEditorConfig, EclEditorDisposable, EvaluateEclStrategy } from '@aehrc/ecl-editor-core';
 import type { CoreDiagnostic } from '@aehrc/ecl-core';
 import type { FormattingOptions } from '@aehrc/ecl-core';
-
-type EvaluateEclStrategy = 'auto' | 'implicit-url' | 'post-valueset-filter';
 
 export interface EclEditorProps {
   /** Controlled value. */

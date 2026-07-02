@@ -3,6 +3,7 @@
 
 // Types
 export type { EclEditorConfig, EclEditorDisposable, EvaluateEclStrategy } from './types';
+export { isEclEvaluationStrategy } from '@aehrc/ecl-core';
 
 // Diagnostics engine (framework-agnostic)
 export { DiagnosticsEngine } from './diagnostics-engine';

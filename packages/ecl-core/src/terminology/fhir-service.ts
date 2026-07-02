@@ -854,10 +854,11 @@ export class FhirTerminologyService implements ITerminologyService {
 
   /**
    * Text search backing `searchConcepts`. Strategy-aware like `evaluateEcl`: forced or
-   * memoized `post-valueset-filter` goes straight to POST; forced or memoized `implicit-url`
-   * goes straight to GET with no fallback; unresolved `auto` tries the implicit GET first and
-   * falls back to POST on the same narrow signals used by `evaluateEcl`, memoizing the result
-   * (shared `resolvedEvaluationStrategy`) for both future searches and evaluations.
+   * memoized `post-valueset-filter` goes straight to POST; forced `implicit-url` goes
+   * straight to GET with no fallback; `auto` (even with `implicit-url` memoized) tries the
+   * implicit GET first and falls back to POST on the same narrow signals used by
+   * `evaluateEcl`, memoizing the result (shared `resolvedEvaluationStrategy`) for both
+   * future searches and evaluations.
    */
   private async searchByFilter(filter: string): Promise<SearchResponse> {
     if (

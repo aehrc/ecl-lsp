@@ -473,7 +473,10 @@ export class FhirTerminologyService implements ITerminologyService {
     const url = `${this.baseUrl}/ValueSet/$expand?${query}`;
     return await this.fetchWithTimeout(url, timeoutMs, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/fhir+json' },
+      headers: {
+        'Content-Type': 'application/fhir+json',
+        Accept: 'application/fhir+json',
+      },
       body: JSON.stringify(valueSet),
     });
   }

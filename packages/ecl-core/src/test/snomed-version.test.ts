@@ -12,6 +12,7 @@ interface CapturedRequest {
   method: string;
   url: string;
   body?: string;
+  headers: Record<string, string | string[]>;
 }
 
 function createMockServer(): {
@@ -33,7 +34,12 @@ function createMockServer(): {
       body += chunk.toString();
     });
     req.on('end', () => {
-      requests.push({ method: req.method ?? 'GET', url: req.url ?? '', body: body || undefined });
+      requests.push({
+        method: req.method ?? 'GET',
+        url: req.url ?? '',
+        body: body || undefined,
+        headers: req.headers as Record<string, string | string[]>,
+      });
       const queued = responseQueue.shift();
       const status = queued?.status ?? responseStatus;
       const payload = queued?.body ?? responseBody;
@@ -300,6 +306,11 @@ describe('FhirTerminologyService — SNOMED version threading', () => {
       assert.deepStrictEqual(postBody.compose.include[0].filter, [
         { property: 'constraint', op: '=', value: '<< 50043002 AND << 19829001' },
       ]);
+      assert.strictEqual(
+        mock.requests[1].headers.accept,
+        'application/fhir+json',
+        'POST request should include Accept header',
+      );
     });
 
     it('should retry POST expand with expression filter when constraint filter is unsupported', async () => {

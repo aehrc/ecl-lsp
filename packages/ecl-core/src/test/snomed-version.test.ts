@@ -1050,6 +1050,58 @@ describe('FhirTerminologyService — evaluateEcl strategy heuristics & memoizati
     assert.strictEqual(secondCallBody.compose.include[0].filter[0].property, 'expression');
   });
 
+  it('retries with the expression filter when the constraint property is rejected with 422 (not just 400)', async () => {
+    const svc = new FhirTerminologyService({
+      baseUrl,
+      timeout: 2000,
+      eclEvaluationStrategy: 'post-valueset-filter',
+    });
+    // The servers behind issue #55 (EMS-TX, fhirSmith) use 422 Unprocessable Entity where
+    // other servers use 400 — the retry heuristic must accept both.
+    mock.setResponses([
+      {
+        status: 422,
+        body: {
+          resourceType: 'OperationOutcome',
+          issue: [{ code: 'not-supported', diagnostics: 'Unknown filter property constraint' }],
+        },
+      },
+      { status: 200, body: MOCK_EXPAND_RESPONSE },
+    ]);
+
+    const result = await svc.evaluateEcl('<< 50043002');
+
+    assert.strictEqual(result.total, 2);
+    assert.strictEqual(mock.requests.length, 2, 'constraint POST then expression POST retry');
+    const retryBody = JSON.parse(mock.requests[1].body ?? '{}');
+    assert.strictEqual(retryBody.compose.include[0].filter[0].property, 'expression');
+  });
+
+  it('falls back to POST on an OperationOutcome issue code of not-found regardless of status or wording', async () => {
+    const svc = new FhirTerminologyService({ baseUrl, timeout: 2000 });
+    // A 422 whose diagnostics wording matches none of the text heuristics — the FHIR-standard
+    // issue code 'not-found' alone must trigger the fallback.
+    mock.setResponses([
+      {
+        status: 422,
+        body: {
+          resourceType: 'OperationOutcome',
+          issue: [
+            { code: 'not-found', diagnostics: 'Unknown ValueSet uri: http://snomed.info/sct?fhir_vs=ecl/<< 50043002' },
+          ],
+        },
+      },
+      { status: 200, body: MOCK_EXPAND_RESPONSE },
+    ]);
+
+    const result = await svc.evaluateEcl('<< 50043002');
+
+    assert.strictEqual(result.total, 2);
+    assert.strictEqual(mock.requests.length, 2, 'implicit GET (422 code not-found) then POST fallback');
+    assert.strictEqual(mock.requests[0].method, 'GET');
+    assert.strictEqual(mock.requests[1].method, 'POST');
+  });
+
   it('does not trigger the expression retry on a genuine ECL syntax error, and surfaces that diagnostic', async () => {
     const svc = new FhirTerminologyService({
       baseUrl,

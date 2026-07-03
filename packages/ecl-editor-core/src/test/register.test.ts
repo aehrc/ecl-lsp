@@ -6,6 +6,8 @@ import type * as Monaco from 'monaco-editor';
 import { FhirTerminologyService } from '@aehrc/ecl-core';
 import { registerEclLanguage } from '../monaco/register';
 import { MonacoDiagnosticsAdapter } from '../monaco/diagnostics-adapter';
+import { mergeEclEditorConfig } from '../types';
+import type { EclEditorConfig } from '../types';
 import { createMockModel } from './mock-monaco';
 
 // Spy on FhirTerminologyService construction so tests can assert exactly which options
@@ -231,5 +233,24 @@ describe('registerEclLanguage() updateConfig() — partial config merging regres
     expect(forwarded.fhirServerUrl).toBeUndefined();
 
     disposable.dispose();
+  });
+});
+
+describe('mergeEclEditorConfig — key-generic merge', () => {
+  it('preserves keys outside the enumerated EclEditorConfig fields (extended config objects)', () => {
+    const onDiagnostics = vi.fn();
+    const base = { fhirServerUrl: 'https://tx.example.com/fhir', onDiagnostics } as EclEditorConfig;
+
+    const merged = mergeEclEditorConfig(base, { snomedVersion: 'http://snomed.info/sct/32506021000036107' });
+
+    expect((merged as Record<string, unknown>).onDiagnostics).toBe(onDiagnostics);
+    expect(merged.fhirServerUrl).toBe('https://tx.example.com/fhir');
+    expect(merged.snomedVersion).toBe('http://snomed.info/sct/32506021000036107');
+  });
+
+  it('does not apply undefined values from the partial (a value cannot be unset)', () => {
+    const merged = mergeEclEditorConfig({ evaluateEcl: 'post-valueset-filter' }, { evaluateEcl: undefined });
+
+    expect(merged.evaluateEcl).toBe('post-valueset-filter');
   });
 });

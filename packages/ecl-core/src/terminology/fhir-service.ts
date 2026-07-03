@@ -135,14 +135,11 @@ export class FhirTerminologyService implements ITerminologyService {
   /** Filter property that worked last time a POST ValueSet/$expand was used; skips the retry once known. */
   private postFilterProperty: 'constraint' | 'expression' | null = null;
   /**
-   * Strategy that worked last time in 'auto' mode. When 'post-valueset-filter', subsequent
-   * calls skip straight to POST (the implicit GET is assumed permanently unavailable). When
-   * 'implicit-url', it is only a fast-path hint — the implicit GET is still attempted first,
-   * and a per-request failure still gets a chance to fall back to POST (see `evaluateEcl` and
-   * `searchByFilter`), since GET failures like HTTP 414 can be a property of the expression
-   * rather than of server support.
+   * Set when a POST ValueSet/$expand fallback succeeds in 'auto' mode — the server has
+   * demonstrated it cannot serve the implicit ValueSet URL form, so later evaluations and
+   * searches skip straight to POST for the lifetime of this instance.
    */
-  private resolvedEvaluationStrategy: 'implicit-url' | 'post-valueset-filter' | null = null;
+  private usePostExpand = false;
 
   constructor(options: FhirTerminologyServiceOptions = {}) {
     this.baseUrl = options.baseUrl ?? 'https://tx.ontoserver.csiro.au/fhir';
@@ -627,68 +624,66 @@ export class FhirTerminologyService implements ITerminologyService {
     const trimmedExpression = expression.trim();
     const deadline = Date.now() + this.evaluationTimeout;
 
-    if (this.eclEvaluationStrategy === 'post-valueset-filter') {
-      return await this.evaluateEclViaPostExpand(trimmedExpression, limit, deadline);
+    try {
+      return await this.evaluateEclWithStrategy(trimmedExpression, limit, deadline);
+    } catch (error) {
+      throw this.createEvaluationError(trimmedExpression, error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  /**
+   * Strategy dispatch for {@link evaluateEcl}: forced POST (or a memoized successful POST
+   * fallback — see `usePostExpand`) goes straight to POST ValueSet/$expand; otherwise the
+   * implicit ValueSet URL GET is tried first, falling back to POST in 'auto' mode when the
+   * failure indicates the implicit form itself is unsupported. Note a per-request GET failure
+   * like HTTP 414 (URI too long) is a property of the expression, not the server, so a prior
+   * GET success never locks 'auto' mode out of the POST fallback.
+   *
+   * Throws raw issue text; {@link evaluateEcl} wraps it with "FHIR evaluation failed:"
+   * exactly once.
+   */
+  private async evaluateEclWithStrategy(
+    expression: string,
+    limit: number,
+    deadline: number,
+  ): Promise<EvaluationResponse> {
+    if (this.eclEvaluationStrategy === 'post-valueset-filter' || this.usePostExpand) {
+      return await this.evaluateEclViaPostExpand(expression, limit, deadline);
     }
 
-    // Forced implicit-url strategy: go straight to the implicit GET with no fallback attempt.
-    // (A memoized `resolvedEvaluationStrategy === 'implicit-url'` in 'auto' mode is deliberately
-    // NOT treated the same way here — see the 'auto' mode handling below.)
-    if (this.eclEvaluationStrategy === 'implicit-url') {
-      const timeoutMs = this.remainingTimeoutOrThrowWrapped(deadline, trimmedExpression);
-      const response = await this.evaluateEclViaImplicitUrl(trimmedExpression, limit, timeoutMs);
-      if (response.ok) {
-        this.resolvedEvaluationStrategy = 'implicit-url';
-        const data = (await response.json()) as FhirValueSetResponse;
-        return this.parseEvaluationResponse(data);
-      }
-      const issue = await this.extractOperationOutcomeIssue(response);
-      throw this.createEvaluationError(trimmedExpression, issue);
-    }
-
-    // 'auto' mode with the POST strategy already resolved: skip the doomed implicit GET.
-    if (this.resolvedEvaluationStrategy === 'post-valueset-filter') {
-      return await this.evaluateEclViaPostExpand(trimmedExpression, limit, deadline);
-    }
-
-    // 'auto' mode: try implicit GET, whether or not 'implicit-url' was memoized by an earlier
-    // call — that memoization is a fast-path hint, not a lock. A per-request implicit-GET
-    // failure (e.g. HTTP 414 URI-too-long) is a property of THIS expression, not evidence the
-    // server can never do implicit GETs, so it must still get a chance to fall back to POST.
-    const timeoutMs = this.remainingTimeoutOrThrowWrapped(deadline, trimmedExpression);
-    const implicitResponse = await this.evaluateEclViaImplicitUrl(trimmedExpression, limit, timeoutMs);
+    const implicitResponse = await this.evaluateEclViaImplicitUrl(
+      expression,
+      limit,
+      this.remainingTimeoutOrThrow(deadline),
+    );
     if (implicitResponse.ok) {
-      this.resolvedEvaluationStrategy = 'implicit-url';
-      const data = (await implicitResponse.json()) as FhirValueSetResponse;
-      return this.parseEvaluationResponse(data);
+      return this.parseEvaluationResponse((await implicitResponse.json()) as FhirValueSetResponse);
     }
 
-    const implicitIssue = await this.extractOperationOutcomeIssue(implicitResponse);
-    if (!this.shouldFallbackToPostExpand(implicitResponse.status, implicitIssue)) {
-      throw this.createEvaluationError(trimmedExpression, implicitIssue);
+    const outcome = await this.extractOperationOutcome(implicitResponse);
+    if (
+      this.eclEvaluationStrategy === 'implicit-url' ||
+      !this.shouldFallbackToPostExpand(implicitResponse.status, outcome)
+    ) {
+      throw new Error(outcome.issue);
     }
 
     try {
-      const result = await this.evaluateEclViaPostExpandCore(trimmedExpression, limit, deadline);
-      this.resolvedEvaluationStrategy = 'post-valueset-filter';
+      const result = await this.evaluateEclViaPostExpand(expression, limit, deadline);
+      this.usePostExpand = true;
       return result;
     } catch (error) {
       // Preserve the original implicit-GET diagnostic — the POST path's failure alone can
       // be misleading (e.g. a follow-up filter-property rejection masking the real issue).
       const postIssue = error instanceof Error ? error.message : String(error);
-      throw this.createEvaluationError(
-        trimmedExpression,
-        `${postIssue} (implicit ValueSet URL attempt failed: ${implicitIssue})`,
-      );
+      throw new Error(`${postIssue} (implicit ValueSet URL attempt failed: ${outcome.issue})`, { cause: error });
     }
   }
 
   /**
-   * Throws the shared evaluation-timeout issue if the deadline has already passed; otherwise
-   * returns the remaining ms. Throws the bare issue text (not yet wrapped by
-   * {@link createEvaluationError}) — every call site is inside a path that wraps it exactly
-   * once, either directly (see {@link remainingTimeoutOrThrowWrapped}) or via an enclosing
-   * try/catch that calls `createEvaluationError`.
+   * Throws if the shared evaluation deadline has passed; otherwise returns the remaining ms.
+   * Throws raw issue text — the public {@link evaluateEcl} applies the
+   * "FHIR evaluation failed:" wrapping exactly once.
    */
   private remainingTimeoutOrThrow(deadline: number): number {
     const remaining = deadline - Date.now();
@@ -698,37 +693,10 @@ export class FhirTerminologyService implements ITerminologyService {
     return remaining;
   }
 
-  /**
-   * {@link remainingTimeoutOrThrow}, wrapped with {@link createEvaluationError} for call sites
-   * that aren't already inside an enclosing try/catch that does so — otherwise the timeout
-   * issue would propagate with no "FHIR evaluation failed:" prefix at all.
-   */
-  private remainingTimeoutOrThrowWrapped(deadline: number, expression: string): number {
-    try {
-      return this.remainingTimeoutOrThrow(deadline);
-    } catch (error) {
-      throw this.createEvaluationError(expression, error instanceof Error ? error.message : String(error));
-    }
-  }
-
   private async evaluateEclViaImplicitUrl(expression: string, limit: number, timeoutMs: number): Promise<Response> {
     const implicitVsUrl = `${this.snomedSystemUrl}?fhir_vs=ecl/${expression}`;
     const url = `${this.baseUrl}/ValueSet/$expand?url=${encodeURIComponent(implicitVsUrl)}&count=${limit}`;
     return await this.fetchWithTimeout(url, timeoutMs);
-  }
-
-  /** Wraps {@link evaluateEclViaPostExpandCore}, formatting any thrown issue via {@link createEvaluationError}. */
-  private async evaluateEclViaPostExpand(
-    expression: string,
-    limit: number,
-    deadline: number,
-  ): Promise<EvaluationResponse> {
-    try {
-      return await this.evaluateEclViaPostExpandCore(expression, limit, deadline);
-    } catch (error) {
-      const issue = error instanceof Error ? error.message : String(error);
-      throw this.createEvaluationError(expression, issue);
-    }
   }
 
   /**
@@ -736,17 +704,16 @@ export class FhirTerminologyService implements ITerminologyService {
    *
    * - If a filter property is already memoized, use it exclusively — a failure there is a
    *   genuine expression error, not a candidate for another retry.
-   * - Otherwise try `constraint` first. On success, memoize `'constraint'`. On a 400 whose
+   * - Otherwise try `constraint` first. On success, memoize `'constraint'`. On a 400/422 whose
    *   diagnostics narrowly indicate an unsupported filter *property* (not just any mention of
    *   "constraint" — which is also part of the ECL language name and appears in genuine syntax
    *   errors), retry once with `expression` and memoize on success.
    * - If the retry also fails, throw the FIRST (`constraint`) attempt's issue — never the
    *   retry's — so the user's real diagnostic survives.
    *
-   * Throws a raw issue string (not yet wrapped by {@link createEvaluationError}); callers
-   * decide how to present it.
+   * Throws raw issue text; the public {@link evaluateEcl} wraps it exactly once.
    */
-  private async evaluateEclViaPostExpandCore(
+  private async evaluateEclViaPostExpand(
     expression: string,
     limit: number,
     deadline: number,
@@ -758,7 +725,7 @@ export class FhirTerminologyService implements ITerminologyService {
         const data = (await response.json()) as FhirValueSetResponse;
         return this.parseEvaluationResponse(data);
       }
-      throw new Error(await this.extractOperationOutcomeIssue(response));
+      throw new Error((await this.extractOperationOutcome(response)).issue);
     }
 
     const constraintTimeoutMs = this.remainingTimeoutOrThrow(deadline);
@@ -769,7 +736,7 @@ export class FhirTerminologyService implements ITerminologyService {
       return this.parseEvaluationResponse(data);
     }
 
-    const constraintIssue = await this.extractOperationOutcomeIssue(constraintResponse);
+    const constraintIssue = (await this.extractOperationOutcome(constraintResponse)).issue;
     if (!this.shouldRetryPostExpandWithExpression(constraintResponse.status, constraintIssue)) {
       throw new Error(constraintIssue);
     }
@@ -814,28 +781,42 @@ export class FhirTerminologyService implements ITerminologyService {
     return { total, concepts, truncated: total > concepts.length };
   }
 
-  private async extractOperationOutcomeIssue(response: Response): Promise<string> {
+  /** The machine-readable issue code and human-readable issue text of an error response. */
+  private async extractOperationOutcome(response: Response): Promise<{ code?: string; issue: string }> {
     const data = (await response.json().catch(() => null)) as FhirOperationOutcomeResponse | null;
-    return data?.issue?.[0]?.diagnostics ?? data?.issue?.[0]?.details?.text ?? `HTTP ${response.status}`;
+    const first = data?.issue?.[0];
+    return {
+      code: first?.code,
+      issue: first?.diagnostics ?? first?.details?.text ?? `HTTP ${response.status}`,
+    };
   }
 
-  private shouldFallbackToPostExpand(status: number, issue: string): boolean {
+  /**
+   * True when an implicit-ValueSet-URL failure indicates the implicit *form* is unsupported
+   * (rather than the expression being invalid): a 404/414 status, an OperationOutcome issue
+   * code of 'not-found' (the FHIR-standard, wording-independent signal — servers such as the
+   * ones in issue #55 reject implicit ValueSets with 422 + code 'not-found'), or diagnostics
+   * text matching known phrasings.
+   */
+  private shouldFallbackToPostExpand(status: number, outcome: { code?: string; issue: string }): boolean {
     return (
       status === 404 ||
       status === 414 ||
-      /value\s*set\s*not\s*found/i.test(issue) ||
-      /(?:implicit.*valueset.*not\s*supported|not\s*supported.*implicit.*valueset)/i.test(issue)
+      outcome.code === 'not-found' ||
+      /value\s*set\s*not\s*found/i.test(outcome.issue) ||
+      /(?:implicit.*valueset.*not\s*supported|not\s*supported.*implicit.*valueset)/i.test(outcome.issue)
     );
   }
 
   /**
-   * Narrowly matches a 400 whose diagnostics indicate the `constraint` filter *property*
+   * Narrowly matches a 400/422 whose diagnostics indicate the `constraint` filter *property*
    * itself is unsupported (e.g. "Unknown filter property constraint") — as opposed to a
    * genuine ECL syntax rejection like "Invalid expression constraint: mismatched input …",
    * where "constraint" is just part of the language's name and must NOT trigger a retry.
+   * 422 is included because servers targeted by issue #55 use it where others use 400.
    */
   private shouldRetryPostExpandWithExpression(status: number, issue: string): boolean {
-    return status === 400 && /propert(y|ies)/i.test(issue) && /constraint/i.test(issue);
+    return (status === 400 || status === 422) && /propert(y|ies)/i.test(issue) && /constraint/i.test(issue);
   }
 
   private createEvaluationError(expression: string, issue: string): Error {
@@ -853,51 +834,32 @@ export class FhirTerminologyService implements ITerminologyService {
   }
 
   /**
-   * Text search backing `searchConcepts`. Strategy-aware like `evaluateEcl`: forced or
-   * memoized `post-valueset-filter` goes straight to POST; forced `implicit-url` goes
-   * straight to GET with no fallback; `auto` (even with `implicit-url` memoized) tries the
-   * implicit GET first and falls back to POST on the same narrow signals used by
-   * `evaluateEcl`, memoizing the result (shared `resolvedEvaluationStrategy`) for both
-   * future searches and evaluations.
+   * Text search backing `searchConcepts`. Strategy-aware like `evaluateEcl`: forced POST (or
+   * a memoized successful POST fallback — `usePostExpand` is shared with `evaluateEcl`) goes
+   * straight to POST; forced `implicit-url` never falls back; 'auto' tries the implicit GET
+   * first and falls back to POST on the same signals `evaluateEcl` uses.
    */
   private async searchByFilter(filter: string): Promise<SearchResponse> {
-    if (
-      this.eclEvaluationStrategy === 'post-valueset-filter' ||
-      this.resolvedEvaluationStrategy === 'post-valueset-filter'
-    ) {
+    if (this.eclEvaluationStrategy === 'post-valueset-filter' || this.usePostExpand) {
       return await this.searchByFilterViaPostExpand(filter);
     }
 
-    // Forced implicit-url strategy: go straight to GET with no fallback attempt. (A memoized
-    // 'implicit-url' in 'auto' mode is deliberately NOT treated the same way — see below.)
-    if (this.eclEvaluationStrategy === 'implicit-url') {
-      const response = await this.searchByFilterViaImplicitUrl(filter);
-      if (!response.ok) {
-        throw new Error(`FHIR request failed: ${response.status}`);
-      }
-      this.resolvedEvaluationStrategy = 'implicit-url';
-      return this.parseSearchResponse((await response.json()) as FhirValueSetResponse);
-    }
-
-    // 'auto' mode: try implicit GET, whether or not 'implicit-url' was memoized by an earlier
-    // call (that memoization is a fast-path hint, not a lock — see evaluateEcl for why, and
-    // note this GET uses a different `?fhir_vs&filter=` form than evaluateEcl's `?fhir_vs=ecl/…`,
-    // so a memoization from one must not lock the other out of its own fallback). Fall back to
-    // POST on the same narrow signals evaluateEcl uses.
     const implicitResponse = await this.searchByFilterViaImplicitUrl(filter);
     if (implicitResponse.ok) {
-      this.resolvedEvaluationStrategy = 'implicit-url';
       return this.parseSearchResponse((await implicitResponse.json()) as FhirValueSetResponse);
     }
 
-    const issue = await this.extractOperationOutcomeIssue(implicitResponse);
-    if (!this.shouldFallbackToPostExpand(implicitResponse.status, issue)) {
-      const suffix = issue ? ` - ${issue}` : '';
+    const outcome = await this.extractOperationOutcome(implicitResponse);
+    if (
+      this.eclEvaluationStrategy === 'implicit-url' ||
+      !this.shouldFallbackToPostExpand(implicitResponse.status, outcome)
+    ) {
+      const suffix = outcome.issue ? ` - ${outcome.issue}` : '';
       throw new Error(`FHIR request failed: ${implicitResponse.status}${suffix}`);
     }
 
     const result = await this.searchByFilterViaPostExpand(filter);
-    this.resolvedEvaluationStrategy = 'post-valueset-filter';
+    this.usePostExpand = true;
     return result;
   }
 

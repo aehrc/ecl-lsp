@@ -163,27 +163,33 @@ export function registerEclLanguage(
      *
      * Adapters receive the raw `newConfig` partial (NOT the merged `currentConfig`) —
      * `DiagnosticsEngine.updateConfig` does its own internal merge against its own stored
-     * effective config and only rebuilds its terminology service when the raw partial actually
-     * touches a relevant key (`fhirServerUrl` / `snomedVersion` / `evaluateEcl` / `corsProxy` /
-     * `terminologyService`). Forwarding the full merged config instead would make every update
-     * (even an unrelated `semanticDebounceMs`-only or `formattingOptions`-only change) look like
-     * it touches those keys once any of them has ever been set, discarding caches and any
-     * strategy memoization on the terminology service for no reason. It would also cause a
-     * registration-time custom `terminologyService` to ride along — and be reapplied — on every
-     * unrelated forward.
+     * effective config and only rebuilds its terminology service when a relevant key
+     * (`fhirServerUrl` / `snomedVersion` / `evaluateEcl` / `corsProxy` / `terminologyService`)
+     * is present in the partial and its value actually changed. Forwarding the full merged
+     * config instead would make every update (even an unrelated `semanticDebounceMs`-only or
+     * `formattingOptions`-only change) carry those keys once any of them has ever been set, and
+     * would cause a registration-time custom `terminologyService` to ride along — and be
+     * reapplied — on every unrelated forward.
      */
     updateConfig(newConfig: Partial<EclEditorConfig>): void {
+      const prevConfig = currentConfig;
       currentConfig = mergeEclEditorConfig(currentConfig, newConfig);
 
       if (newConfig.formattingOptions) {
         formattingOptions = { ...formattingOptions, ...newConfig.formattingOptions };
       }
+      // Rebuild the terminology service only when a service-relevant key is present in the
+      // partial AND its value actually changed. A defined-but-unchanged value (common when a
+      // host forwards all of its config on every update — e.g. React re-rendering with a fixed
+      // corsProxy prop) must not trigger a rebuild, which would discard the concept caches and
+      // the POST-fallback strategy memoization on the existing service for no reason.
       if (newConfig.terminologyService !== undefined) {
         terminologyService = newConfig.terminologyService;
       } else if (
-        newConfig.fhirServerUrl !== undefined ||
-        newConfig.snomedVersion !== undefined ||
-        newConfig.evaluateEcl !== undefined
+        (newConfig.fhirServerUrl !== undefined && newConfig.fhirServerUrl !== prevConfig.fhirServerUrl) ||
+        (newConfig.snomedVersion !== undefined && newConfig.snomedVersion !== prevConfig.snomedVersion) ||
+        (newConfig.evaluateEcl !== undefined && newConfig.evaluateEcl !== prevConfig.evaluateEcl) ||
+        (newConfig.corsProxy !== undefined && newConfig.corsProxy !== prevConfig.corsProxy)
       ) {
         const url = currentConfig.corsProxy
           ? `${currentConfig.corsProxy}${currentConfig.fhirServerUrl ?? 'https://tx.ontoserver.csiro.au/fhir'}`

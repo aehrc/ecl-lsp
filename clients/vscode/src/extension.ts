@@ -503,7 +503,12 @@ async function evaluateExpression(client: LanguageClient, startLine?: number, ex
         evaluationOutput.show(true);
       } catch (error: unknown) {
         const msg = error instanceof Error ? error.message : String(error);
-        if (msg.includes('abort') || msg.includes('timeout') || msg.includes('ETIMEDOUT')) {
+        if (
+          msg.includes('abort') ||
+          msg.includes('timeout') ||
+          msg.includes('timed out') ||
+          msg.includes('ETIMEDOUT')
+        ) {
           window.showWarningMessage(
             'ECL evaluation timed out. The expression may be too broad — try adding constraints to narrow it.',
           );

@@ -627,7 +627,11 @@ export class FhirTerminologyService implements ITerminologyService {
     try {
       return await this.evaluateEclWithStrategy(trimmedExpression, limit, deadline);
     } catch (error) {
-      throw this.createEvaluationError(trimmedExpression, error instanceof Error ? error.message : String(error));
+      throw this.createEvaluationError(
+        trimmedExpression,
+        error instanceof Error ? error.message : String(error),
+        error,
+      );
     }
   }
 
@@ -676,7 +680,15 @@ export class FhirTerminologyService implements ITerminologyService {
       // Preserve the original implicit-GET diagnostic — the POST path's failure alone can
       // be misleading (e.g. a follow-up filter-property rejection masking the real issue).
       const postIssue = error instanceof Error ? error.message : String(error);
-      throw new Error(`${postIssue} (implicit ValueSet URL attempt failed: ${outcome.issue})`, { cause: error });
+      // When a SNOMED version is pinned, a 'not-found' style failure on BOTH paths is at
+      // least as likely to mean the version is absent from the server as that the implicit
+      // form is unsupported — say so rather than leaving the user to untangle two errors.
+      const versionHint = this.snomedVersion
+        ? `\nNote: check that the configured SNOMED CT version (${this.snomedVersion}) is available on this terminology server.`
+        : '';
+      throw new Error(`${postIssue} (implicit ValueSet URL attempt failed: ${outcome.issue})${versionHint}`, {
+        cause: error,
+      });
     }
   }
 
@@ -751,7 +763,10 @@ export class FhirTerminologyService implements ITerminologyService {
 
     // The retry also failed — surface the FIRST (constraint) issue, not the retry's, since
     // the constraint attempt is the more informative diagnostic for a genuine ECL error.
-    throw new Error(constraintIssue);
+    // Consume the retry's body anyway (an unread body pins the keep-alive socket) and keep
+    // its diagnostic on the cause chain.
+    const expressionIssue = (await this.extractOperationOutcome(expressionResponse)).issue;
+    throw new Error(constraintIssue, { cause: new Error(expressionIssue) });
   }
 
   private async postValueSetExpand(
@@ -819,7 +834,8 @@ export class FhirTerminologyService implements ITerminologyService {
     return (status === 400 || status === 422) && /propert(y|ies)/i.test(issue) && /constraint/i.test(issue);
   }
 
-  private createEvaluationError(expression: string, issue: string): Error {
+  private createEvaluationError(expression: string, issue: string, cause?: unknown): Error {
+    const options = cause === undefined ? undefined : { cause };
     // Clean up FHIR OperationOutcome messages: strip server UUIDs and add context
     // when filter syntax is rejected by the server's ECL parser
     if (expression.includes('{{') && /no viable alternative/i.test(issue)) {
@@ -828,9 +844,10 @@ export class FhirTerminologyService implements ITerminologyService {
       return new Error(
         `FHIR evaluation failed: ${cleaned}\n` +
           'Note: Some ECL 2.2 filter syntax (e.g. {{ D id = ... }}) may not be supported by this terminology server.',
+        options,
       );
     }
-    return new Error(`FHIR evaluation failed: ${issue}`);
+    return new Error(`FHIR evaluation failed: ${issue}`, options);
   }
 
   /**
@@ -868,7 +885,7 @@ export class FhirTerminologyService implements ITerminologyService {
     return await this.fetchWithTimeout(url, this.searchTimeout);
   }
 
-  /** POST ValueSet/$expand form of the text search, using the Task-2 shared compose/POST helper. */
+  /** POST ValueSet/$expand form of the text search (see {@link postComposeExpand}). */
   private async searchByFilterViaPostExpand(filter: string): Promise<SearchResponse> {
     const response = await this.postComposeExpand(
       {},
@@ -877,7 +894,9 @@ export class FhirTerminologyService implements ITerminologyService {
     );
 
     if (!response.ok) {
-      throw new Error(`FHIR request failed: ${response.status}`);
+      const outcome = await this.extractOperationOutcome(response);
+      const suffix = outcome.issue ? ` - ${outcome.issue}` : '';
+      throw new Error(`FHIR request failed: ${response.status}${suffix}`);
     }
 
     return this.parseSearchResponse((await response.json()) as FhirValueSetResponse);

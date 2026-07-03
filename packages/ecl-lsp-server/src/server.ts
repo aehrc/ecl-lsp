@@ -244,7 +244,8 @@ function getInitializationSemanticValidationEnabled(): boolean {
   }
   const raw = cachedInitOptions.semanticValidation;
   if (typeof raw === 'boolean') return raw;
-  if (raw && typeof raw === 'object') return (raw as Record<string, unknown>).enabled !== false;
+  const record = asRecord(raw);
+  if (record) return record.enabled !== false;
   return true;
 }
 
@@ -359,8 +360,9 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
   }
 
   // Cache initializationOptions for Eclipse and other clients that send config here
-  if (params.initializationOptions && typeof params.initializationOptions === 'object') {
-    cachedInitOptions = params.initializationOptions as Record<string, unknown>;
+  const initOptions = asRecord(params.initializationOptions);
+  if (initOptions) {
+    cachedInitOptions = initOptions;
     connection.console.log('Received initializationOptions: ' + JSON.stringify(Object.keys(cachedInitOptions)));
   }
 

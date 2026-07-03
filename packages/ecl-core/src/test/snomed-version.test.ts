@@ -918,7 +918,7 @@ describe('FhirTerminologyService — evaluateEcl strategy heuristics & memoizati
     assert.strictEqual(mock.requests[2].method, 'POST', 'memoized strategy should go straight to POST');
   });
 
-  it('auto mode memoizes the implicit-url strategy after first GET success: second call issues exactly one GET', async () => {
+  it('a successful implicit GET leaves auto mode on the GET path: second call issues exactly one GET', async () => {
     const svc = new FhirTerminologyService({ baseUrl, timeout: 2000 });
     mock.setResponse(200, MOCK_EXPAND_RESPONSE);
 
@@ -932,7 +932,7 @@ describe('FhirTerminologyService — evaluateEcl strategy heuristics & memoizati
     assert.strictEqual(mock.requests[1].method, 'GET');
   });
 
-  it('does not let a memoized implicit-url success lock out POST fallback on a later per-request failure (issue #59 final review, Finding 1)', async () => {
+  it('a prior implicit GET success does not prevent POST fallback on a later per-request 414', async () => {
     const svc = new FhirTerminologyService({ baseUrl, timeout: 2000 });
 
     // First call: implicit GET succeeds, memoizing 'implicit-url'.
@@ -963,7 +963,7 @@ describe('FhirTerminologyService — evaluateEcl strategy heuristics & memoizati
     assert.strictEqual(result.total, 2);
   });
 
-  it('does not let a memoized implicit-url success lock out POST fallback on a later per-request 404 (issue #59 final review, Finding 1)', async () => {
+  it('a prior implicit GET success does not prevent POST fallback on a later per-request 404', async () => {
     const svc = new FhirTerminologyService({ baseUrl, timeout: 2000 });
 
     mock.setResponse(200, MOCK_EXPAND_RESPONSE);
@@ -980,7 +980,7 @@ describe('FhirTerminologyService — evaluateEcl strategy heuristics & memoizati
     assert.strictEqual(result.total, 2);
   });
 
-  it('forced implicit-url strategy still throws with no fallback even after a prior successful call (issue #59 final review, Finding 1)', async () => {
+  it('forced implicit-url strategy still throws with no fallback even after a prior successful call', async () => {
     const svc = new FhirTerminologyService({
       baseUrl,
       timeout: 2000,
@@ -1001,7 +1001,7 @@ describe('FhirTerminologyService — evaluateEcl strategy heuristics & memoizati
     assert.strictEqual(mock.requests[1].method, 'GET');
   });
 
-  it('a timed-out evaluation surfaces exactly one "FHIR evaluation failed:" prefix (issue #59 final review, Finding 3)', async () => {
+  it('a timed-out evaluation surfaces exactly one "FHIR evaluation failed:" prefix', async () => {
     const svc = new FhirTerminologyService({ baseUrl, timeout: 2000 });
     // Force the internal deadline to have already elapsed before evaluateEcl's first
     // remaining-timeout check runs, without needing to wait out the real 15s evaluation
@@ -1182,6 +1182,53 @@ describe('FhirTerminologyService — evaluateEcl strategy heuristics & memoizati
     assert.match(message, /Internal server error during POST expand/);
     assert.match(message, /implicit ValueSet URL attempt failed/i);
     assert.match(message, /ValueSet not found: http:\/\/snomed\.info\/sct\?fhir_vs=ecl\/<< 50043002/);
+    assert.ok(caught.cause instanceof Error, 'the original failure should be preserved on the cause chain');
+  });
+
+  it('hints at the configured SNOMED version when both evaluation attempts fail', async () => {
+    // With a pinned version, a not-found failure on BOTH paths is at least as likely to mean
+    // the version is absent from the server as that the implicit form is unsupported.
+    const version = 'http://snomed.info/sct/32506021000036107/version/19990101';
+    const svc = new FhirTerminologyService({ baseUrl, timeout: 2000, snomedVersion: version });
+    mock.setResponses([
+      NOT_FOUND_ISSUE,
+      {
+        status: 400,
+        body: {
+          resourceType: 'OperationOutcome',
+          issue: [{ diagnostics: 'Unknown CodeSystem version' }],
+        },
+      },
+    ]);
+
+    let caught: Error | null = null;
+    try {
+      await svc.evaluateEcl('<< 50043002');
+    } catch (error) {
+      caught = error as Error;
+    }
+    assert.ok(caught, 'evaluateEcl should reject');
+    assert.match(caught.message, /check that the configured SNOMED CT version/);
+    assert.match(caught.message, /19990101/);
+  });
+
+  it('does not add the version hint when no SNOMED version is configured', async () => {
+    const svc = new FhirTerminologyService({ baseUrl, timeout: 2000 });
+    mock.setResponses([
+      NOT_FOUND_ISSUE,
+      {
+        status: 500,
+        body: {
+          resourceType: 'OperationOutcome',
+          issue: [{ diagnostics: 'Internal server error during POST expand' }],
+        },
+      },
+    ]);
+
+    await assert.rejects(
+      () => svc.evaluateEcl('<< 50043002'),
+      (error: Error) => !error.message.includes('check that the configured SNOMED CT version'),
+    );
   });
 });
 
@@ -1319,7 +1366,7 @@ describe('FhirTerminologyService — searchByFilter strategy awareness', () => {
     ]);
   });
 
-  it('does not let a memoized implicit-url success lock out POST fallback on a later search failure (issue #59 final review, Finding 1)', async () => {
+  it('a prior implicit GET search success does not prevent POST fallback on a later search 404', async () => {
     const svc = new FhirTerminologyService({ baseUrl, timeout: 2000 });
 
     // First search: implicit GET succeeds, memoizing 'implicit-url'.
@@ -1344,7 +1391,7 @@ describe('FhirTerminologyService — searchByFilter strategy awareness', () => {
     ]);
   });
 
-  it('includes the extracted OperationOutcome issue text when auto-mode fallback does not fire (issue #59 final review, Finding 4)', async () => {
+  it('includes the extracted OperationOutcome issue text when auto-mode fallback does not fire', async () => {
     const svc = new FhirTerminologyService({ baseUrl, timeout: 2000 });
     mock.setResponse(400, {
       resourceType: 'OperationOutcome',
@@ -1353,7 +1400,7 @@ describe('FhirTerminologyService — searchByFilter strategy awareness', () => {
 
     // `searchConcepts` wraps every error into a generic "Terminology server unavailable"
     // message, so call the private `searchByFilter` directly to observe the raw thrown message
-    // that Finding 4 is about.
+    // that this test is about.
     let caught: Error | null = null;
     try {
       await (svc as any).searchByFilter('clinical');
@@ -1365,5 +1412,27 @@ describe('FhirTerminologyService — searchByFilter strategy awareness', () => {
     assert.strictEqual(mock.requests.length, 1, 'no POST fallback should be attempted for a genuine 400');
     assert.match(caught.message, /^FHIR request failed: 400/);
     assert.match(caught.message, /Bad request for http:\/\/snomed\.info\/sct\?fhir_vs&filter=clinical/);
+  });
+
+  it('includes the OperationOutcome diagnostics when a POST search fails, matching the GET path', async () => {
+    const svc = new FhirTerminologyService({
+      baseUrl,
+      timeout: 2000,
+      eclEvaluationStrategy: 'post-valueset-filter',
+    });
+    mock.setResponse(400, {
+      resourceType: 'OperationOutcome',
+      issue: [{ diagnostics: 'Filter expansion not supported here' }],
+    });
+
+    let caught: Error | null = null;
+    try {
+      await (svc as any).searchByFilter('clinical');
+    } catch (error) {
+      caught = error as Error;
+    }
+
+    assert.ok(caught, 'searchByFilter should reject');
+    assert.match(caught.message, /^FHIR request failed: 400 - Filter expansion not supported here/);
   });
 });

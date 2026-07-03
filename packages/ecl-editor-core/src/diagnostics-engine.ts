@@ -64,6 +64,7 @@ export class DiagnosticsEngine {
    * set at construction or by an earlier partial update.
    */
   updateConfig(config: Partial<EclEditorConfig>): void {
+    const prev = this.config;
     this.config = mergeEclEditorConfig(this.config, config);
 
     if (config.semanticValidation !== undefined) {
@@ -72,13 +73,17 @@ export class DiagnosticsEngine {
     if (config.semanticDebounceMs !== undefined) {
       this.debounceMs = config.semanticDebounceMs;
     }
+    // Rebuild the terminology service only when a service-relevant key is present in the
+    // partial AND its value actually changed — a defined-but-unchanged value (common when a
+    // host forwards its whole config on every update) must not discard the existing service's
+    // caches and POST-fallback strategy memoization.
     if (config.terminologyService !== undefined) {
       this.terminologyService = config.terminologyService;
     } else if (
-      config.fhirServerUrl !== undefined ||
-      config.snomedVersion !== undefined ||
-      config.evaluateEcl !== undefined ||
-      config.corsProxy !== undefined
+      (config.fhirServerUrl !== undefined && config.fhirServerUrl !== prev.fhirServerUrl) ||
+      (config.snomedVersion !== undefined && config.snomedVersion !== prev.snomedVersion) ||
+      (config.evaluateEcl !== undefined && config.evaluateEcl !== prev.evaluateEcl) ||
+      (config.corsProxy !== undefined && config.corsProxy !== prev.corsProxy)
     ) {
       this.terminologyService = this.createTerminologyService(this.config);
     }

@@ -9,31 +9,16 @@ import { MonacoDiagnosticsAdapter } from '../monaco/diagnostics-adapter';
 import { mergeEclEditorConfig } from '../types';
 import type { EclEditorConfig } from '../types';
 import { createMockModel } from './mock-monaco';
+import type { FhirTerminologyServiceCtorOptions } from './mock-fhir-service';
 
 // Spy on FhirTerminologyService construction so tests can assert exactly which options
 // registerEclLanguage()'s updateConfig rebuilt the service with, without real network calls.
 vi.mock('@aehrc/ecl-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@aehrc/ecl-core')>();
+  const { createFhirTerminologyServiceMock } = await import('./mock-fhir-service');
   return {
     ...actual,
-    // A named function expression (not an arrow function) so `new FhirTerminologyService(...)`
-    // in production code invokes it as a real constructor and uses its returned object.
-    FhirTerminologyService: vi.fn().mockImplementation(function FhirTerminologyServiceMock() {
-      return {
-        async getConceptInfo() {
-          return null;
-        },
-        async validateConcepts(ids: string[]) {
-          return new Map(ids.map((id) => [id, null]));
-        },
-        async searchConcepts() {
-          return { results: [], hasMore: false };
-        },
-        async evaluateEcl() {
-          return { total: 0, concepts: [], truncated: false };
-        },
-      };
-    }),
+    FhirTerminologyService: createFhirTerminologyServiceMock(),
   };
 });
 
@@ -48,12 +33,6 @@ vi.mock('../monaco/diagnostics-adapter', () => ({
     };
   }),
 }));
-
-interface FhirTerminologyServiceCtorOptions {
-  baseUrl?: string;
-  snomedVersion?: string;
-  eclEvaluationStrategy?: string;
-}
 
 /** Minimal Monaco module mock — just enough surface area for registerEclLanguage() to run. */
 function createMockMonacoModule(initialModels: Monaco.editor.ITextModel[] = []) {
@@ -95,7 +74,7 @@ function toEclModel(text: string): Monaco.editor.ITextModel {
   return createMockModel(text) as unknown as Monaco.editor.ITextModel;
 }
 
-describe('registerEclLanguage() updateConfig() — partial config merging regression (issue #59 review, Finding 3)', () => {
+describe('registerEclLanguage() updateConfig() — partial config merging', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
@@ -132,6 +111,50 @@ describe('registerEclLanguage() updateConfig() — partial config merging regres
     disposable.dispose();
   });
 
+  it('should rebuild the terminology service on a corsProxy-only update (matching DiagnosticsEngine)', () => {
+    const { monaco } = createMockMonacoModule();
+    const disposable = registerEclLanguage(monaco, {
+      fhirServerUrl: 'https://tx.example.com/fhir',
+      semanticValidation: false,
+    });
+
+    const mockedCtor = vi.mocked(FhirTerminologyService);
+
+    disposable.updateConfig({ corsProxy: 'https://proxy.example.com/' });
+
+    const lastCall = mockedCtor.mock.calls[mockedCtor.mock.calls.length - 1];
+    const lastArgs = lastCall?.[0] as FhirTerminologyServiceCtorOptions;
+    expect(lastArgs.baseUrl).toBe('https://proxy.example.com/https://tx.example.com/fhir');
+
+    disposable.dispose();
+  });
+
+  it('should NOT rebuild the terminology service when a forwarded service key is unchanged', () => {
+    const { monaco } = createMockMonacoModule();
+    // Host forwards all of its config on every update (e.g. React re-render); the service keys
+    // are present but unchanged, so no rebuild should occur (which would drop caches + memoization).
+    const disposable = registerEclLanguage(monaco, {
+      fhirServerUrl: 'https://tx.example.com/fhir',
+      corsProxy: 'https://proxy.example.com/',
+      semanticValidation: false,
+    });
+
+    const mockedCtor = vi.mocked(FhirTerminologyService);
+    const constructionsAfterRegistration = mockedCtor.mock.calls.length;
+
+    // An update whose only genuine change is an unrelated field, but which re-forwards the
+    // same fhirServerUrl and corsProxy values (identical to registration).
+    disposable.updateConfig({
+      fhirServerUrl: 'https://tx.example.com/fhir',
+      corsProxy: 'https://proxy.example.com/',
+      semanticDebounceMs: 250,
+    });
+
+    expect(mockedCtor.mock.calls.length).toBe(constructionsAfterRegistration);
+
+    disposable.dispose();
+  });
+
   it('should attach new diagnostics adapters with the latest merged config, not the stale registration config', () => {
     const { monaco, createModel } = createMockMonacoModule();
     // No fhirServerUrl at registration time — the service (and the adapter's config) only
@@ -153,7 +176,7 @@ describe('registerEclLanguage() updateConfig() — partial config merging regres
     disposable.dispose();
   });
 
-  it('should propagate the raw partial (not the merged config) to existing diagnostics adapters (issue #59 final review, Finding 2)', () => {
+  it('should propagate the raw partial (not the merged config) to existing diagnostics adapters', () => {
     const model = toEclModel('< 404684003');
     const { monaco } = createMockMonacoModule([model]);
     const disposable = registerEclLanguage(monaco, {
@@ -184,7 +207,7 @@ describe('registerEclLanguage() updateConfig() — partial config merging regres
     disposable.dispose();
   });
 
-  it('should not forward an unrelated registration-time fhirServerUrl (or terminologyService) on a semanticDebounceMs-only update (issue #59 final review, Finding 2)', () => {
+  it('should not forward an unrelated registration-time fhirServerUrl (or terminologyService) on a semanticDebounceMs-only update', () => {
     const model = toEclModel('< 404684003');
     const { monaco } = createMockMonacoModule([model]);
     const customService = { evaluateEcl: vi.fn() };
@@ -214,7 +237,7 @@ describe('registerEclLanguage() updateConfig() — partial config merging regres
     disposable.dispose();
   });
 
-  it('should not forward unrelated keys on a formattingOptions-only update (issue #59 final review, Finding 2)', () => {
+  it('should not forward unrelated keys on a formattingOptions-only update', () => {
     const model = toEclModel('< 404684003');
     const { monaco } = createMockMonacoModule([model]);
     const disposable = registerEclLanguage(monaco, {

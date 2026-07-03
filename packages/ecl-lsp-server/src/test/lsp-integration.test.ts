@@ -4,6 +4,7 @@
 import { describe, it, before, after } from 'node:test';
 import * as assert from 'node:assert';
 import { spawn, ChildProcess } from 'node:child_process';
+import * as http from 'node:http';
 import * as path from 'node:path';
 import {
   StreamMessageReader,
@@ -729,5 +730,130 @@ describe('LSP Protocol Integration', () => {
       assert.ok(tokens, 'should return semantic tokens for long expression');
       assert.ok(tokens.data.length > 0, 'should have token data');
     });
+  });
+});
+
+// ── ECL evaluation against a POST-only terminology server (issue #55) ──────
+//
+// End-to-end coverage through the LSP protocol layer: spawn the real server,
+// point it (via workspace settings) at a mock terminology server that rejects
+// the implicit ValueSet URL GET but supports POST ValueSet/$expand, and assert
+// that ecl/evaluateExpression returns concepts via the auto-mode fallback. The
+// other evaluation tests race against the real Ontoserver and tolerate
+// timeouts, so this is the only test that would catch a fallback regression
+// end to end.
+
+interface MockFhirRequest {
+  method: string;
+  url: string;
+}
+
+function createPostOnlyFhirServer(): {
+  server: http.Server;
+  requests: MockFhirRequest[];
+  start: () => Promise<string>;
+  stop: () => Promise<void>;
+} {
+  const requests: MockFhirRequest[] = [];
+  const expansion = {
+    resourceType: 'ValueSet',
+    expansion: {
+      total: 2,
+      contains: [
+        { code: '404684003', display: 'Clinical finding' },
+        { code: '19829001', display: 'Disorder of lung' },
+      ],
+    },
+  };
+  const notFound = {
+    resourceType: 'OperationOutcome',
+    issue: [{ severity: 'error', code: 'not-found', diagnostics: 'ValueSet not found' }],
+  };
+
+  const server = http.createServer((req, res) => {
+    // Drain the body so the socket is consumed, then respond by method.
+    req.resume();
+    req.on('end', () => {
+      requests.push({ method: req.method ?? 'GET', url: req.url ?? '' });
+      if (req.method === 'POST') {
+        // POST ValueSet/$expand with an ECL filter is supported.
+        res.writeHead(200, { 'Content-Type': 'application/fhir+json' });
+        res.end(JSON.stringify(expansion));
+      } else {
+        // Implicit ValueSet URL GET is rejected (the issue #55 server behaviour).
+        res.writeHead(404, { 'Content-Type': 'application/fhir+json' });
+        res.end(JSON.stringify(notFound));
+      }
+    });
+  });
+
+  return {
+    server,
+    requests,
+    start(): Promise<string> {
+      return new Promise((resolve) => {
+        server.listen(0, '127.0.0.1', () => {
+          const addr = server.address() as { port: number };
+          resolve(`http://127.0.0.1:${addr.port}`);
+        });
+      });
+    },
+    stop(): Promise<void> {
+      return new Promise((resolve) => {
+        server.close(() => {
+          resolve();
+        });
+      });
+    },
+  };
+}
+
+describe('LSP evaluation fallback (POST-only terminology server, issue #55)', () => {
+  it('ecl/evaluateExpression succeeds via POST fallback when the implicit ValueSet URL is unsupported', async () => {
+    const mock = createPostOnlyFhirServer();
+    const mockUrl = await mock.start();
+    const { process: proc, connection } = startServer({
+      'ecl.terminology': { serverUrl: mockUrl, timeout: 2000, snomedVersion: '', evaluateEcl: 'auto' },
+      'ecl.semanticValidation': { enabled: false },
+      'ecl.evaluation': { resultLimit: 200 },
+    });
+
+    try {
+      await initializeServer(connection);
+      await openDocument(connection, 'file:///test-eval-fallback.ecl', '<< 50043002 AND << 19829001');
+
+      const result: { total: number; concepts: { code: string; display: string }[] } = await connection.sendRequest(
+        'ecl/evaluateExpression',
+        {
+          uri: 'file:///test-eval-fallback.ecl',
+          expression: '<< 50043002 AND << 19829001',
+          limit: 10,
+        },
+      );
+
+      assert.strictEqual(result.total, 2, 'should return the expansion total from the POST fallback');
+      assert.strictEqual(result.concepts.length, 2, 'should return the concepts from the POST fallback');
+
+      // Identify the evaluation's own two requests (other requests — e.g. semantic-validation
+      // bulkExpand `?property=inactive` or a `CodeSystem/$lookup` — may interleave). The implicit
+      // attempt is a GET ValueSet/$expand?url=<encoded implicit VS URL>; the fallback is a POST
+      // ValueSet/$expand carrying the evaluation's count.
+      const implicitGetIndex = mock.requests.findIndex(
+        (r) => r.method === 'GET' && r.url.includes('/ValueSet/$expand?url='),
+      );
+      const fallbackPostIndex = mock.requests.findIndex(
+        (r) => r.method === 'POST' && r.url.includes('/ValueSet/$expand?count='),
+      );
+      assert.ok(implicitGetIndex >= 0, 'should attempt the implicit ValueSet URL GET');
+      assert.ok(fallbackPostIndex >= 0, 'should fall back to POST ValueSet/$expand for the evaluation');
+      assert.ok(
+        implicitGetIndex < fallbackPostIndex,
+        `the implicit GET should precede the POST fallback (get@${implicitGetIndex}, post@${fallbackPostIndex})`,
+      );
+    } finally {
+      connection.dispose();
+      proc.kill('SIGTERM');
+      await mock.stop();
+    }
   });
 });

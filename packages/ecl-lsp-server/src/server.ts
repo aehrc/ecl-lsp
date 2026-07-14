@@ -206,7 +206,11 @@ function applyTerminologyConfig(cfg: {
   timeout?: number;
   snomedVersion?: string;
   maxConcurrency?: number;
+  warnings?: string[];
 }): void {
+  for (const warning of cfg.warnings ?? []) {
+    connection.console.warn(warning);
+  }
   snomedEditionLabel = cfg.snomedVersion ?? 'server default';
   terminologyService = new FhirTerminologyService({
     baseUrl: cfg.serverUrl,

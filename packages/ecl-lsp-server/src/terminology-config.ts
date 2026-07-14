@@ -6,6 +6,8 @@ export interface TerminologyConfig {
   timeout: number | undefined;
   snomedVersion: string | undefined;
   maxConcurrency: number | undefined;
+  /** Non-fatal warnings about values that were provided but ignored (e.g. an invalid maxConcurrency). */
+  warnings: string[];
 }
 
 /**
@@ -13,9 +15,17 @@ export interface TerminologyConfig {
  * (workspace.getConfiguration section keys) and Eclipse-style (initializationOptions flat keys).
  */
 export function extractTerminologyConfig(config: Record<string, unknown> | null | undefined): TerminologyConfig {
-  if (!config) return { serverUrl: undefined, timeout: undefined, snomedVersion: undefined, maxConcurrency: undefined };
+  if (!config)
+    return {
+      serverUrl: undefined,
+      timeout: undefined,
+      snomedVersion: undefined,
+      maxConcurrency: undefined,
+      warnings: [],
+    };
   // VSCode: { serverUrl, timeout, snomedVersion, maxConcurrency } from section 'ecl.terminology'
   // Eclipse initializationOptions: { fhirTerminologyServerUrl, timeout, snomedVersion, maxConcurrency }
+  const warnings: string[] = [];
   const rawUrl = config.serverUrl ?? config.fhirTerminologyServerUrl;
   const serverUrl = typeof rawUrl === 'string' && rawUrl.trim() ? rawUrl.trim() : undefined;
   const rawTimeout = config.timeout;
@@ -23,9 +33,15 @@ export function extractTerminologyConfig(config: Record<string, unknown> | null 
   const rawVersion = config.snomedVersion;
   const snomedVersion = typeof rawVersion === 'string' && rawVersion.trim() ? rawVersion.trim() : undefined;
   const rawConcurrency = config.maxConcurrency;
-  const maxConcurrency =
-    typeof rawConcurrency === 'number' && Number.isInteger(rawConcurrency) && rawConcurrency > 0
-      ? rawConcurrency
-      : undefined;
-  return { serverUrl, timeout, snomedVersion, maxConcurrency };
+  let maxConcurrency: number | undefined;
+  if (rawConcurrency !== undefined) {
+    if (typeof rawConcurrency === 'number' && Number.isInteger(rawConcurrency) && rawConcurrency > 0) {
+      maxConcurrency = rawConcurrency;
+    } else {
+      warnings.push(
+        `Ignoring invalid maxConcurrency ${JSON.stringify(rawConcurrency)}: expected a positive integer — using the default instead`,
+      );
+    }
+  }
+  return { serverUrl, timeout, snomedVersion, maxConcurrency, warnings };
 }

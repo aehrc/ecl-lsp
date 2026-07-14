@@ -26,7 +26,7 @@
 
 ### Requirement: VSCode extension declares ecl.terminology.maxConcurrency setting
 
-The VSCode extension MUST declare `ecl.terminology.maxConcurrency` in its `contributes.configuration` section in `package.json`. The setting SHALL have type `integer`, minimum `1`, default `5`, and a clear description explaining its purpose. The extension MUST read this setting and include it in the configuration sent to the LSP server.
+The VSCode extension MUST declare `ecl.terminology.maxConcurrency` in its `contributes.configuration` section in `package.json`. The setting SHALL have type `integer`, minimum `1`, default `25` (matching the `FhirTerminologyService` default), and a clear description explaining its purpose. The extension MUST read this setting and include it in the configuration sent to the LSP server.
 
 #### Scenario: User sets maxConcurrency in VSCode settings
 
@@ -36,7 +36,7 @@ The VSCode extension MUST declare `ecl.terminology.maxConcurrency` in its `contr
 #### Scenario: Setting not configured by user
 
 - **WHEN** `ecl.terminology.maxConcurrency` is not set in VS Code settings
-- **THEN** the setting resolves to its declared default of `5`
+- **THEN** the setting resolves to its declared default of `25`
 
 ### Requirement: LSP server logs the active maxConcurrency value
 

@@ -454,15 +454,21 @@ describe('Security: URL safety in FHIR service', () => {
         expansion: { total: 0, contains: [] },
       });
 
-      await service.evaluateEcl('< 404684003 & extra=injected', 10);
+      const expression = '< 404684003 & extra=injected';
+      await service.evaluateEcl(expression, 10);
 
       assert.strictEqual(mock.requests.length, 1);
       const url = mock.requests[0].url;
-      // The '&' and '=' in the ECL should be encoded, not creating extra query params
-      assert.ok(
-        url.includes(encodeURIComponent('< 404684003 & extra=injected')),
-        `URL should encode special chars: ${url}`,
-      );
+      // The '&' and '=' in the ECL must not create extra query params, at either the HTTP
+      // query-string layer or the canonical implicit ValueSet URL layer the server parses
+      // after decoding `url=` (issue #68).
+      assert.ok(!url.includes('extra=injected'), `URL should not have injected parameter: ${url}`);
+      const canonical = decodeURIComponent(/[?&]url=([^&]*)/.exec(url)?.[1] ?? '');
+      assert.ok(!canonical.includes('&'), `Canonical URL should not contain a bare '&': ${canonical}`);
+      const prefix = 'http://snomed.info/sct?fhir_vs=ecl/';
+      assert.ok(canonical.startsWith(prefix), `Canonical URL should be an implicit ECL ValueSet: ${canonical}`);
+      // ...and the expression the server ultimately sees is byte-for-byte the original.
+      assert.strictEqual(decodeURIComponent(canonical.slice(prefix.length)), expression);
     });
 
     it('should properly encode search terms with special characters', async () => {

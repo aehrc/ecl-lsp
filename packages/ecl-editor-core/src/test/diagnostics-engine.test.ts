@@ -5,6 +5,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { DiagnosticsEngine } from '../diagnostics-engine';
 import type { CoreDiagnostic } from '@aehrc/ecl-core';
 import type { ITerminologyService, ConceptInfo } from '@aehrc/ecl-core';
+import { TerminologyHttpError, TerminologyTransportError } from '@aehrc/ecl-core';
 
 // --- Mock terminology service ---
 
@@ -294,6 +295,77 @@ describe('DiagnosticsEngine', () => {
 
       engine.dispose();
       engine2.dispose();
+    });
+
+    it('should NOT report "Unknown concept" when the terminology server is unreachable', async () => {
+      // Issue #71: a transport failure is not evidence that a concept is absent.
+      const unreachableService: ITerminologyService = {
+        async getConceptInfo(): Promise<never> {
+          throw new TerminologyTransportError('Could not reach the terminology server', {
+            cause: new Error('connect ECONNREFUSED 127.0.0.1:1'),
+          });
+        },
+        async validateConcepts(): Promise<never> {
+          throw new TerminologyTransportError('Could not reach the terminology server', {
+            cause: new Error('connect ECONNREFUSED 127.0.0.1:1'),
+          });
+        },
+        async searchConcepts(): Promise<never> {
+          throw new TerminologyTransportError('Could not reach the terminology server');
+        },
+        async evaluateEcl() {
+          return { total: 0, concepts: [], truncated: false };
+        },
+      };
+      const received: CoreDiagnostic[][] = [];
+      const engine = new DiagnosticsEngine(
+        { terminologyService: unreachableService, semanticValidation: true, semanticDebounceMs: 100 },
+        (diags) => received.push([...diags]),
+      );
+
+      engine.update('< 404684003');
+      vi.advanceTimersByTime(200);
+
+      await vi.waitFor(() => {
+        expect(received.length).toBe(2);
+      });
+
+      const semanticDiags = received[1];
+      expect(semanticDiags.filter((d) => d.message.includes('Unknown concept'))).toHaveLength(0);
+      expect(semanticDiags.filter((d) => d.message.includes('not found'))).toHaveLength(0);
+      engine.dispose();
+    });
+
+    it('should NOT report "Unknown concept" when the terminology server returns an HTTP error', async () => {
+      const erroringService: ITerminologyService = {
+        async getConceptInfo(): Promise<never> {
+          throw new TerminologyHttpError('Terminology server returned HTTP 500', { status: 500 });
+        },
+        async validateConcepts(): Promise<never> {
+          throw new TerminologyHttpError('Terminology server returned HTTP 500', { status: 500 });
+        },
+        async searchConcepts(): Promise<never> {
+          throw new TerminologyHttpError('Terminology server returned HTTP 500', { status: 500 });
+        },
+        async evaluateEcl() {
+          return { total: 0, concepts: [], truncated: false };
+        },
+      };
+      const received: CoreDiagnostic[][] = [];
+      const engine = new DiagnosticsEngine(
+        { terminologyService: erroringService, semanticValidation: true, semanticDebounceMs: 100 },
+        (diags) => received.push([...diags]),
+      );
+
+      engine.update('< 404684003');
+      vi.advanceTimersByTime(200);
+
+      await vi.waitFor(() => {
+        expect(received.length).toBe(2);
+      });
+
+      expect(received[1].filter((d) => d.message.includes('Unknown concept'))).toHaveLength(0);
+      engine.dispose();
     });
 
     it('should not fire semantic validation when disabled', () => {

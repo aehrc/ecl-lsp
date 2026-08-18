@@ -4,6 +4,7 @@
 import { describe, it, beforeEach } from 'node:test';
 import * as assert from 'node:assert';
 import { extractConceptSearchQuery, getCompletionItemsWithSearch, clearFilterCache } from '../completion/provider';
+import { TerminologyHttpError, TerminologyTransportError } from '../terminology/errors';
 import { MockTerminologyService } from '../terminology/mock-service';
 
 // ─── Helpers ─────────────────────────────────────────────────────────
@@ -228,6 +229,50 @@ describe('getCompletionItemsWithSearch', () => {
     assert.ok(items.length > 0, 'Should have base items');
     const concepts = conceptLabels(items);
     assert.strictEqual(concepts.length, 0, 'Should have no concept items');
+  });
+
+  it('degrades to base items when the terminology server is unreachable', async () => {
+    // Issue #70: searchConcepts now rejects with a typed transport error rather
+    // than an opaque string — completion must still degrade, never crash.
+    const unreachableService = {
+      async getConceptInfo() {
+        throw new TerminologyTransportError('Could not reach the terminology server');
+      },
+      async validateConcepts() {
+        throw new TerminologyTransportError('Could not reach the terminology server');
+      },
+      async searchConcepts(): Promise<never> {
+        throw new TerminologyTransportError('Could not reach the terminology server', {
+          cause: new Error('connect ECONNREFUSED'),
+        });
+      },
+      async evaluateEcl() {
+        return { total: 0, concepts: [], truncated: false };
+      },
+    };
+    const items = await getCompletionItemsWithSearch(true, '<< disorder', '<< disorder', 12, 0, unreachableService);
+    assert.ok(items.length > 0, 'Should still offer base items');
+    assert.strictEqual(conceptLabels(items).length, 0, 'Should not invent concept items');
+  });
+
+  it('degrades to base items when the terminology server returns an HTTP error', async () => {
+    const erroringService = {
+      async getConceptInfo() {
+        throw new TerminologyHttpError('Terminology server returned HTTP 500', { status: 500 });
+      },
+      async validateConcepts() {
+        throw new TerminologyHttpError('Terminology server returned HTTP 500', { status: 500 });
+      },
+      async searchConcepts(): Promise<never> {
+        throw new TerminologyHttpError('Terminology server returned HTTP 500', { status: 500 });
+      },
+      async evaluateEcl() {
+        return { total: 0, concepts: [], truncated: false };
+      },
+    };
+    const items = await getCompletionItemsWithSearch(true, '<< disorder', '<< disorder', 12, 0, erroringService);
+    assert.ok(items.length > 0, 'Should still offer base items');
+    assert.strictEqual(conceptLabels(items).length, 0, 'Should not invent concept items');
   });
 });
 

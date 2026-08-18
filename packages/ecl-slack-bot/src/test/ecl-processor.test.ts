@@ -5,6 +5,7 @@ import { describe, it } from 'node:test';
 import * as assert from 'node:assert';
 import { parseInput, processEcl } from '../ecl-processor';
 import type { ITerminologyService, ConceptInfo, EvaluationResponse, HistoricalAssociation } from '@aehrc/ecl-core';
+import { TerminologyHttpError, TerminologyTransportError } from '@aehrc/ecl-core';
 
 // ── parseInput ──────────────────────────────────────────────────────────
 
@@ -456,6 +457,33 @@ describe('processEcl', () => {
     const result = await processEcl('< 404684003', service);
     assert.ok(result.formatted.includes('404684003'));
     assert.ok(result.warnings.some((w) => w.message.includes('Terminology server unavailable')));
+  });
+
+  it('should not warn "Unknown concept" when the terminology server is unreachable', async () => {
+    // Issue #71: a typed transport failure must never be rendered as absence.
+    const service = createMockService({
+      validateConcepts: async () => {
+        throw new TerminologyTransportError('Could not reach the terminology server', {
+          cause: new Error('connect ECONNREFUSED 127.0.0.1:1'),
+        });
+      },
+    });
+    const result = await processEcl('< 404684003', service);
+    assert.ok(
+      !result.warnings.some((w) => w.message.includes('Unknown concept')),
+      `must not claim the concept is unknown: ${JSON.stringify(result.warnings)}`,
+    );
+    assert.ok(result.warnings.some((w) => w.message.includes('Terminology server unavailable')));
+  });
+
+  it('should not warn "Unknown concept" when the terminology server returns HTTP 500', async () => {
+    const service = createMockService({
+      validateConcepts: async () => {
+        throw new TerminologyHttpError('Terminology server returned HTTP 500 for bulk $expand', { status: 500 });
+      },
+    });
+    const result = await processEcl('< 404684003', service);
+    assert.ok(!result.warnings.some((w) => w.message.includes('Unknown concept')));
   });
 
   it('should still format ECL when FHIR is unavailable', async () => {

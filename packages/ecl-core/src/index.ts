@@ -41,6 +41,22 @@ export type {
   HistoricalAssociationType,
 } from './terminology/types';
 export { isValidSnomedId, isValidConceptId, isValidDescriptionId } from './terminology/verhoeff';
+export {
+  TerminologyError,
+  TerminologyTransportError,
+  TerminologyHttpError,
+  isTerminologyError,
+  isTerminologyTransportError,
+  isTerminologyHttpError,
+  toTransportError,
+  toHttpError,
+} from './terminology/errors';
+export type {
+  TerminologyErrorKind,
+  TerminologyErrorOptions,
+  TerminologyTransportErrorOptions,
+  TerminologyHttpErrorOptions,
+} from './terminology/errors';
 
 // Validation
 export { refineParseError } from './validation/error-refinement';

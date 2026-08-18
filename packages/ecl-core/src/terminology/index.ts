@@ -2,5 +2,6 @@
 // ABN 41 687 119 230. SPDX-License-Identifier: Apache-2.0
 
 export * from './types';
+export * from './errors';
 export * from './fhir-service';
 export * from './mock-service';

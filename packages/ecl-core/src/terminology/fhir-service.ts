@@ -12,6 +12,7 @@ import {
   HistoricalAssociationType,
 } from './types';
 import { isValidSnomedId } from './verhoeff';
+import { TerminologyTransportError, isTerminologyTransportError, toHttpError, toTransportError } from './errors';
 
 // ── FHIR response types ────────────────────────────────────────────────
 
@@ -243,6 +244,94 @@ export class FhirTerminologyService implements ITerminologyService {
     }
   }
 
+  /**
+   * Perform a request, translating any network-level failure (connection
+   * refused, DNS failure, timeout/abort) into a {@link TerminologyTransportError}
+   * so callers can tell "server unreachable" from "server said no".
+   */
+  private async request(
+    url: string,
+    timeoutMs: number,
+    operation: string,
+    init?: { method?: string; headers?: Record<string, string>; body?: string },
+  ) {
+    try {
+      return await this.fetchWithTimeout(url, timeoutMs, init);
+    } catch (error) {
+      throw toTransportError(error, { url, operation, timeoutMs });
+    }
+  }
+
+  /** Read the body of an error response, extracting a FHIR OperationOutcome if present. */
+  private static async readErrorBody(response: {
+    text: () => Promise<string>;
+  }): Promise<{ outcome: FhirOperationOutcomeResponse | null; detail: string | undefined }> {
+    let text: string;
+    try {
+      text = await response.text();
+    } catch {
+      return { outcome: null, detail: undefined };
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      // Non-JSON error body (HTML from a proxy, plain text, empty)
+      const trimmed = text.trim();
+      return { outcome: null, detail: trimmed ? trimmed.slice(0, 200) : undefined };
+    }
+
+    const outcome =
+      typeof parsed === 'object' &&
+      parsed !== null &&
+      (parsed as { resourceType?: unknown }).resourceType === 'OperationOutcome'
+        ? (parsed as FhirOperationOutcomeResponse)
+        : null;
+
+    const issue = outcome?.issue?.[0];
+    const detail = issue?.diagnostics ?? issue?.details?.text;
+    return { outcome, detail };
+  }
+
+  /** Issue codes a FHIR server uses to say "this code is not in the code system". */
+  private static readonly UNKNOWN_CODE_ISSUE_CODES = new Set(['not-found', 'code-invalid', 'invalid-code']);
+
+  /** Phrases servers use in OperationOutcome prose when a code is unknown. */
+  private static readonly UNKNOWN_CODE_PHRASES = ['unknown code', 'not found', 'invalid code', 'unable to find'];
+
+  /**
+   * True when an error response is the server's well-formed way of saying
+   * "I do not know this code" — the one case that maps to `null` rather than
+   * an exception.
+   *
+   * A 404 is only accepted as such when the body is a real FHIR
+   * OperationOutcome; a bare 404 (wrong base URL, proxy page) is a fault.
+   */
+  private static isUnknownCodeResponse(status: number, outcome: FhirOperationOutcomeResponse | null): boolean {
+    if (!outcome) return false;
+    if (status === 404) return true;
+    if (status !== 400 && status !== 422) return false;
+
+    return (outcome.issue ?? []).some((issue) => {
+      if (issue.code && FhirTerminologyService.UNKNOWN_CODE_ISSUE_CODES.has(issue.code.toLowerCase())) {
+        return true;
+      }
+      const prose = `${issue.diagnostics ?? ''} ${issue.details?.text ?? ''}`.toLowerCase();
+      return FhirTerminologyService.UNKNOWN_CODE_PHRASES.some((phrase) => prose.includes(phrase));
+    });
+  }
+
+  /**
+   * Look up a single concept.
+   *
+   * @returns the concept, or `null` when the terminology server gave a
+   *   well-formed answer saying the code is unknown to it.
+   * @throws {TerminologyTransportError} when the server could not be reached,
+   *   the request timed out, or the response body was unusable.
+   * @throws {TerminologyHttpError} when the server answered with an error
+   *   status that is not an "unknown code" response.
+   */
   async getConceptInfo(conceptId: string): Promise<ConceptInfo | null> {
     // Check cache first
     const cached = this.cache.get(conceptId);
@@ -250,58 +339,71 @@ export class FhirTerminologyService implements ITerminologyService {
       return cached;
     }
 
-    try {
-      let url = `${this.baseUrl}/CodeSystem/$lookup?system=http://snomed.info/sct&code=${encodeURIComponent(conceptId)}`;
-      if (this.snomedVersion) {
-        url += `&version=${encodeURIComponent(this.snomedVersion)}`;
-      }
-      const response = await this.fetchWithTimeout(url, this.timeout);
+    let url = `${this.baseUrl}/CodeSystem/$lookup?system=http://snomed.info/sct&code=${encodeURIComponent(conceptId)}`;
+    if (this.snomedVersion) {
+      url += `&version=${encodeURIComponent(this.snomedVersion)}`;
+    }
+    const operation = `$lookup of concept ${conceptId}`;
+    const response = await this.request(url, this.timeout, operation);
 
-      if (!response.ok) {
+    if (!response.ok) {
+      const { outcome, detail } = await FhirTerminologyService.readErrorBody(response);
+      if (FhirTerminologyService.isUnknownCodeResponse(response.status, outcome)) {
         return null;
       }
-
-      const data = (await response.json()) as FhirParametersResponse;
-
-      // Parse FHIR Parameters response
-      const params = data.parameter ?? [];
-      this.captureResolvedVersionFromLookup(params);
-      const display = params.find((p) => p.name === 'display')?.valueString ?? '';
-
-      // Check for inactive property (SNOMED uses property array with inactive flag)
-      const properties = params.filter((p) => p.name === 'property');
-      const inactiveProperty = properties.find((prop) => {
-        const parts = prop.part ?? [];
-        const codePart = parts.find((p) => p.name === 'code' && p.valueCode === 'inactive');
-        return codePart !== undefined;
+      throw toHttpError({
+        status: response.status,
+        statusText: response.statusText,
+        url,
+        operation,
+        detail,
       });
-
-      let active = true; // Default to active if not specified
-      if (inactiveProperty) {
-        const valuePart = (inactiveProperty.part ?? []).find((p) => p.name === 'value');
-        if (valuePart?.valueBoolean === true) {
-          active = false; // Concept is inactive
-        }
-      }
-
-      const conceptInfo: ConceptInfo = {
-        id: conceptId,
-        fsn: display,
-        pt: display, // Simplified - would need to parse designations
-        active,
-      };
-
-      // Cache result
-      if (this.cache.size < 10000) {
-        this.cache.set(conceptId, conceptInfo);
-      }
-
-      return conceptInfo;
-    } catch (error) {
-      // eslint-disable-next-line no-console -- no LSP connection available in service layer
-      console.warn(`Failed to fetch concept ${conceptId}:`, error);
-      return null;
     }
+
+    let data: FhirParametersResponse;
+    try {
+      data = (await response.json()) as FhirParametersResponse;
+    } catch (error) {
+      throw new TerminologyTransportError(`Terminology server returned an unreadable response for ${operation}`, {
+        cause: error,
+        url,
+      });
+    }
+
+    // Parse FHIR Parameters response
+    const params = data.parameter ?? [];
+    this.captureResolvedVersionFromLookup(params);
+    const display = params.find((p) => p.name === 'display')?.valueString ?? '';
+
+    // Check for inactive property (SNOMED uses property array with inactive flag)
+    const properties = params.filter((p) => p.name === 'property');
+    const inactiveProperty = properties.find((prop) => {
+      const parts = prop.part ?? [];
+      const codePart = parts.find((p) => p.name === 'code' && p.valueCode === 'inactive');
+      return codePart !== undefined;
+    });
+
+    let active = true; // Default to active if not specified
+    if (inactiveProperty) {
+      const valuePart = (inactiveProperty.part ?? []).find((p) => p.name === 'value');
+      if (valuePart?.valueBoolean === true) {
+        active = false; // Concept is inactive
+      }
+    }
+
+    const conceptInfo: ConceptInfo = {
+      id: conceptId,
+      fsn: display,
+      pt: display, // Simplified - would need to parse designations
+      active,
+    };
+
+    // Cache result
+    if (this.cache.size < 10000) {
+      this.cache.set(conceptId, conceptInfo);
+    }
+
+    return conceptInfo;
   }
 
   /** Map of SNOMED CT historical association reference set IDs to association types. */
@@ -375,6 +477,15 @@ export class FhirTerminologyService implements ITerminologyService {
     }
   }
 
+  /**
+   * Validate a batch of concepts.
+   *
+   * A `null` map value means the terminology server positively reported the
+   * code as unknown. Failures are never reported as `null` — they reject.
+   *
+   * @throws {TerminologyTransportError} when the server could not be reached.
+   * @throws {TerminologyHttpError} when the server answered with an error status.
+   */
   async validateConcepts(conceptIds: string[]): Promise<Map<string, ConceptInfo | null>> {
     const results = new Map<string, ConceptInfo | null>();
 
@@ -383,15 +494,7 @@ export class FhirTerminologyService implements ITerminologyService {
     }
 
     // Return cached results for concepts we already know, collect uncached IDs
-    const uncachedIds: string[] = [];
-    for (const id of conceptIds) {
-      const cachedInfo = this.cache.get(id);
-      if (cachedInfo) {
-        results.set(id, cachedInfo);
-      } else {
-        uncachedIds.push(id);
-      }
-    }
+    const uncachedIds = this.partitionCached(conceptIds, results);
 
     if (uncachedIds.length === 0) {
       return results;
@@ -417,25 +520,47 @@ export class FhirTerminologyService implements ITerminologyService {
       // For concepts not in the expansion, do individual $lookup to distinguish
       // "inactive but filtered out" from "truly unknown". This handles servers
       // that don't support activeOnly=false or filter inactive concepts despite it.
-      if (missingIds.length > 0) {
-        const lookups = missingIds.map(async (id) => {
-          const info = await this.getConceptInfo(id);
-          results.set(id, info);
-        });
-        await Promise.all(lookups);
-      }
+      await this.lookupEach(missingIds, results);
 
       return results;
     } catch (error) {
-      // eslint-disable-next-line no-console -- no LSP connection available in service layer
-      console.warn('Bulk concept validation failed, falling back to individual lookups:', error);
-      const lookups = uncachedIds.map(async (id) => {
-        const info = await this.getConceptInfo(id);
-        results.set(id, info);
-      });
-      await Promise.all(lookups);
+      // The server is unreachable — individual lookups would fail the same way,
+      // so fail fast rather than hammering a dead server with N more requests.
+      if (isTerminologyTransportError(error)) throw error;
+
+      // Otherwise the server rejected the bulk $expand (it may not support
+      // POSTed ValueSets); fall back to individual lookups, which propagate
+      // their own typed errors if they fail too.
+      await this.lookupEach(uncachedIds, results);
       return results;
     }
+  }
+
+  /**
+   * Move already-cached concepts into `results`, returning the IDs still to fetch.
+   */
+  private partitionCached(conceptIds: string[], results: Map<string, ConceptInfo | null>): string[] {
+    const uncachedIds: string[] = [];
+    for (const id of conceptIds) {
+      const cachedInfo = this.cache.get(id);
+      if (cachedInfo) {
+        results.set(id, cachedInfo);
+      } else {
+        uncachedIds.push(id);
+      }
+    }
+    return uncachedIds;
+  }
+
+  /** Look each concept up individually, recording the result (or `null` if absent). */
+  private async lookupEach(conceptIds: string[], results: Map<string, ConceptInfo | null>): Promise<void> {
+    if (conceptIds.length === 0) return;
+    await Promise.all(
+      conceptIds.map(async (id) => {
+        const info = await this.getConceptInfo(id);
+        results.set(id, info);
+      }),
+    );
   }
 
   private async bulkExpand(conceptIds: string[]): Promise<Map<string, ConceptInfo>> {
@@ -453,14 +578,22 @@ export class FhirTerminologyService implements ITerminologyService {
       compose: { include: [include] },
     };
 
-    const response = await this.fetchWithTimeout(url, this.timeout, {
+    const operation = `bulk $expand of ${conceptIds.length} concept(s)`;
+    const response = await this.request(url, this.timeout, operation, {
       method: 'POST',
       headers: { 'Content-Type': 'application/fhir+json' },
       body: JSON.stringify(valueSet),
     });
 
     if (!response.ok) {
-      throw new Error(`Bulk expand failed: HTTP ${response.status}`);
+      const { detail } = await FhirTerminologyService.readErrorBody(response);
+      throw toHttpError({
+        status: response.status,
+        statusText: response.statusText,
+        url,
+        operation,
+        detail,
+      });
     }
 
     const data = (await response.json()) as FhirValueSetResponse;
@@ -498,6 +631,14 @@ export class FhirTerminologyService implements ITerminologyService {
     return results;
   }
 
+  /**
+   * Search for concepts by text or SCTID.
+   *
+   * An empty result set means the server found no matches.
+   *
+   * @throws {TerminologyTransportError} when the server could not be reached.
+   * @throws {TerminologyHttpError} when the server answered with an error status.
+   */
   // eslint-disable-next-line sonarjs/cognitive-complexity -- FHIR response parser with nested property traversal
   async searchConcepts(query: string): Promise<SearchResponse> {
     if (!query || query.trim().length === 0) {
@@ -534,31 +675,26 @@ export class FhirTerminologyService implements ITerminologyService {
       entriesToDelete.forEach((key) => this.searchCache.delete(key));
     }
 
-    try {
-      let response: SearchResponse;
+    // Failures propagate as typed TerminologyErrors — they are NOT flattened to
+    // an opaque string, and an empty result is never invented for a failed call.
+    let response: SearchResponse;
 
-      // Determine if query is a valid SNOMED CT ID
-      if (/^\d+$/.test(trimmedQuery) && isValidSnomedId(trimmedQuery)) {
-        // Valid SCTID - use $lookup
-        response = await this.lookupById(trimmedQuery);
-      } else {
-        // Text or invalid ID - use $expand with filter
-        response = await this.searchByFilter(trimmedQuery);
-      }
-
-      // Cache the result
-      this.searchCache.set(trimmedQuery, {
-        data: response,
-        timestamp: Date.now(),
-      });
-
-      return response;
-    } catch (error) {
-      // eslint-disable-next-line no-console -- no LSP connection available in service layer
-      console.warn(`Search failed for query "${trimmedQuery}":`, error);
-      // eslint-disable-next-line preserve-caught-error -- Error.cause requires ES2022+; original error already logged above
-      throw new Error('Terminology server unavailable');
+    // Determine if query is a valid SNOMED CT ID
+    if (/^\d+$/.test(trimmedQuery) && isValidSnomedId(trimmedQuery)) {
+      // Valid SCTID - use $lookup
+      response = await this.lookupById(trimmedQuery);
+    } else {
+      // Text or invalid ID - use $expand with filter
+      response = await this.searchByFilter(trimmedQuery);
     }
+
+    // Cache the result (only successful responses are cached)
+    this.searchCache.set(trimmedQuery, {
+      data: response,
+      timestamp: Date.now(),
+    });
+
+    return response;
   }
 
   private async lookupById(conceptId: string): Promise<SearchResponse> {
@@ -629,10 +765,18 @@ export class FhirTerminologyService implements ITerminologyService {
   private async searchByFilter(filter: string): Promise<SearchResponse> {
     const url = `${this.baseUrl}/ValueSet/$expand?url=${this.snomedSystemUrl}?fhir_vs&filter=${encodeURIComponent(filter)}&count=21&includeDesignations=true&activeOnly=true`;
 
-    const response = await this.fetchWithTimeout(url, this.searchTimeout);
+    const operation = `concept search for "${filter}"`;
+    const response = await this.request(url, this.searchTimeout, operation);
 
     if (!response.ok) {
-      throw new Error(`FHIR request failed: ${response.status}`);
+      const { detail } = await FhirTerminologyService.readErrorBody(response);
+      throw toHttpError({
+        status: response.status,
+        statusText: response.statusText,
+        url,
+        operation,
+        detail,
+      });
     }
 
     const data = (await response.json()) as FhirValueSetResponse;
@@ -659,10 +803,18 @@ export class FhirTerminologyService implements ITerminologyService {
   /** Fetch available SNOMED CT editions and versions from the FHIR server. */
   async getSnomedEditions(): Promise<SnomedEdition[]> {
     const url = `${this.baseUrl}/CodeSystem?url=http://snomed.info/sct`;
-    const response = await this.fetchWithTimeout(url, this.searchTimeout);
+    const operation = 'SNOMED CT edition discovery';
+    const response = await this.request(url, this.searchTimeout, operation);
 
     if (!response.ok) {
-      throw new Error(`Failed to fetch SNOMED editions: HTTP ${response.status}`);
+      const { detail } = await FhirTerminologyService.readErrorBody(response);
+      throw toHttpError({
+        status: response.status,
+        statusText: response.statusText,
+        url,
+        operation,
+        detail,
+      });
     }
 
     const data = (await response.json()) as {

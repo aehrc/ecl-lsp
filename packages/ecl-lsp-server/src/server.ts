@@ -58,6 +58,9 @@ import {
   validateBoolean,
   defaultFormattingOptions,
   getOperatorHoverDoc,
+  isTerminologyError,
+  isTerminologyHttpError,
+  isTerminologyTransportError,
 } from '@aehrc/ecl-core';
 import type {
   ITerminologyService,
@@ -559,6 +562,18 @@ async function validateDocumentSyntax(document: TextDocument): Promise<void> {
 
 // ── Semantic validation (FHIR-dependent) ────────────────────────────────
 
+/**
+ * Describe why a terminology call failed, for logging.
+ *
+ * Never used to build user-facing text that implies a concept is absent —
+ * a failure means "not checked", not "not found".
+ */
+function describeTerminologyFailure(error: unknown): string {
+  if (isTerminologyTransportError(error)) return 'terminology server unreachable';
+  if (isTerminologyHttpError(error)) return `terminology server returned HTTP ${error.status}`;
+  return String(error);
+}
+
 async function validateDocumentSemantics(document: TextDocument): Promise<void> {
   try {
     const { diagnostics, conceptValidationTasks, semanticValidationTasks } = collectSyntaxDiagnostics(document);
@@ -606,8 +621,11 @@ async function validateDocumentSemantics(document: TextDocument): Promise<void> 
             }
           }
         } catch (error) {
+          // Issue #71: concept validation could not be performed. Publish NO
+          // concept diagnostics for this expression — an unreachable or failing
+          // terminology server is not evidence that any concept is absent.
           connection.console.warn(
-            `Failed to check inactive concepts in expression starting at line ${expr.startLine + 1}: ${String(error)}`,
+            `Skipped concept validation for expression starting at line ${expr.startLine + 1} (${describeTerminologyFailure(error)})`,
           );
         }
       }),
@@ -835,6 +853,28 @@ connection.onHover(async (params: HoverParams): Promise<Hover | null> => {
         }
       } catch (error) {
         connection.console.warn(`Failed to fetch concept info for ${conceptId}: ${String(error)}`);
+
+        // Issue #71: never let a failed lookup read as "this concept does not
+        // exist". Say plainly that the server could not be reached instead.
+        if (isTerminologyError(error)) {
+          const reason = isTerminologyHttpError(error)
+            ? `The terminology server responded with HTTP ${error.status}.`
+            : 'The terminology server could not be reached.';
+          return {
+            contents: {
+              kind: MarkupKind.Markdown,
+              value: [
+                '**Concept status unknown**',
+                '',
+                `**Concept ID:** ${conceptId}`,
+                '',
+                reason,
+                '',
+                'This does **not** mean the concept is missing from SNOMED CT — it could not be checked.',
+              ].join('\n'),
+            },
+          };
+        }
       }
 
       break;

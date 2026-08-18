@@ -4,6 +4,13 @@
 import { ITerminologyService, ConceptInfo, SearchResponse, EvaluationResponse, HistoricalAssociation } from './types';
 
 /* eslint-disable @typescript-eslint/require-await -- interface mandates async; mock returns synchronously */
+/**
+ * In-memory terminology service for tests.
+ *
+ * Conformant with the {@link ITerminologyService} failure contract: it never
+ * fails, so it only ever returns `null` for a concept that is genuinely absent
+ * from its fixture data.
+ */
 export class MockTerminologyService implements ITerminologyService {
   private readonly mockData = new Map<string, ConceptInfo>([
     ['404684003', { id: '404684003', fsn: 'Clinical finding (finding)', pt: 'Clinical finding', active: true }],
@@ -26,6 +33,7 @@ export class MockTerminologyService implements ITerminologyService {
     ['246454002', { id: '246454002', fsn: 'Occurrence (attribute)', pt: 'Occurrence', active: true }],
   ]);
 
+  /** @returns the fixture concept, or `null` when it is genuinely not in the fixture data. */
   async getConceptInfo(conceptId: string): Promise<ConceptInfo | null> {
     return this.mockData.get(conceptId) ?? null;
   }

@@ -15,6 +15,7 @@ import { getRefactoringActions } from '../refactoring/index';
 import type { RefactoringContext } from '../refactoring/index';
 import type { CoreCodeAction } from '../types';
 import type { ConceptInfo, ITerminologyService, SearchResponse, EvaluationResponse } from '../terminology/types';
+import { TerminologyTransportError } from '../terminology/errors';
 
 const TEST_URI = 'file:///test.ecl';
 
@@ -248,6 +249,32 @@ describe('Add display terms', () => {
 
     const resolved = await resolveAddDisplayTerms(action, failService);
     assert.ok(!resolved.edits, 'Should not have edit when FHIR fails');
+  });
+
+  it('should not invent an edit when the terminology server is unreachable', async () => {
+    // Issue #71: a transport failure must not be treated as "concept has no term".
+    const unreachableService: ITerminologyService = {
+      async getConceptInfo() {
+        throw new TerminologyTransportError('Could not reach the terminology server', {
+          cause: new Error('connect ECONNREFUSED'),
+        });
+      },
+      async validateConcepts() {
+        throw new TerminologyTransportError('Could not reach the terminology server');
+      },
+      async searchConcepts() {
+        throw new TerminologyTransportError('Could not reach the terminology server');
+      },
+      async evaluateEcl() {
+        throw new TerminologyTransportError('Could not reach the terminology server');
+      },
+    };
+    const ctx = makeCtx('< 404684003');
+    const action = getAddDisplayTermsAction(ctx);
+    assert.ok(action);
+
+    const resolved = await resolveAddDisplayTerms(action, unreachableService);
+    assert.ok(!resolved.edits, 'Should leave the expression untouched when the server is unreachable');
   });
 });
 

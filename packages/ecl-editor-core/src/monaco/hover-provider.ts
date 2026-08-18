@@ -2,7 +2,7 @@
 // ABN 41 687 119 230. SPDX-License-Identifier: Apache-2.0
 
 import type * as Monaco from 'monaco-editor';
-import { getOperatorHoverDoc } from '@aehrc/ecl-core';
+import { getOperatorHoverDoc, isTerminologyError } from '@aehrc/ecl-core';
 import type { ITerminologyService } from '@aehrc/ecl-core';
 
 /** Match operator tokens at the cursor position. */
@@ -64,8 +64,25 @@ export function createHoverProvider(
                   },
                 };
               }
-            } catch {
-              // FHIR unreachable — no hover
+            } catch (error) {
+              // Issue #71: a failed lookup is not evidence the concept is absent.
+              // Say what actually happened instead of silently showing nothing.
+              if (isTerminologyError(error)) {
+                return {
+                  contents: [
+                    {
+                      value: `**Could not reach the terminology server**\n\nConcept ${conceptId} could not be checked. This is a connection problem — it does not mean the concept is missing from SNOMED CT.`,
+                    },
+                  ],
+                  range: {
+                    startLineNumber: position.lineNumber,
+                    startColumn: startCol,
+                    endLineNumber: position.lineNumber,
+                    endColumn: endCol,
+                  },
+                };
+              }
+              // Unexpected failure — no hover
             }
           }
           break;

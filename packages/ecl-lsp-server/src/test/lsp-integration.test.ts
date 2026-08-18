@@ -40,7 +40,10 @@ const DEFAULT_SETTINGS = {
 
 // ── Server lifecycle helpers ────────────────────────────────────────────
 
-function startServer(): { process: ChildProcess; connection: MessageConnection } {
+function startServer(settings: Record<string, unknown> = DEFAULT_SETTINGS): {
+  process: ChildProcess;
+  connection: MessageConnection;
+} {
   const serverPath = path.resolve(__dirname, '..', 'server.js');
   // eslint-disable-next-line sonarjs/no-os-command-from-path -- node is required from PATH for spawning the LSP server process
   const proc = spawn('node', [serverPath, '--stdio'], {
@@ -55,7 +58,7 @@ function startServer(): { process: ChildProcess; connection: MessageConnection }
   connection.onRequest('workspace/configuration', (params: { items: { section?: string }[] }) => {
     return params.items.map((item) => {
       const section = item.section ?? '';
-      return (DEFAULT_SETTINGS as Record<string, unknown>)[section] ?? {};
+      return settings[section] ?? {};
     });
   });
 
@@ -642,5 +645,110 @@ describe('LSP Protocol Integration', () => {
       assert.ok(tokens, 'should return semantic tokens for long expression');
       assert.ok(tokens.data.length > 0, 'should have token data');
     });
+  });
+});
+
+// ── Terminology outage handling (issues #70 / #71) ──────────────────────
+
+// A terminology server that cannot be reached must never surface as a claim
+// that a concept does not exist, and must not take the language server down.
+describe('LSP behaviour when the terminology server is unreachable', () => {
+  // Port 1 is never listening — every request fails with ECONNREFUSED.
+  const UNREACHABLE_SETTINGS = {
+    ...DEFAULT_SETTINGS,
+    'ecl.terminology': { serverUrl: 'http://127.0.0.1:1/fhir', timeout: 1000, snomedVersion: '' },
+    'ecl.semanticValidation': { enabled: true },
+  };
+
+  let serverProc: ChildProcess;
+  let conn: MessageConnection;
+
+  before(async () => {
+    const { process: proc, connection } = startServer(UNREACHABLE_SETTINGS);
+    serverProc = proc;
+    conn = connection;
+    await initializeServer(conn);
+  });
+
+  after(async () => {
+    conn.dispose();
+    serverProc.kill('SIGTERM');
+    await new Promise<void>((resolve) => {
+      serverProc.once('exit', () => {
+        resolve();
+      });
+      setTimeout(() => {
+        resolve();
+      }, 1000);
+    });
+  });
+
+  it('should not publish "Unknown concept" diagnostics when the server is unreachable', async () => {
+    const uri = 'file:///test-offline-diags.ecl';
+    let lastDiagnostics: { message: string }[] = [];
+    conn.onNotification('textDocument/publishDiagnostics', (params) => {
+      const p = params as { uri: string; diagnostics: { message: string }[] };
+      if (p.uri === uri) {
+        lastDiagnostics = p.diagnostics;
+      }
+    });
+
+    await openDocument(conn, uri, '< 404684003');
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+
+    const falseClaims = lastDiagnostics.filter(
+      (d) => d.message.includes('Unknown concept') || d.message.includes('not found in'),
+    );
+    assert.deepStrictEqual(
+      falseClaims,
+      [],
+      `an unreachable terminology server must not produce absence claims: ${JSON.stringify(lastDiagnostics)}`,
+    );
+  });
+
+  it('should hover with an explicit outage message rather than "not found"', async () => {
+    const uri = 'file:///test-offline-hover.ecl';
+    await openDocument(conn, uri, '< 404684003');
+
+    const result = await conn.sendRequest('textDocument/hover', {
+      textDocument: { uri },
+      position: { line: 0, character: 5 },
+    });
+
+    assert.ok(result, 'hover should still respond during a terminology outage');
+    const value = (result as { contents: { value: string } }).contents.value;
+    assert.ok(
+      !value.includes('was not found in the terminology server'),
+      `hover must not claim the concept is absent: ${value}`,
+    );
+    assert.ok(value.includes('Concept status unknown'), `hover should explain the outage: ${value}`);
+    assert.ok(value.includes('could not be reached'), `hover should name the connection failure: ${value}`);
+  });
+
+  it('should stay alive and keep serving non-terminology requests', async () => {
+    const uri = 'file:///test-offline-alive.ecl';
+    await openDocument(conn, uri, '<<404684003|Clinical finding|');
+
+    const formatted = await conn.sendRequest('textDocument/formatting', {
+      textDocument: { uri },
+      options: { tabSize: 2, insertSpaces: true },
+    });
+    const edits = formatted as { newText: string }[];
+
+    assert.ok(edits.length > 0, 'server should still format documents during a terminology outage');
+  });
+
+  it('ecl/searchConcept should reject with a message naming the connection failure', async () => {
+    try {
+      await conn.sendRequest('ecl/searchConcept', { query: 'heart' });
+      assert.fail('search should reject when the terminology server is unreachable');
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : String(error);
+      assert.notStrictEqual(msg, 'Terminology server unavailable', 'the opaque message should be gone');
+      assert.ok(
+        msg.includes('Could not reach the terminology server'),
+        `error should describe the transport failure: ${msg}`,
+      );
+    }
   });
 });

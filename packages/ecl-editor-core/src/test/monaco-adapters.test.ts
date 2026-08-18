@@ -3,6 +3,7 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import type { ITerminologyService, ConceptInfo, HistoricalAssociation } from '@aehrc/ecl-core';
+import { TerminologyTransportError } from '@aehrc/ecl-core';
 import { createMockModel, MockPosition, MockRange } from './mock-monaco';
 import { createCompletionProvider } from '../monaco/completion-provider';
 import { createHoverProvider } from '../monaco/hover-provider';
@@ -232,6 +233,37 @@ describe('Monaco Hover Provider', () => {
     expect(result).toBeDefined();
     const markdown = (result!.contents[0] as any).value;
     expect(markdown).toContain('INACTIVE');
+  });
+
+  it('should explain a terminology outage instead of showing nothing', async () => {
+    // Issue #71: a transport failure must not read as "concept not found".
+    const service: ITerminologyService = {
+      async getConceptInfo(): Promise<never> {
+        throw new TerminologyTransportError('Could not reach the terminology server', {
+          cause: new Error('connect ECONNREFUSED 127.0.0.1:1'),
+        });
+      },
+      async validateConcepts(): Promise<never> {
+        throw new TerminologyTransportError('Could not reach the terminology server');
+      },
+      async searchConcepts(): Promise<never> {
+        throw new TerminologyTransportError('Could not reach the terminology server');
+      },
+      async evaluateEcl() {
+        return { total: 0, concepts: [], truncated: false };
+      },
+    };
+    const provider = createHoverProvider(() => service);
+    const model = createMockModel('< 404684003');
+    const position = new MockPosition(1, 5);
+
+    const result = await provider.provideHover(model as any, position as any, null as any);
+
+    expect(result).toBeDefined();
+    const markdown = (result!.contents[0] as any).value as string;
+    expect(markdown).toContain('Could not reach the terminology server');
+    expect(markdown).not.toContain('not found');
+    expect(markdown).not.toContain('Unknown Concept');
   });
 
   it('should return undefined when hovering on whitespace', async () => {

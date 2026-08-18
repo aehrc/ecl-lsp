@@ -16,6 +16,8 @@ import {
   DottedAttributeNode,
   OperatorNode,
   RefinementNode,
+  RefinementMemberNode,
+  AttributeGroupNode,
   AttributeNode,
   AttributeNameNode,
   AttributeValueNode,
@@ -256,95 +258,125 @@ export class ECLASTVisitor extends AbstractParseTreeVisitor<any> implements ECLV
   }
 
   visitEclrefinement(ctx: ECL.EclrefinementContext): RefinementNode {
+    const content = this.buildRefinement(ctx);
     const attributes: AttributeNode[] = [];
-
-    // Collect from first subrefinement
-    this.collectAttributesFromSubrefinement(ctx.subrefinement(), attributes);
-
-    // Collect from conjunction refinement set
-    const conjSet = ctx.conjunctionrefinementset();
-    if (conjSet) {
-      const subs = conjSet.subrefinement();
-      for (const sub of subs) {
-        this.collectAttributesFromSubrefinement(sub, attributes);
-      }
-    }
-
-    // Collect from disjunction refinement set
-    const disjSet = ctx.disjunctionrefinementset();
-    if (disjSet) {
-      const subs = disjSet.subrefinement();
-      for (const sub of subs) {
-        this.collectAttributesFromSubrefinement(sub, attributes);
-      }
-    }
+    collectAttributes(content, attributes);
 
     return {
       type: NodeType.Refinement,
       range: this.getRange(ctx),
       attributes,
+      content,
     };
   }
 
-  private collectAttributesFromSubrefinement(ctx: ECL.SubrefinementContext, attributes: AttributeNode[]): void {
-    // subrefinement can be: eclattributeset | eclattributegroup | ( eclrefinement )
+  /**
+   * eclrefinement : subrefinement ws (conjunctionrefinementset | disjunctionrefinementset)?
+   *
+   * The grammar forbids mixing conjunction and disjunction at the same level, so
+   * at most one of the two sets is present and the resulting set is homogeneous.
+   */
+  private buildRefinement(ctx: ECL.EclrefinementContext): RefinementMemberNode | null {
+    const first = this.buildSubrefinement(ctx.subrefinement());
+
+    const conjSet = ctx.conjunctionrefinementset();
+    if (conjSet) {
+      const rest = conjSet.subrefinement().map((sub) => this.buildSubrefinement(sub));
+      return this.makeSet(ctx, 'AND', conjunctionStyle(conjSet.conjunction()), [first, ...rest]);
+    }
+
+    const disjSet = ctx.disjunctionrefinementset();
+    if (disjSet) {
+      const rest = disjSet.subrefinement().map((sub) => this.buildSubrefinement(sub));
+      return this.makeSet(ctx, 'OR', ',', [first, ...rest]);
+    }
+
+    return first;
+  }
+
+  /** subrefinement : eclattributeset | eclattributegroup | ( eclrefinement ) */
+  private buildSubrefinement(ctx: ECL.SubrefinementContext): RefinementMemberNode | null {
     const attrSet = ctx.eclattributeset();
     if (attrSet) {
-      this.collectAttributesFromAttributeSet(attrSet, attributes);
-      return;
+      return this.buildAttributeSet(attrSet);
     }
 
     const attrGroup = ctx.eclattributegroup();
     if (attrGroup) {
-      // Attribute group: { eclattributeset }
-      const groupAttrSet = attrGroup.eclattributeset();
-      this.collectAttributesFromAttributeSet(groupAttrSet, attributes);
-      return;
+      const content = this.buildAttributeSet(attrGroup.eclattributeset());
+      if (!content) {
+        return null;
+      }
+      const cardinality = attrGroup.cardinality();
+      const group: AttributeGroupNode = {
+        type: NodeType.AttributeGroup,
+        range: this.getRange(ctx),
+        content,
+      };
+      if (cardinality) {
+        group.cardinality = '[' + cardinality.text + ']';
+      }
+      return group;
     }
 
     const nestedRef = ctx.eclrefinement();
-    if (nestedRef) {
-      const nested = this.visitEclrefinement(nestedRef);
-      attributes.push(...nested.attributes);
-    }
+    return nestedRef ? markParenthesized(this.buildRefinement(nestedRef)) : null;
   }
 
-  private collectAttributesFromAttributeSet(ctx: ECL.EclattributesetContext, attributes: AttributeNode[]): void {
-    // eclattributeset = subattributeset (ws conjunctionattributeset | ws disjunctionattributeset)?
-    this.collectAttributeFromSubattributeset(ctx.subattributeset(), attributes);
+  /** eclattributeset : subattributeset ws (conjunctionattributeset | disjunctionattributeset)? */
+  private buildAttributeSet(ctx: ECL.EclattributesetContext): RefinementMemberNode | null {
+    const first = this.buildSubattributeSet(ctx.subattributeset());
 
     const conjSet = ctx.conjunctionattributeset();
     if (conjSet) {
-      const subs = conjSet.subattributeset();
-      for (const sub of subs) {
-        this.collectAttributeFromSubattributeset(sub, attributes);
-      }
+      const rest = conjSet.subattributeset().map((sub) => this.buildSubattributeSet(sub));
+      return this.makeSet(ctx, 'AND', conjunctionStyle(conjSet.conjunction()), [first, ...rest]);
     }
 
     const disjSet = ctx.disjunctionattributeset();
     if (disjSet) {
-      const subs = disjSet.subattributeset();
-      for (const sub of subs) {
-        this.collectAttributeFromSubattributeset(sub, attributes);
-      }
+      const rest = disjSet.subattributeset().map((sub) => this.buildSubattributeSet(sub));
+      return this.makeSet(ctx, 'OR', ',', [first, ...rest]);
     }
+
+    return first;
   }
 
-  private collectAttributeFromSubattributeset(ctx: ECL.SubattributesetContext, attributes: AttributeNode[]): void {
-    // subattributeset = eclattribute | ( eclattributeset )
+  /** subattributeset : eclattribute | ( eclattributeset ) */
+  private buildSubattributeSet(ctx: ECL.SubattributesetContext): RefinementMemberNode | null {
     const attr = ctx.eclattribute();
     if (attr) {
-      const attrNode = this.visitEclattribute(attr);
-      if (attrNode) {
-        attributes.push(attrNode);
-      }
-      return;
+      return this.visitEclattribute(attr);
     }
-
     const nestedSet = ctx.eclattributeset();
-    if (nestedSet) {
-      this.collectAttributesFromAttributeSet(nestedSet, attributes);
+    return nestedSet ? markParenthesized(this.buildAttributeSet(nestedSet)) : null;
+  }
+
+  /**
+   * Build a set node from its members, dropping members that failed to parse.
+   * Collapses to the single member when only one survives, so a set node always
+   * represents a real operator in the source.
+   */
+  private makeSet(
+    ctx: ParserRuleContext,
+    operator: 'AND' | 'OR',
+    style: ',' | 'AND',
+    members: (RefinementMemberNode | null)[],
+  ): RefinementMemberNode | null {
+    const present = members.filter((m): m is RefinementMemberNode => m !== null);
+    if (present.length === 0) {
+      return null;
     }
+    if (present.length === 1) {
+      return present[0];
+    }
+    return {
+      type: NodeType.AttributeSet,
+      range: this.getRange(ctx),
+      operator,
+      conjunctionStyle: operator === 'AND' ? style : ',',
+      members: present,
+    };
   }
 
   // eslint-disable-next-line sonarjs/cognitive-complexity -- ANTLR visitor with multiple grammar rule branches
@@ -417,12 +449,15 @@ export class ECLASTVisitor extends AbstractParseTreeVisitor<any> implements ECLV
       };
     }
 
+    const cardinalityCtx = ctx.cardinality();
+
     return {
       type: NodeType.Attribute,
       range: this.getRange(ctx),
       name: attrName,
       value,
       reversed,
+      cardinality: cardinalityCtx ? '[' + cardinalityCtx.text + ']' : undefined,
     };
   }
 
@@ -703,4 +738,40 @@ export class ECLASTVisitor extends AbstractParseTreeVisitor<any> implements ECLV
     }
     // acceptabilitytokenset has no concept references
   }
+}
+
+/**
+ * Determine how a conjunction set was written: `AND` if any separator used the
+ * keyword, otherwise `,`.  `conjunction : (('AND') mws) | COMMA` so the context
+ * text carries trailing whitespace for the keyword form.
+ */
+function conjunctionStyle(conjunctions: ECL.ConjunctionContext[]): ',' | 'AND' {
+  return conjunctions.some((c) => !c.text.trimStart().startsWith(',')) ? 'AND' : ',';
+}
+
+/** Flatten a refinement tree into its attributes, in source order. */
+function collectAttributes(node: RefinementMemberNode | null, out: AttributeNode[]): void {
+  if (!node) return;
+  switch (node.type) {
+    case NodeType.Attribute:
+      out.push(node);
+      break;
+    case NodeType.AttributeGroup:
+      collectAttributes(node.content, out);
+      break;
+    case NodeType.AttributeSet:
+      for (const member of node.members) {
+        collectAttributes(member, out);
+      }
+      break;
+  }
+}
+
+/**
+ * Record that a set was written inside parentheses in the source, so the printer
+ * can tell real grouping from the implicit nesting of the grammar's two-level
+ * refinement/attribute-set structure.
+ */
+function markParenthesized(node: RefinementMemberNode | null): RefinementMemberNode | null {
+  return node?.type === NodeType.AttributeSet ? { ...node, parenthesized: true } : node;
 }

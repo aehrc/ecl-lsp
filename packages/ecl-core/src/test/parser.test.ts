@@ -1007,3 +1007,86 @@ describe('ECL Parser', () => {
     });
   });
 });
+
+// ── Issue #73: the refinement tree must carry operators and grouping ──────
+describe('ECL Parser — refinement structure', () => {
+  function refinementOf(ecl: string) {
+    const { ast, errors } = parseECL(ecl);
+    assert.equal(errors.length, 0, `should parse: ${errors.map((e) => e.message).join(' | ')}`);
+    assert.ok(ast, 'should have an AST');
+    const inner = ast.expression;
+    assert.equal(inner.type, NodeType.RefinedExpression);
+    if (inner.type !== NodeType.RefinedExpression) throw new Error('unreachable');
+    return inner.refinement;
+  }
+
+  test('a single attribute is the refinement content', () => {
+    const refinement = refinementOf('< 71388002 : 405813007 = << 39937001');
+    assert.equal(refinement.content?.type, NodeType.Attribute);
+    assert.equal(refinement.attributes.length, 1);
+  });
+
+  test('comma separated attributes form a conjunction set', () => {
+    const refinement = refinementOf('< 71388002 : 405813007 = << 39937001, 260686004 = << 129304002');
+    const content = refinement.content;
+    assert.equal(content?.type, NodeType.AttributeSet);
+    if (content?.type !== NodeType.AttributeSet) throw new Error('unreachable');
+    assert.equal(content.operator, 'AND');
+    assert.equal(content.conjunctionStyle, ',');
+    assert.equal(content.members.length, 2);
+  });
+
+  test('AND separated attributes record the keyword style', () => {
+    const refinement = refinementOf('< 71388002 : 405813007 = << 39937001 AND 260686004 = << 129304002');
+    const content = refinement.content;
+    assert.equal(content?.type, NodeType.AttributeSet);
+    if (content?.type !== NodeType.AttributeSet) throw new Error('unreachable');
+    assert.equal(content.operator, 'AND');
+    assert.equal(content.conjunctionStyle, 'AND');
+  });
+
+  test('OR separated attributes form a disjunction set', () => {
+    const refinement = refinementOf('< 71388002 : 405813007 = << 39937001 OR 260686004 = << 129304002');
+    const content = refinement.content;
+    assert.equal(content?.type, NodeType.AttributeSet);
+    if (content?.type !== NodeType.AttributeSet) throw new Error('unreachable');
+    assert.equal(content.operator, 'OR');
+    assert.equal(content.members.length, 2);
+  });
+
+  test('nested parenthesised sets keep their operator and paren flag', () => {
+    const refinement = refinementOf(
+      '< 71388002 : (405813007 = << 39937001 OR 260686004 = << 129304002), 246075003 = << 373873005',
+    );
+    const content = refinement.content;
+    assert.equal(content?.type, NodeType.AttributeSet);
+    if (content?.type !== NodeType.AttributeSet) throw new Error('unreachable');
+    assert.equal(content.operator, 'AND');
+    const [first] = content.members;
+    assert.equal(first.type, NodeType.AttributeSet);
+    if (first.type !== NodeType.AttributeSet) throw new Error('unreachable');
+    assert.equal(first.operator, 'OR');
+    assert.equal(first.parenthesized, true);
+    assert.equal(refinement.attributes.length, 3, 'flattened view still lists every attribute');
+  });
+
+  test('attribute groups are modelled with their cardinality', () => {
+    const refinement = refinementOf('< 71388002 : [1..2] { 405813007 = << 39937001 }');
+    const content = refinement.content;
+    assert.equal(content?.type, NodeType.AttributeGroup);
+    if (content?.type !== NodeType.AttributeGroup) throw new Error('unreachable');
+    assert.equal(content.cardinality, '[1..2]');
+    assert.equal(content.content.type, NodeType.Attribute);
+  });
+
+  test('attribute cardinality is modelled on the attribute', () => {
+    const refinement = refinementOf('< 71388002 : [0..0] 405813007 = *');
+    assert.equal(refinement.attributes[0].cardinality, '[0..0]');
+  });
+
+  test('reverse flag does not leak into cardinality', () => {
+    const refinement = refinementOf('< 71388002 : R 405813007 = << 39937001');
+    assert.equal(refinement.attributes[0].reversed, true);
+    assert.equal(refinement.attributes[0].cardinality, undefined);
+  });
+});

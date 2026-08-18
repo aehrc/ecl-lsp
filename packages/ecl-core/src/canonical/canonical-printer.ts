@@ -12,6 +12,7 @@ import {
   type RefinedExpressionNode,
   type DottedExpressionNode,
   type RefinementNode,
+  type RefinementMemberNode,
   type AttributeNode,
   type ConceptReferenceNode,
 } from '../parser/ast';
@@ -123,31 +124,37 @@ function printDottedExpression(node: DottedExpressionNode, src: string): string 
 }
 
 function printRefinement(node: RefinementNode, src: string): string {
-  // Build each attribute, detecting per-attribute brace groups from source
-  const parts: string[] = [];
-  let prevEnd = node.range.start.offset;
-
-  for (const attr of node.attributes) {
-    const printed = printAttribute(attr, src);
-    const inBraces = isAttrInBraceGroup(attr, prevEnd, src);
-    parts.push(inBraces ? '{' + printed + '}' : printed);
-    prevEnd = attr.range.end.offset;
-  }
-
-  return parts.join(',');
+  return node.content ? printRefinementMember(node.content, src) : '';
 }
 
-function isAttrInBraceGroup(attr: AttributeNode, prevEnd: number, src: string): boolean {
-  const gap = src.slice(prevEnd, attr.range.start.offset);
-  return gap.includes('{');
+/**
+ * Canonical form of a refinement member.
+ *
+ * The conjunction/disjunction operator and the grouping are part of the meaning:
+ * a comma is a CONJUNCTION, so a disjunction must not collapse to one (issue #73).
+ * Explicit `AND` is normalised to `,` because the two are equivalent.
+ */
+export function printRefinementMember(node: RefinementMemberNode, src: string): string {
+  switch (node.type) {
+    case NodeType.Attribute:
+      return printAttribute(node, src);
+    case NodeType.AttributeGroup:
+      return (node.cardinality ?? '') + '{' + printRefinementMember(node.content, src) + '}';
+    case NodeType.AttributeSet: {
+      const sep = node.operator === 'OR' ? ' OR ' : ',';
+      return node.members
+        .map((member) =>
+          member.type === NodeType.AttributeSet
+            ? '(' + printRefinementMember(member, src) + ')'
+            : printRefinementMember(member, src),
+        )
+        .join(sep);
+    }
+  }
 }
 
 function printAttribute(node: AttributeNode, src: string): string {
-  // Cardinality prefix — recovered from source text
-  const preNameSrc = src.slice(node.range.start.offset, node.name.range.start.offset).trim();
-  // Strip leading { that might be in the gap (brace group handled by caller)
-  const cardinalityRaw = preNameSrc.replace(/^\{?\s*/, '').trim();
-  const cardinalityPrefix = cardinalityRaw.length > 0 ? cardinalityRaw + ' ' : '';
+  const cardinalityPrefix = node.cardinality ? node.cardinality + ' ' : '';
 
   // Name
   let name: string;

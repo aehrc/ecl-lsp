@@ -9,6 +9,8 @@ import {
   type RefinedExpressionNode,
   type DottedExpressionNode,
   type RefinementNode,
+  type RefinementMemberNode,
+  type AttributeSetNode,
   type AttributeNode,
   type ConceptReferenceNode,
 } from '../parser/ast';
@@ -25,7 +27,7 @@ export function printAst(ast: ExpressionNode | null, sourceText: string, options
   if (!ast) {
     return '';
   }
-  return printExpression(ast, 0, 0, options, sourceText);
+  return printExpression(ast, 0, 0, options, sourceText, true);
 }
 
 function printExpression(
@@ -34,11 +36,12 @@ function printExpression(
   column: number,
   opts: FormattingOptions,
   src: string,
+  isRoot = false,
 ): string {
   const inner = node.expression;
   switch (inner.type) {
     case NodeType.SubExpressionConstraint:
-      return printSubExpression(inner, depth, column, opts, src);
+      return printSubExpression(inner, depth, column, opts, src, isRoot);
     case NodeType.CompoundExpression:
       return printCompoundExpression(inner, depth, column, opts, src);
     case NodeType.RefinedExpression:
@@ -60,6 +63,7 @@ function printSubExpression(
   column: number,
   opts: FormattingOptions,
   src: string,
+  isRoot = false,
 ): string {
   let result = '';
 
@@ -85,11 +89,23 @@ function printSubExpression(
       const innerExpr = node.focus;
 
       // Check if parentheses can be removed
-      if (opts.removeRedundantParentheses && !node.operator && !node.memberOf) {
+      if (
+        opts.removeRedundantParentheses &&
+        !node.operator &&
+        !node.memberOf &&
+        !node.filters &&
+        !node.historySupplement
+      ) {
         const inner = innerExpr.expression;
-        if (inner.type !== NodeType.CompoundExpression) {
+        // A refined or dotted expression is only a legal sub-expression when it
+        // is parenthesised, so its parens are load-bearing everywhere except at
+        // the very top of the expression — stripping them elsewhere produces a
+        // different (or unparseable) expression.
+        const needsParens =
+          !isRoot && (inner.type === NodeType.RefinedExpression || inner.type === NodeType.DottedExpression);
+        if (inner.type !== NodeType.CompoundExpression && !needsParens) {
           // Rule 1: inner is non-compound → parens always redundant
-          result += printExpression(innerExpr, depth, column + result.length, opts, src);
+          result += printExpression(innerExpr, depth, column + result.length, opts, src, isRoot);
           break;
         }
         // Rule 2 (same operator) is handled by flattening in printCompoundExpression
@@ -261,52 +277,137 @@ function printRefinedExpression(
   // parenthesized sub-expression that rendered as multi-line.
   const focusIsMultilineParen = focus.includes('\n') && node.expression.focus.type === NodeType.ExpressionConstraint;
   const attrDepth = focusIsMultilineParen ? depth + 2 : depth + 1;
-  const ind = getIndentString(attrDepth, opts);
 
-  // Check if the entire refinement is a single brace group
-  const refSrc = src.slice(node.refinement.range.start.offset, node.refinement.range.end.offset).trim();
-  const wholeBraces = refSrc.startsWith('{');
-
-  if (wholeBraces) {
-    const innerInd = getIndentString(attrDepth + 1, opts);
-    const attrs = node.refinement.attributes.map((a) => printAttribute(a, attrDepth + 1, innerInd.length, opts, src));
-    return focus + ':\n' + ind + '{\n' + attrs.map((a) => innerInd + a).join(',\n') + '\n' + ind + '}';
+  const content = node.refinement.content;
+  if (!content) {
+    return focus + ':';
   }
-
-  // Build each attribute, detecting per-attribute brace groups
-  const attrParts: string[] = [];
-  let prevEnd = node.refinement.range.start.offset;
-  for (const attr of node.refinement.attributes) {
-    const printed = printAttribute(attr, attrDepth, ind.length, opts, src);
-    const inBraces = isAttrInBraceGroup(attr, prevEnd, src);
-    attrParts.push(ind + (inBraces ? '{ ' + printed + ' }' : printed));
-    prevEnd = attr.range.end.offset;
-  }
-  return focus + ':\n' + attrParts.join(',\n');
+  return focus + ':\n' + printMemberBlock(content, attrDepth, opts, src);
 }
 
 /**
- * Check if an attribute is inside a brace group by inspecting the source text
- * between the refinement start (or previous attribute) and the attribute start.
+ * Inline separator between the members of an attribute set.
+ *
+ * A comma is a CONJUNCTION in ECL, so a disjunction must never be emitted with
+ * one — doing so silently changes the selected concept set (issue #73).
+ * Keyword operators always keep their surrounding spaces because the grammar
+ * requires mandatory whitespace after `AND`/`OR`.
  */
-function isAttrInBraceGroup(attr: AttributeNode, prevEnd: number, src: string): boolean {
-  const gap = src.slice(prevEnd, attr.range.start.offset);
-  return gap.includes('{');
+function setSeparator(node: AttributeSetNode): string {
+  if (node.operator === 'OR') return ' OR ';
+  return node.conjunctionStyle === 'AND' ? ' AND ' : ', ';
+}
+
+/**
+ * Flatten nested attribute sets that use the SAME operator as their parent.
+ *
+ * The grammar nests an attribute set inside every refinement, so most nesting is
+ * implicit and carries no parentheses in the source — that is always flattened.
+ * Sets the source really did parenthesise are kept unless the caller asked for
+ * redundant parentheses to be removed.
+ *
+ * Parentheses around a set with a DIFFERENT operator are load-bearing: ECL gives
+ * refinement conjunction and disjunction no relative precedence, so removing them
+ * would change the meaning (issue #73). They are never flattened.
+ */
+function flattenSameOperatorMembers(node: AttributeSetNode, opts: FormattingOptions): RefinementMemberNode[] {
+  const result: RefinementMemberNode[] = [];
+  for (const member of node.members) {
+    const redundant =
+      member.type === NodeType.AttributeSet &&
+      member.operator === node.operator &&
+      (!member.parenthesized || opts.removeRedundantParentheses);
+    if (redundant) {
+      result.push(...flattenSameOperatorMembers(member, opts));
+    } else {
+      result.push(member);
+    }
+  }
+  return result;
+}
+
+/** Render a refinement member on a single line. */
+function printRefinementMember(
+  node: RefinementMemberNode,
+  depth: number,
+  column: number,
+  opts: FormattingOptions,
+  src: string,
+): string {
+  switch (node.type) {
+    case NodeType.Attribute:
+      return printAttribute(node, depth, column, opts, src);
+    case NodeType.AttributeGroup: {
+      const prefix = (node.cardinality ? node.cardinality + ' ' : '') + '{ ';
+      return prefix + printRefinementMember(node.content, depth, column + prefix.length, opts, src) + ' }';
+    }
+    case NodeType.AttributeSet: {
+      const members = flattenSameOperatorMembers(node, opts);
+      const sep = setSeparator(node);
+      const parts: string[] = [];
+      let col = column;
+      for (const member of members) {
+        const text = printNestedMember(member, depth, col, opts, src);
+        parts.push(text);
+        col += text.length + sep.length;
+      }
+      return parts.join(sep);
+    }
+  }
+}
+
+/**
+ * Render one member of an attribute set, adding the parentheses that the
+ * grammar requires around a nested set (see `flattenSameOperatorMembers`).
+ */
+function printNestedMember(
+  node: RefinementMemberNode,
+  depth: number,
+  column: number,
+  opts: FormattingOptions,
+  src: string,
+): string {
+  if (node.type === NodeType.AttributeSet) {
+    return '(' + printRefinementMember(node, depth, column + 1, opts, src) + ')';
+  }
+  return printRefinementMember(node, depth, column, opts, src);
+}
+
+/**
+ * Render a refinement member as an indented block starting at `depth`.
+ * Every returned line, including the first, carries its own indent.
+ */
+function printMemberBlock(node: RefinementMemberNode, depth: number, opts: FormattingOptions, src: string): string {
+  const ind = getIndentString(depth, opts);
+
+  if (node.type === NodeType.AttributeGroup) {
+    const card = node.cardinality ? node.cardinality + ' ' : '';
+    return ind + card + '{\n' + printMemberBlock(node.content, depth + 1, opts, src) + '\n' + ind + '}';
+  }
+
+  if (node.type === NodeType.AttributeSet) {
+    const members = flattenSameOperatorMembers(node, opts);
+    const rendered = members.map((member) => {
+      const line = ind + printNestedMember(member, depth, ind.length, opts, src);
+      // An attribute group only expands onto its own lines when it can't fit.
+      if (member.type === NodeType.AttributeGroup && opts.maxLineLength > 0 && line.length > opts.maxLineLength) {
+        return printMemberBlock(member, depth, opts, src);
+      }
+      return line;
+    });
+    if (node.operator === 'AND' && node.conjunctionStyle === ',') {
+      return rendered.join(',\n');
+    }
+    // Keyword operators lead the continuation line, mirroring compound expressions.
+    const keyword = node.operator;
+    return rendered.map((text, i) => (i === 0 ? text : ind + keyword + ' ' + text.slice(ind.length))).join('\n');
+  }
+
+  return ind + printAttribute(node, depth, ind.length, opts, src);
 }
 
 function printRefinement(node: RefinementNode, depth: number, opts: FormattingOptions, src: string): string {
-  // Build each attribute, detecting individual brace groups from source text
-  const parts: string[] = [];
-  let prevEnd = node.range.start.offset;
-
-  for (const attr of node.attributes) {
-    const printed = printAttribute(attr, depth, 0, opts, src);
-    const inBraces = isAttrInBraceGroup(attr, prevEnd, src);
-    parts.push(inBraces ? '{ ' + printed + ' }' : printed);
-    prevEnd = attr.range.end.offset;
-  }
-
-  return parts.join(', ');
+  return node.content ? printRefinementMember(node.content, depth, 0, opts, src) : '';
 }
 
 function printAttribute(
@@ -316,14 +417,7 @@ function printAttribute(
   opts: FormattingOptions,
   src: string,
 ): string {
-  // Cardinality prefix — the AST doesn't model cardinality constraints like [0..0],
-  // so recover from source text between the attribute range start and the name start.
-  const preNameSrc = src.slice(node.range.start.offset, node.name.range.start.offset).trim();
-  const cardinalityPrefix = preNameSrc.length > 0 ? preNameSrc + ' ' : '';
-
-  // Brace-group wrapping flag — set by the caller (printRefinement / printRefinedExpression)
-  // when this attribute is inside an individual { } group within a refinement.
-  // Detected via the attrHasBraces parameter or caller-level source inspection.
+  const cardinalityPrefix = node.cardinality ? node.cardinality + ' ' : '';
 
   // Name
   let name: string;

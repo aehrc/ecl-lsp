@@ -12,6 +12,8 @@ import {
   type RefinedExpressionNode,
   type DottedExpressionNode,
   type RefinementNode,
+  type RefinementMemberNode,
+  type AttributeSetNode,
   type AttributeNode,
   type AttributeNameNode,
   type AttributeValueNode,
@@ -20,7 +22,7 @@ import {
   type DottedAttributeNode,
   type FilterConstraintNode,
 } from '../parser/ast';
-import { printCanonical } from './canonical-printer';
+import { printCanonical, printRefinementMember } from './canonical-printer';
 
 /**
  * Produce a normalised deep copy of the AST.
@@ -142,10 +144,77 @@ function normaliseRefinedExpression(node: RefinedExpressionNode, src: string): R
 }
 
 function normaliseRefinement(node: RefinementNode, src: string): RefinementNode {
-  // §5.3: normalise and sort attributes numerically by SCTID
-  const normAttrs = node.attributes.map((a) => normaliseAttribute(a, src));
-  normAttrs.sort((a, b) => compareAttributes(a, b, src));
-  return { ...node, attributes: normAttrs };
+  const content = node.content ? normaliseRefinementMember(node.content, src) : null;
+  const attributes: AttributeNode[] = [];
+  collectAttributes(content, attributes);
+  return { ...node, attributes, content };
+}
+
+/**
+ * Normalise a refinement member, preserving the operator and the grouping.
+ *
+ * Conjunction and disjunction are both commutative, so members within a set are
+ * sorted; they are NOT merged across sets, because a comma is a conjunction and
+ * flattening a disjunction into one would change the meaning (issue #73).
+ */
+function normaliseRefinementMember(node: RefinementMemberNode, src: string): RefinementMemberNode {
+  switch (node.type) {
+    case NodeType.Attribute:
+      return normaliseAttribute(node, src);
+    case NodeType.AttributeGroup:
+      return { ...node, content: normaliseRefinementMember(node.content, src) };
+    case NodeType.AttributeSet: {
+      // §5.5 rule 2: nested sets with the SAME operator are redundantly
+      // parenthesised — flatten them. Different operators are load-bearing.
+      const members = flattenSameOperatorMembers(node).map((m) => normaliseRefinementMember(m, src));
+      members.sort((a, b) => compareRefinementMembers(a, b, src));
+      // Explicit AND and comma mean the same thing — normalise to comma.
+      return { ...node, conjunctionStyle: ',', members };
+    }
+  }
+}
+
+function flattenSameOperatorMembers(node: AttributeSetNode): RefinementMemberNode[] {
+  const result: RefinementMemberNode[] = [];
+  for (const member of node.members) {
+    if (member.type === NodeType.AttributeSet && member.operator === node.operator) {
+      result.push(...flattenSameOperatorMembers(member));
+    } else {
+      result.push(member);
+    }
+  }
+  return result;
+}
+
+/** Flatten a refinement tree into its attributes, in tree order. */
+function collectAttributes(node: RefinementMemberNode | null, out: AttributeNode[]): void {
+  if (!node) return;
+  switch (node.type) {
+    case NodeType.Attribute:
+      out.push(node);
+      break;
+    case NodeType.AttributeGroup:
+      collectAttributes(node.content, out);
+      break;
+    case NodeType.AttributeSet:
+      for (const member of node.members) {
+        collectAttributes(member, out);
+      }
+      break;
+  }
+}
+
+/**
+ * §5.3: order refinement members deterministically — plain attributes first
+ * (numerically by attribute SCTID), then groups and nested sets by canonical text.
+ */
+function compareRefinementMembers(a: RefinementMemberNode, b: RefinementMemberNode, src: string): number {
+  if (a.type === NodeType.Attribute && b.type === NodeType.Attribute) {
+    return compareAttributes(a, b, src);
+  }
+  if (a.type === NodeType.Attribute) return -1;
+  if (b.type === NodeType.Attribute) return 1;
+  return printRefinementMember(a, src).localeCompare(printRefinementMember(b, src));
 }
 
 function compareAttributes(a: AttributeNode, b: AttributeNode, src: string): number {

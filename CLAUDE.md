@@ -85,9 +85,9 @@ The `alignTerms` option is accepted but is a no-op — term pipe alignment was r
 
 ## Known Limitations
 
-- OR/AND between refinement attributes is flattened by the AST — the printer comma-separates them
+- Cardinality constraints on attributes and attribute groups are modelled; refinement AND/OR operators and grouping are preserved in `RefinementNode.content` (`RefinementNode.attributes` remains a flattened convenience view)
 - Filter constraint internals (term values, language codes) not modelled in AST — only concept-bearing parts extracted
-- Cardinality constraints and `{ }` brace groups recovered from source text, not AST
+- Attribute comparison operators (`=`, `!=`, `>=`, `<=`) are still recovered from source text, not the AST
 - Eclipse client requires Maven/Tycho (not part of npm workflow)
 
 ## Resources

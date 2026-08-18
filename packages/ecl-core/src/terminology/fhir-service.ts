@@ -91,13 +91,86 @@ interface CacheEntry<T> {
   timestamp: number;
 }
 
+/**
+ * How {@link FhirTerminologyService.evaluateEcl} carries the ECL to the terminology server.
+ *
+ * - `'auto'` (default) — try the implicit ValueSet URL `GET` first and fall back to
+ *   `POST ValueSet/$expand` when the server shows it cannot serve implicit ValueSets.
+ * - `'implicit-url'` — only ever use the implicit ValueSet URL `GET`.
+ * - `'post'` — always `POST ValueSet/$expand` with a `constraint` filter.
+ */
+export type EclEvaluationStrategy = 'auto' | 'implicit-url' | 'post';
+
+/** Type guard for {@link EclEvaluationStrategy} (unknown values degrade to `'auto'`). */
+export function isEclEvaluationStrategy(value: unknown): value is EclEvaluationStrategy {
+  return value === 'auto' || value === 'implicit-url' || value === 'post';
+}
+
 export interface FhirTerminologyServiceOptions {
   baseUrl?: string;
   timeout?: number;
   userAgent?: string;
   snomedVersion?: string;
+  /** ECL evaluation transport; defaults to `'auto'`. See {@link EclEvaluationStrategy}. */
+  evaluationStrategy?: EclEvaluationStrategy;
   onResolvedVersion?: (versionUri: string) => void;
 }
+
+/**
+ * Characters that carry structural meaning inside the *canonical* implicit ValueSet URL
+ * (`http://snomed.info/sct?fhir_vs=ecl/<expression>`) and must therefore be percent-encoded
+ * within the ECL itself, before the whole canonical URL is escaped again as the `url=` query
+ * parameter.
+ *
+ * `encodeURIComponent` alone only protects the outer HTTP query-string layer. The server
+ * decodes that layer and then parses what is left as a canonical URL, where — for example —
+ * a trailing `|` is the `system|version` delimiter, so a term annotation such as
+ * `|Disease|` truncates the expression (issue #68).
+ *
+ * `%` is deliberately absent: it must be escaped first and separately, see
+ * {@link encodeEclForCanonicalUrl}.
+ */
+const CANONICAL_URL_RESERVED: readonly (readonly [string, string])[] = [
+  ['|', '%7C'], // FHIR canonical `system|version` delimiter — the issue #68 corruption
+  ['#', '%23'], // URL fragment delimiter; also introduces ECL concrete values such as `#20`
+  ['&', '%26'], // separates parameters within the canonical URL's own query string
+  ['+', '%2B'], // read as a space by form-style query decoders
+  ['?', '%3F'], // query string introducer
+];
+
+/**
+ * Percent-encode the characters of an ECL expression that are reserved by the canonical
+ * implicit ValueSet URL it gets embedded in.
+ *
+ * `%` is escaped FIRST so the transform stays injective: a single decode on the server
+ * recovers the original expression byte for byte, and an expression that legitimately
+ * contains `%7C` round-trips as `%7C` rather than turning into a pipe. Nothing here is
+ * ever applied twice, so the function cannot double-encode already-escaped input.
+ */
+function encodeEclForCanonicalUrl(expression: string): string {
+  let encoded = expression.replaceAll('%', '%25');
+  for (const [character, escape] of CANONICAL_URL_RESERVED) {
+    encoded = encoded.replaceAll(character, escape);
+  }
+  return encoded;
+}
+
+/** Diagnostics wording used by servers that cannot resolve an implicit ValueSet URL. */
+const VALUE_SET_NOT_FOUND = /value\s*sets?\s*not\s*found/i;
+
+/** Diagnostics wording used by servers that reject implicit ValueSets as an unsupported feature. */
+const IMPLICIT_VALUE_SET_UNSUPPORTED = [
+  /implicit[^.]*value\s*sets?[^.]*not\s*supported/i,
+  /not\s*supported[^.]*implicit[^.]*value\s*sets?/i,
+];
+
+/**
+ * A failure the terminology server reported about an ECL evaluation, carrying the raw
+ * OperationOutcome diagnostics. Distinguishes server-reported issues (which `evaluateEcl`
+ * wraps in a "FHIR evaluation failed:" message) from transport errors such as an aborted
+ * fetch, which continue to propagate unchanged.
+ */
+class EvaluationIssueError extends Error {}
 
 /** A version of a SNOMED CT edition available on the server. */
 export interface SnomedVersion {
@@ -121,8 +194,15 @@ export class FhirTerminologyService implements ITerminologyService {
   private readonly searchTimeout: number;
   private readonly searchCacheTTL: number; // milliseconds
   private readonly snomedVersion: string | undefined;
+  private readonly evaluationStrategy: EclEvaluationStrategy;
   private readonly onResolvedVersion: ((versionUri: string) => void) | undefined;
   private resolvedVersion: string | null = null;
+  /**
+   * Latched once a POST `ValueSet/$expand` fallback has succeeded in `'auto'` mode: the
+   * server has demonstrated it cannot serve the implicit ValueSet URL form, so subsequent
+   * evaluations skip the wasted round-trip for the lifetime of this instance.
+   */
+  private usePostExpand = false;
 
   constructor(options: FhirTerminologyServiceOptions = {}) {
     this.baseUrl = options.baseUrl ?? 'https://tx.ontoserver.csiro.au/fhir';
@@ -132,6 +212,7 @@ export class FhirTerminologyService implements ITerminologyService {
     this.searchTimeout = 5000; // 5 seconds for search queries
     this.searchCacheTTL = 5 * 60 * 1000; // 5 minutes
     this.snomedVersion = options.snomedVersion?.trim() ? options.snomedVersion.trim() : undefined;
+    this.evaluationStrategy = isEclEvaluationStrategy(options.evaluationStrategy) ? options.evaluationStrategy : 'auto';
     this.onResolvedVersion = options.onResolvedVersion;
   }
 
@@ -721,30 +802,147 @@ export class FhirTerminologyService implements ITerminologyService {
       return { total: 0, concepts: [], truncated: false };
     }
 
-    const implicitVsUrl = `${this.snomedSystemUrl}?fhir_vs=ecl/${expression.trim()}`;
-    const url = `${this.baseUrl}/ValueSet/$expand?url=${encodeURIComponent(implicitVsUrl)}&count=${limit}`;
+    const trimmed = expression.trim();
+    // A single budget shared by both transport attempts, so an implicit GET followed by a
+    // POST fallback cannot together exceed the configured evaluation timeout.
+    const deadline = Date.now() + this.evaluationTimeout;
 
-    const response = await this.fetchWithTimeout(url, this.evaluationTimeout);
+    try {
+      return await this.runEvaluationStrategy(trimmed, limit, deadline);
+    } catch (error) {
+      // Transport failures (aborted fetch, DNS, ...) propagate untouched; only issues the
+      // server actually reported get the "FHIR evaluation failed:" treatment.
+      if (!(error instanceof EvaluationIssueError)) throw error;
+      throw this.createEvaluationError(trimmed, error);
+    }
+  }
 
-    if (!response.ok) {
-      const data = (await response.json().catch(() => null)) as FhirOperationOutcomeResponse | null;
-      const issue = data?.issue?.[0]?.diagnostics ?? data?.issue?.[0]?.details?.text ?? `HTTP ${response.status}`;
-
-      // Clean up FHIR OperationOutcome messages: strip server UUIDs and add context
-      // when filter syntax is rejected by the server's ECL parser
-      if (expression.includes('{{') && /no viable alternative/i.test(issue)) {
-        // Strip UUID prefix like "[d4ac2525-...]: "
-        const cleaned = issue.replace(/^\[[0-9a-f-]+\]:\s*/i, '');
-        throw new Error(
-          `FHIR evaluation failed: ${cleaned}\n` +
-            'Note: Some ECL 2.2 filter syntax (e.g. {{ D id = ... }}) may not be supported by this terminology server.',
-        );
-      }
-
-      throw new Error(`FHIR evaluation failed: ${issue}`);
+  /**
+   * Transport selection for {@link evaluateEcl}.
+   *
+   * A forced `'post'` strategy — or a latched successful POST fallback — goes straight to
+   * `POST ValueSet/$expand`. Otherwise the implicit ValueSet URL GET runs first, and in
+   * `'auto'` mode a failure whose *shape* says the server cannot serve implicit ValueSets
+   * (issue #55) is retried over POST.
+   */
+  private async runEvaluationStrategy(
+    expression: string,
+    limit: number,
+    deadline: number,
+  ): Promise<EvaluationResponse> {
+    if (this.evaluationStrategy === 'post' || this.usePostExpand) {
+      return await this.evaluateViaPostExpand(expression, limit, deadline);
     }
 
-    const data = (await response.json()) as FhirValueSetResponse;
+    const response = await this.fetchWithTimeout(
+      this.buildImplicitEvaluationUrl(expression, limit),
+      this.remainingTimeout(deadline),
+    );
+    if (response.ok) {
+      return this.parseEvaluationResponse((await response.json()) as FhirValueSetResponse);
+    }
+
+    const outcome = await this.readOperationOutcome(response);
+    if (this.evaluationStrategy === 'implicit-url' || !this.shouldFallbackToPostExpand(response.status, outcome)) {
+      throw new EvaluationIssueError(outcome.issue);
+    }
+
+    try {
+      const result = await this.evaluateViaPostExpand(expression, limit, deadline);
+      // Latch only on success: the server has now proved it serves POST $expand but not the
+      // implicit ValueSet URL, which is a property of the server, not of this expression.
+      this.usePostExpand = true;
+      return result;
+    } catch (error) {
+      if (!(error instanceof EvaluationIssueError)) throw error;
+      // Report both diagnostics — the POST failure alone can be misleading when the real
+      // problem is that neither form is available.
+      throw new EvaluationIssueError(
+        `${error.message} (POST ValueSet/$expand fallback; the implicit ValueSet URL also failed: ${outcome.issue})`,
+        { cause: error },
+      );
+    }
+  }
+
+  /** `GET ValueSet/$expand?url=<canonical implicit ECL ValueSet>` — see {@link encodeEclForCanonicalUrl}. */
+  private buildImplicitEvaluationUrl(expression: string, limit: number): string {
+    const implicitVsUrl = `${this.snomedSystemUrl}?fhir_vs=ecl/${encodeEclForCanonicalUrl(expression)}`;
+    return `${this.baseUrl}/ValueSet/$expand?url=${encodeURIComponent(implicitVsUrl)}&count=${limit}`;
+  }
+
+  /**
+   * `POST ValueSet/$expand` carrying the ECL in `compose.include.filter` with
+   * `property: "constraint"` — the form requested in issue #55. The expression travels in a
+   * JSON body, so it needs no escaping at all.
+   */
+  private async evaluateViaPostExpand(
+    expression: string,
+    limit: number,
+    deadline: number,
+  ): Promise<EvaluationResponse> {
+    const include: Record<string, unknown> = {
+      system: 'http://snomed.info/sct', // eslint-disable-line sonarjs/no-clear-text-protocols -- FHIR system URI, not a network URL
+      ...(this.snomedVersion ? { version: this.snomedVersion } : {}),
+      filter: [{ property: 'constraint', op: '=', value: expression }],
+    };
+
+    const response = await this.fetchWithTimeout(
+      `${this.baseUrl}/ValueSet/$expand?count=${limit}`,
+      this.remainingTimeout(deadline),
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/fhir+json', Accept: 'application/fhir+json' },
+        body: JSON.stringify({ resourceType: 'ValueSet', compose: { include: [include] } }),
+      },
+    );
+
+    if (!response.ok) {
+      throw new EvaluationIssueError((await this.readOperationOutcome(response)).issue);
+    }
+
+    return this.parseEvaluationResponse((await response.json()) as FhirValueSetResponse);
+  }
+
+  /**
+   * True when an implicit-URL failure indicates the implicit ValueSet *form* is unsupported
+   * rather than the expression being invalid.
+   *
+   * Deliberately excludes a bare HTTP 422: that is also how a genuine ECL syntax error
+   * presents, and retrying those over POST would only turn one clear error into two requests
+   * and a muddled message. The `'not-found'` OperationOutcome code is still honoured on any
+   * status, which covers servers that report a missing implicit ValueSet as 422.
+   */
+  private shouldFallbackToPostExpand(status: number, outcome: { code?: string; issue: string }): boolean {
+    return (
+      status === 404 ||
+      status === 414 ||
+      outcome.code === 'not-found' ||
+      VALUE_SET_NOT_FOUND.test(outcome.issue) ||
+      IMPLICIT_VALUE_SET_UNSUPPORTED.some((pattern) => pattern.test(outcome.issue))
+    );
+  }
+
+  /** Remaining milliseconds in the shared evaluation budget; throws once it is spent. */
+  private remainingTimeout(deadline: number): number {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) {
+      throw new EvaluationIssueError('evaluation timed out');
+    }
+    return remaining;
+  }
+
+  /** The machine-readable code and human-readable text of a FHIR error response. */
+  private async readOperationOutcome(response: Response): Promise<{ code?: string; issue: string }> {
+    const data = (await response.json().catch(() => null)) as FhirOperationOutcomeResponse | null;
+    const first = data?.issue?.[0];
+    return {
+      code: first?.code,
+      issue: first?.diagnostics ?? first?.details?.text ?? `HTTP ${response.status}`,
+    };
+  }
+
+  /** Shared expansion mapping for both the implicit-URL and POST evaluation transports. */
+  private parseEvaluationResponse(data: FhirValueSetResponse): EvaluationResponse {
     const expansion = data.expansion ?? {};
     this.captureResolvedVersion(expansion.parameter);
     const total = typeof expansion.total === 'number' ? expansion.total : 0;
@@ -760,6 +958,24 @@ export class FhirTerminologyService implements ITerminologyService {
       concepts,
       truncated: total > concepts.length,
     };
+  }
+
+  private createEvaluationError(expression: string, error: EvaluationIssueError): Error {
+    const issue = error.message;
+
+    // Clean up FHIR OperationOutcome messages: strip server UUIDs and add context
+    // when filter syntax is rejected by the server's ECL parser
+    if (expression.includes('{{') && /no viable alternative/i.test(issue)) {
+      // Strip UUID prefix like "[d4ac2525-...]: "
+      const cleaned = issue.replace(/^\[[0-9a-f-]+\]:\s*/i, '');
+      return new Error(
+        `FHIR evaluation failed: ${cleaned}\n` +
+          'Note: Some ECL 2.2 filter syntax (e.g. {{ D id = ... }}) may not be supported by this terminology server.',
+        { cause: error },
+      );
+    }
+
+    return new Error(`FHIR evaluation failed: ${issue}`, { cause: error });
   }
 
   private async searchByFilter(filter: string): Promise<SearchResponse> {

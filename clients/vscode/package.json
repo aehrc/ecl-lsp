@@ -234,6 +234,21 @@
           "default": "",
           "description": "SNOMED CT edition/version URI. Edition-only (e.g. http://snomed.info/sct/32506021000036107) uses the latest version. Pinned (e.g. http://snomed.info/sct/32506021000036107/version/20260131) uses that exact release. Empty uses the server default."
         },
+        "ecl.terminology.evaluationStrategy": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "implicit-url",
+            "post"
+          ],
+          "enumDescriptions": [
+            "Try the implicit ValueSet URL first, then fall back to POST ValueSet/$expand if the server does not support implicit ValueSets",
+            "Always use the implicit ValueSet URL (GET ValueSet/$expand?url=...?fhir_vs=ecl/...)",
+            "Always use POST ValueSet/$expand with an ECL constraint filter"
+          ],
+          "default": "auto",
+          "description": "How ECL expressions are sent to the terminology server for evaluation. Use 'post' for servers that do not support implicit ValueSet URLs."
+        },
         "ecl.semanticValidation.enabled": {
           "type": "boolean",
           "default": true,

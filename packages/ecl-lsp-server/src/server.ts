@@ -61,9 +61,11 @@ import {
   isTerminologyError,
   isTerminologyHttpError,
   isTerminologyTransportError,
+  isEclEvaluationStrategy,
 } from '@aehrc/ecl-core';
 import type {
   ITerminologyService,
+  EclEvaluationStrategy,
   EvaluationResponse,
   CoreCodeAction,
   CoreCompletionItem,
@@ -211,26 +213,36 @@ function extractTerminologyConfig(config: Record<string, unknown> | null | undef
   serverUrl: string | undefined;
   timeout: number | undefined;
   snomedVersion: string | undefined;
+  evaluationStrategy: EclEvaluationStrategy | undefined;
 } {
-  if (!config) return { serverUrl: undefined, timeout: undefined, snomedVersion: undefined };
-  // VSCode: { serverUrl, timeout, snomedVersion } from section 'ecl.terminology'
-  // Eclipse initializationOptions: { fhirTerminologyServerUrl, timeout, snomedVersion }
+  if (!config)
+    return { serverUrl: undefined, timeout: undefined, snomedVersion: undefined, evaluationStrategy: undefined };
+  // VSCode: { serverUrl, timeout, snomedVersion, evaluationStrategy } from section 'ecl.terminology'
+  // Eclipse initializationOptions: { fhirTerminologyServerUrl, timeout, snomedVersion, evaluationStrategy }
   const rawUrl = config.serverUrl ?? config.fhirTerminologyServerUrl;
   const serverUrl = typeof rawUrl === 'string' && rawUrl.trim() ? rawUrl.trim() : undefined;
   const rawTimeout = config.timeout;
   const timeout = typeof rawTimeout === 'number' && rawTimeout >= 500 ? rawTimeout : undefined;
   const rawVersion = config.snomedVersion;
   const snomedVersion = typeof rawVersion === 'string' && rawVersion.trim() ? rawVersion.trim() : undefined;
-  return { serverUrl, timeout, snomedVersion };
+  const rawStrategy = config.evaluationStrategy;
+  const evaluationStrategy = isEclEvaluationStrategy(rawStrategy) ? rawStrategy : undefined;
+  return { serverUrl, timeout, snomedVersion, evaluationStrategy };
 }
 
-function applyTerminologyConfig(cfg: { serverUrl?: string; timeout?: number; snomedVersion?: string }): void {
+function applyTerminologyConfig(cfg: {
+  serverUrl?: string;
+  timeout?: number;
+  snomedVersion?: string;
+  evaluationStrategy?: EclEvaluationStrategy;
+}): void {
   snomedEditionLabel = cfg.snomedVersion ?? 'server default';
   terminologyService = new FhirTerminologyService({
     baseUrl: cfg.serverUrl,
     timeout: cfg.timeout,
     userAgent: clientUserAgent,
     snomedVersion: cfg.snomedVersion,
+    evaluationStrategy: cfg.evaluationStrategy,
     onResolvedVersion: (versionUri) => {
       connection.console.log(`Resolved SNOMED version: ${versionUri}`);
       snomedEditionLabel = versionUri;
@@ -251,7 +263,12 @@ async function initTerminologyService(): Promise<void> {
     });
     const cfg = extractTerminologyConfig(config as Record<string, unknown>);
     // If workspace config returned actual values, use them
-    if (cfg.serverUrl !== undefined || cfg.timeout !== undefined || cfg.snomedVersion !== undefined) {
+    if (
+      cfg.serverUrl !== undefined ||
+      cfg.timeout !== undefined ||
+      cfg.snomedVersion !== undefined ||
+      cfg.evaluationStrategy !== undefined
+    ) {
       applyTerminologyConfig(cfg);
     } else {
       // Fall back to initializationOptions (Eclipse and other clients)

@@ -36,7 +36,8 @@ export {
 
 // Terminology
 export { FhirTerminologyService } from './terminology/fhir-service';
-export type { FhirTerminologyServiceOptions } from './terminology/fhir-service';
+export type { FhirTerminologyServiceOptions, EclEvaluationStrategy } from './terminology/fhir-service';
+export { isEclEvaluationStrategy } from './terminology/fhir-service';
 export type {
   ITerminologyService,
   ConceptInfo,

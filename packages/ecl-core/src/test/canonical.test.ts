@@ -191,6 +191,14 @@ describe('canonicalise — error handling', () => {
       name: 'CanonicaliseError',
     });
   });
+
+  // Regression: https://github.com/aehrc/ecl-lsp/issues/69
+  it('should not throw for bare multi-digit concrete integers', () => {
+    const a = '^929360051000036108 : 1142142004 = #20';
+    const b = '^ 929360051000036108 : 1142142004 = #20';
+    assert.strictEqual(compareExpressions(a, b), 'structurally_equivalent');
+    assert.strictEqual(canonicalise('< 763158003 : 1142135004 >= #1000000'), '<763158003:1142135004 >= #1000000');
+  });
 });
 
 // ── Wildcard (§9.7) ─────────────────────────────────────────────────────

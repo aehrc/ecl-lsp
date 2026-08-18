@@ -3,6 +3,7 @@
 
 // eslint-disable-next-line sonarjs/deprecation -- antlr4ts only provides ANTLRInputStream
 import { ANTLRInputStream, CommonTokenStream, Token } from 'antlr4ts';
+import { PredictionMode } from 'antlr4ts/atn/PredictionMode';
 import { ECLLexer } from './generated/grammar/ECLLexer';
 import { ECLParser } from './generated/grammar/ECLParser';
 import { ECLASTVisitor } from './visitor';
@@ -36,36 +37,25 @@ export interface ParseResult {
 let lastInput: string | null = null;
 let lastResult: ParseResult | null = null;
 
-// eslint-disable-next-line sonarjs/cognitive-complexity -- main parser orchestration with error recovery
-export function parseECL(input: string): ParseResult {
-  if (input === lastInput && lastResult !== null) {
-    return lastResult;
-  }
+interface ParseAttempt {
+  ast: ExpressionNode | null;
+  errors: ParseError[];
+}
+
+/**
+ * Runs a single parse of `input` with the given ANTLR prediction mode.
+ *
+ * Any input the parser leaves unconsumed is reported as an error, because the
+ * ECL grammar's start rule (`expressionconstraint`) is not anchored with `EOF`
+ * and therefore happily matches a prefix of the input.
+ */
+function runParseAttempt(input: string, predictionMode: PredictionMode): ParseAttempt {
   // eslint-disable-next-line @typescript-eslint/no-deprecated, sonarjs/deprecation
   const inputStream = new ANTLRInputStream(input);
   const lexer = new ECLLexer(inputStream);
   const tokenStream = new CommonTokenStream(lexer);
-
-  // Extract tokens with position information
-  tokenStream.fill();
-  const tokens: TokenInfo[] = tokenStream.getTokens().map((token: Token) => ({
-    type: token.type,
-    text: token.text ?? '',
-    range: {
-      start: {
-        line: token.line,
-        column: token.charPositionInLine,
-        offset: token.startIndex,
-      },
-      end: {
-        line: token.line,
-        column: token.charPositionInLine + (token.text?.length ?? 0),
-        offset: token.stopIndex + 1,
-      },
-    },
-  }));
-
   const parser = new ECLParser(tokenStream);
+  parser.interpreter.setPredictionMode(predictionMode);
 
   // Add custom error listener
   const errorListener = new ECLErrorListener();
@@ -102,9 +92,67 @@ export function parseECL(input: string): ParseResult {
     // Parser threw an exception — errors captured by error listener
   }
 
+  return { ast, errors: errorListener.getErrors() };
+}
+
+/**
+ * Two-stage parse, the idiom recommended by ANTLR.
+ *
+ * Stage 1 uses SLL prediction. Stage 2 falls back to full-context (LL)
+ * prediction — antlr4ts's default — only when SLL does not yield a clean parse,
+ * so that ANTLR's richer error reporting is preserved for genuinely broken input.
+ *
+ * SLL is required for correctness here, not just speed. The IHTSDO grammar's
+ * start rule is not `EOF`-anchored, so under full-context prediction the exit
+ * branch of a trailing sub-rule loop can reach the start rule's stop state with
+ * an empty outer context — a valid accept, since any prefix of the input is a
+ * legal parse. LL then resolves such loops to "exit" instead of the greedy
+ * "continue". That truncated `integervalue : (digitnonzero digit*) | zero` after
+ * its first digit, so `= #20` parsed as `= #2` with a stray `0` left over
+ * (https://github.com/aehrc/ecl-lsp/issues/69). SLL keeps the greedy resolution.
+ */
+function parseWithFallback(input: string): ParseAttempt {
+  const sll = runParseAttempt(input, PredictionMode.SLL);
+  if (sll.ast !== null && sll.errors.length === 0) {
+    return sll;
+  }
+  return runParseAttempt(input, PredictionMode.LL);
+}
+
+// eslint-disable-next-line sonarjs/cognitive-complexity -- main parser orchestration with error recovery
+export function parseECL(input: string): ParseResult {
+  if (input === lastInput && lastResult !== null) {
+    return lastResult;
+  }
+  // eslint-disable-next-line @typescript-eslint/no-deprecated, sonarjs/deprecation
+  const tokenInputStream = new ANTLRInputStream(input);
+  const tokenLexer = new ECLLexer(tokenInputStream);
+  const tokenStream = new CommonTokenStream(tokenLexer);
+
+  // Extract tokens with position information
+  tokenStream.fill();
+  const tokens: TokenInfo[] = tokenStream.getTokens().map((token: Token) => ({
+    type: token.type,
+    text: token.text ?? '',
+    range: {
+      start: {
+        line: token.line,
+        column: token.charPositionInLine,
+        offset: token.startIndex,
+      },
+      end: {
+        line: token.line,
+        column: token.charPositionInLine + (token.text?.length ?? 0),
+        offset: token.stopIndex + 1,
+      },
+    },
+  }));
+
+  const { ast, errors: parseErrors } = parseWithFallback(input);
+
   // Post-parse: replace cryptic ANTLR errors with clear, actionable messages.
   // Single-pass analysis detects all issues; we apply them in priority order.
-  const existingErrors = errorListener.getErrors();
+  const existingErrors = parseErrors;
   if (existingErrors.length > 0) {
     const issues = analyzeExpression(input);
 
@@ -205,7 +253,7 @@ export function parseECL(input: string): ParseResult {
 
   const result: ParseResult = {
     ast,
-    errors: errorListener.getErrors(),
+    errors: parseErrors,
     warnings,
     tokens,
   };

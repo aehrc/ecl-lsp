@@ -611,3 +611,150 @@ describe('AST Printer — removeRedundantParentheses', () => {
     });
   });
 });
+
+// ── Issue #73: refinement operator + grouping preservation ────────────────
+//
+// A comma inside a refinement is a CONJUNCTION. Printing `A OR B` as `A, B`
+// silently changes which concepts the expression selects, so the AST must
+// carry the operator and the grouping, and the printer must emit both.
+describe('AST Printer — refinement operators and grouping (issue #73)', () => {
+  const optsRemoveParens = { ...opts, removeRedundantParentheses: true };
+
+  test('preserves OR between refinement attributes', () => {
+    const src = '< 71388002 : (405813007 = << 39937001 OR 260686004 = << 129304002)';
+    const { ast } = parseECL(src);
+    const result = printAst(ast, src, opts);
+    assert.strictEqual(result, '< 71388002: 405813007 = << 39937001 OR 260686004 = << 129304002');
+  });
+
+  test('preserves OR without surrounding parentheses in source', () => {
+    const src = '< 71388002 : 405813007 = << 39937001 OR 260686004 = << 129304002';
+    const { ast } = parseECL(src);
+    const result = printAst(ast, src, opts);
+    assert.strictEqual(result, '< 71388002: 405813007 = << 39937001 OR 260686004 = << 129304002');
+  });
+
+  test('preserves explicit AND between refinement attributes', () => {
+    const src = '< 71388002 : 405813007 = << 39937001 AND 260686004 = << 129304002';
+    const { ast } = parseECL(src);
+    const result = printAst(ast, src, opts);
+    assert.strictEqual(result, '< 71388002: 405813007 = << 39937001 AND 260686004 = << 129304002');
+  });
+
+  test('preserves comma conjunction between refinement attributes', () => {
+    const src = '< 71388002 : 405813007 = << 39937001, 260686004 = << 129304002';
+    const { ast } = parseECL(src);
+    const result = printAst(ast, src, opts);
+    assert.strictEqual(result, '< 71388002: 405813007 = << 39937001, 260686004 = << 129304002');
+  });
+
+  test('keeps grouping parentheses for OR nested inside a conjunction', () => {
+    const src = '< 71388002 : (405813007 = << 39937001 OR 260686004 = << 129304002), 246075003 = << 373873005';
+    const { ast } = parseECL(src);
+    const result = printAst(ast, src, { ...opts, maxLineLength: 0 });
+    assert.strictEqual(
+      result,
+      '< 71388002: (405813007 = << 39937001 OR 260686004 = << 129304002), 246075003 = << 373873005',
+    );
+  });
+
+  test('keeps grouping parentheses for a trailing OR group', () => {
+    const src = '< 71388002 : 405813007 = << 39937001, (260686004 = << 129304002 OR 246075003 = << 373873005)';
+    const { ast } = parseECL(src);
+    const result = printAst(ast, src, { ...opts, maxLineLength: 0 });
+    assert.strictEqual(
+      result,
+      '< 71388002: 405813007 = << 39937001, (260686004 = << 129304002 OR 246075003 = << 373873005)',
+    );
+  });
+
+  test('keeps grouping parentheses for a conjunction nested inside a disjunction', () => {
+    const src = '< 71388002 : (405813007 = << 39937001, 260686004 = << 129304002) OR 246075003 = << 373873005';
+    const { ast } = parseECL(src);
+    const result = printAst(ast, src, { ...opts, maxLineLength: 0 });
+    assert.strictEqual(
+      result,
+      '< 71388002: (405813007 = << 39937001, 260686004 = << 129304002) OR 246075003 = << 373873005',
+    );
+  });
+
+  test('preserves OR inside an attribute group', () => {
+    const src = '< 71388002 : { 405813007 = << 39937001 OR 260686004 = << 129304002 }';
+    const { ast } = parseECL(src);
+    const result = printAst(ast, src, { ...opts, maxLineLength: 0 });
+    assert.strictEqual(result, '< 71388002: { 405813007 = << 39937001 OR 260686004 = << 129304002 }');
+  });
+
+  test('preserves OR between attribute groups', () => {
+    const src = '< 71388002 : { 405813007 = << 39937001 } OR { 260686004 = << 129304002 }';
+    const { ast } = parseECL(src);
+    const result = printAst(ast, src, { ...opts, maxLineLength: 0 });
+    assert.strictEqual(result, '< 71388002: { 405813007 = << 39937001 } OR { 260686004 = << 129304002 }');
+  });
+
+  test('preserves attribute group cardinality', () => {
+    const src = '< 71388002 : [1..2] { 405813007 = << 39937001 }';
+    const { ast } = parseECL(src);
+    const result = printAst(ast, src, { ...opts, maxLineLength: 0 });
+    assert.strictEqual(result, '< 71388002: [1..2] { 405813007 = << 39937001 }');
+  });
+
+  test('preserves deeper mixed nesting', () => {
+    const src =
+      '< 71388002 : ((405813007 = << 39937001 OR 260686004 = << 129304002), 246075003 = << 373873005) OR 116676008 = << 72651009';
+    const { ast } = parseECL(src);
+    const result = printAst(ast, src, { ...opts, maxLineLength: 0 });
+    assert.strictEqual(
+      result,
+      '< 71388002: ((405813007 = << 39937001 OR 260686004 = << 129304002), 246075003 = << 373873005) OR 116676008 = << 72651009',
+    );
+  });
+
+  test('removeRedundantParentheses does not strip load-bearing OR parentheses', () => {
+    const src = '< 71388002 : (405813007 = << 39937001 OR 260686004 = << 129304002), 246075003 = << 373873005';
+    const { ast } = parseECL(src);
+    const result = printAst(ast, src, { ...optsRemoveParens, maxLineLength: 0 });
+    assert.strictEqual(
+      result,
+      '< 71388002: (405813007 = << 39937001 OR 260686004 = << 129304002), 246075003 = << 373873005',
+    );
+  });
+
+  test('removeRedundantParentheses flattens same-operator refinement nesting', () => {
+    const src = '< 71388002 : (405813007 = << 39937001, 260686004 = << 129304002), 246075003 = << 373873005';
+    const { ast } = parseECL(src);
+    const result = printAst(ast, src, { ...optsRemoveParens, maxLineLength: 0 });
+    assert.strictEqual(
+      result,
+      '< 71388002: 405813007 = << 39937001, 260686004 = << 129304002, 246075003 = << 373873005',
+    );
+  });
+
+  test('multi-line refinement puts OR at the start of continuation lines', () => {
+    const src =
+      '< 71388002 |Procedure| : 405813007 |Procedure device| = << 39937001 |Skin structure| OR 260686004 |Method| = << 129304002 |Excision - action|';
+    const { ast } = parseECL(src);
+    const result = printAst(ast, src, opts);
+    const lines = result.split('\n');
+    assert.ok(lines.length >= 3, `should be multi-line: ${result}`);
+    assert.ok(lines[0].endsWith(':'), `first line ends with colon: ${lines[0]}`);
+    assert.ok(lines[2].trimStart().startsWith('OR '), `continuation starts with OR: ${lines[2]}`);
+    assert.ok(!result.includes(','), `must not introduce a conjunction comma: ${result}`);
+  });
+
+  test('breakAfterColon keeps OR', () => {
+    const src = '< 71388002 : 405813007 = << 39937001 OR 260686004 = << 129304002';
+    const { ast } = parseECL(src);
+    const result = printAst(ast, src, { ...opts, breakAfterColon: true });
+    assert.ok(!result.includes(','), `must not introduce a conjunction comma: ${result}`);
+    assert.ok(/\bOR\b/.test(result), `must keep OR: ${result}`);
+  });
+
+  test('breakOnRefinementComma keeps OR', () => {
+    const src = '< 71388002 : 405813007 = << 39937001 OR 260686004 = << 129304002';
+    const { ast } = parseECL(src);
+    const result = printAst(ast, src, { ...opts, breakOnRefinementComma: true });
+    assert.ok(!result.includes(','), `must not introduce a conjunction comma: ${result}`);
+    assert.ok(/\bOR\b/.test(result), `must keep OR: ${result}`);
+  });
+});

@@ -5,6 +5,8 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert';
 import { formatDocument } from '../formatter/formatter';
 import { FormattingOptions, defaultFormattingOptions } from '../formatter/options';
+import { canonicalise } from '../canonical/comparator';
+import { signatureOf } from '../formatter/semantic-guard';
 
 describe('ECL Formatter', () => {
   // Task 8.2: Test formatting simple constraint expressions
@@ -1970,5 +1972,177 @@ describe('ECL Formatter', () => {
       const result = formatDocument(input, defaultFormattingOptions);
       assert.ok(result.includes('HISTORY-MIN'), 'Should preserve HISTORY-MIN');
     });
+  });
+});
+
+// ── Issue #73: the formatter must never change what an expression selects ──
+describe('ECL Formatter — refinement operator preservation (issue #73)', () => {
+  test('does not turn a refinement OR into a conjunction comma', () => {
+    const input = '< 71388002 : (405813007 = << 39937001 OR 260686004 = << 129304002)';
+    const result = formatDocument(input, defaultFormattingOptions);
+    assert.ok(/\bOR\b/.test(result), `OR must survive formatting, got: ${result}`);
+    assert.strictEqual(canonicalise(input), canonicalise(result), `formatting changed meaning: ${result}`);
+  });
+
+  test('keeps parentheses that are load-bearing for OR precedence', () => {
+    const input = '< 71388002 : (405813007 = << 39937001 OR 260686004 = << 129304002), 246075003 = << 373873005';
+    const result = formatDocument(input, { ...defaultFormattingOptions, removeRedundantParentheses: true });
+    assert.strictEqual(canonicalise(input), canonicalise(result), `formatting changed meaning: ${result}`);
+  });
+
+  test('canonical comparison distinguishes refinement OR from refinement comma', () => {
+    const disjunction = '< 71388002 : (405813007 = << 39937001 OR 260686004 = << 129304002)';
+    const conjunction = '< 71388002 : 405813007 = << 39937001, 260686004 = << 129304002';
+    assert.notStrictEqual(
+      canonicalise(disjunction),
+      canonicalise(conjunction),
+      'OR and comma select different concept sets and must not canonicalise alike',
+    );
+  });
+
+  // Round-trip property: format, re-parse, and require the canonical (structural)
+  // form to be unchanged. This is the regression guard for issue #73.
+  describe('round-trip structural equivalence', () => {
+    const corpus = [
+      '< 71388002 : 405813007 = << 39937001',
+      '< 71388002 : 405813007 = << 39937001, 260686004 = << 129304002',
+      '< 71388002 : 405813007 = << 39937001 AND 260686004 = << 129304002',
+      '< 71388002 : 405813007 = << 39937001 OR 260686004 = << 129304002',
+      '< 71388002 : (405813007 = << 39937001 OR 260686004 = << 129304002)',
+      '< 71388002 : (405813007 = << 39937001 OR 260686004 = << 129304002), 246075003 = << 373873005',
+      '< 71388002 : 405813007 = << 39937001, (260686004 = << 129304002 OR 246075003 = << 373873005)',
+      '< 71388002 : (405813007 = << 39937001, 260686004 = << 129304002) OR 246075003 = << 373873005',
+      '< 71388002 : { 405813007 = << 39937001 OR 260686004 = << 129304002 }',
+      '< 71388002 : { 405813007 = << 39937001, 260686004 = << 129304002 }',
+      '< 71388002 : { 405813007 = << 39937001 } OR { 260686004 = << 129304002 }',
+      '< 71388002 : { 405813007 = << 39937001 }, { 260686004 = << 129304002 }',
+      '< 71388002 : [1..2] { 405813007 = << 39937001 }',
+      '< 71388002 : [0..0] 405813007 = *',
+      '< 71388002 : R 405813007 = << 39937001',
+      '< 71388002 : ((405813007 = << 39937001 OR 260686004 = << 129304002), 246075003 = << 373873005) OR 116676008 = << 72651009',
+      '< 71388002 : 405813007 = (<< 39937001 OR << 129304002)',
+      '< 404684003 : 363698007 = (* : 272741003 = 7771000 OR 272741003 = 24028007)',
+      '< 404684003 |Clinical finding| : 363698007 |Finding site| = << 39057004 |Pulmonary valve structure| OR 116676008 |Associated morphology| = << 72651009 |Structure|',
+      '(< 404684003 OR < 19829001) : 363698007 = << 39057004',
+      '< 404684003 : 363698007 != << 39057004',
+      '< 404684003 : 1142135004 >= #3',
+      '< 404684003 : { 363698007 = << 39057004, 116676008 = << 72651009 } OR { 363698007 = << 39937001 }',
+    ];
+
+    const presets: { name: string; options: FormattingOptions }[] = [
+      { name: 'default', options: defaultFormattingOptions },
+      { name: 'maxLineLength=0', options: { ...defaultFormattingOptions, maxLineLength: 0 } },
+      { name: 'maxLineLength=30', options: { ...defaultFormattingOptions, maxLineLength: 30 } },
+      { name: 'breakAfterColon', options: { ...defaultFormattingOptions, breakAfterColon: true } },
+      { name: 'breakOnRefinementComma', options: { ...defaultFormattingOptions, breakOnRefinementComma: true } },
+      { name: 'breakOnOperators', options: { ...defaultFormattingOptions, breakOnOperators: true } },
+      {
+        name: 'removeRedundantParentheses',
+        options: { ...defaultFormattingOptions, removeRedundantParentheses: true },
+      },
+      {
+        name: 'all breaks',
+        options: {
+          ...defaultFormattingOptions,
+          breakAfterColon: true,
+          breakOnRefinementComma: true,
+          breakOnOperators: true,
+          removeRedundantParentheses: true,
+          maxLineLength: 40,
+        },
+      },
+    ];
+
+    for (const preset of presets) {
+      test(`preserves structure for every corpus expression (${preset.name})`, () => {
+        for (const expression of corpus) {
+          const formatted = formatDocument(expression, preset.options);
+          let after: string;
+          try {
+            after = canonicalise(formatted);
+          } catch (error) {
+            assert.fail(`formatting produced unparseable ECL for "${expression}":\n${formatted}\n${String(error)}`);
+          }
+          assert.strictEqual(
+            canonicalise(expression),
+            after,
+            `formatting changed meaning of "${expression}":\n${formatted}`,
+          );
+        }
+      });
+
+      test(`is idempotent for every corpus expression (${preset.name})`, () => {
+        for (const expression of corpus) {
+          const once = formatDocument(expression, preset.options);
+          const twice = formatDocument(once, preset.options);
+          assert.strictEqual(twice, once, `not idempotent for "${expression}"`);
+        }
+      });
+    }
+  });
+});
+
+// ── The safety net that backs the formatter (issue #73) ───────────────────
+describe('Formatter semantic guard', () => {
+  test('gives a refinement disjunction and a conjunction different signatures', () => {
+    const disjunction = signatureOf('< 71388002 : 405813007 = << 39937001 OR 260686004 = << 129304002');
+    const conjunction = signatureOf('< 71388002 : 405813007 = << 39937001, 260686004 = << 129304002');
+    assert.ok(disjunction !== null && conjunction !== null, 'both expressions are valid ECL');
+    assert.notStrictEqual(
+      disjunction,
+      conjunction,
+      'validity alone cannot detect the bug — a conjunction is valid ECL too',
+    );
+  });
+
+  test('treats explicit AND and comma conjunctions as equivalent', () => {
+    assert.strictEqual(
+      signatureOf('< 71388002 : 405813007 = << 39937001 AND 260686004 = << 129304002'),
+      signatureOf('< 71388002 : 405813007 = << 39937001, 260686004 = << 129304002'),
+    );
+  });
+
+  test('ignores whitespace, display terms and redundant parentheses', () => {
+    const plain = signatureOf('< 71388002 : 405813007 = << 39937001 OR 260686004 = << 129304002');
+    const decorated = signatureOf(
+      '<   71388002 |Procedure|\n  :  (405813007 |Procedure device| = <<   39937001 OR 260686004 = << 129304002)',
+    );
+    assert.strictEqual(plain, decorated);
+  });
+
+  test('distinguishes grouping that changes precedence', () => {
+    const grouped = signatureOf(
+      '< 71388002 : (405813007 = << 39937001 OR 260686004 = << 129304002), 246075003 = << 373873005',
+    );
+    const otherGrouping = signatureOf(
+      '< 71388002 : 405813007 = << 39937001 OR (260686004 = << 129304002, 246075003 = << 373873005)',
+    );
+    assert.ok(grouped !== null && otherGrouping !== null);
+    assert.notStrictEqual(grouped, otherGrouping);
+  });
+
+  test('distinguishes attribute grouping braces', () => {
+    assert.notStrictEqual(
+      signatureOf('< 71388002 : { 405813007 = << 39937001, 260686004 = << 129304002 }'),
+      signatureOf('< 71388002 : 405813007 = << 39937001, 260686004 = << 129304002'),
+    );
+  });
+
+  test('returns null for text it cannot verify', () => {
+    assert.strictEqual(signatureOf('< 404684003 :'), null);
+    assert.strictEqual(signatureOf('not ecl at all'), null);
+  });
+
+  test('removeRedundantParentheses keeps parens around a refined attribute value', () => {
+    const input = '< 404684003 : 363698007 = (* : 272741003 = 7771000 OR 272741003 = 24028007)';
+    const result = formatDocument(input, { ...defaultFormattingOptions, removeRedundantParentheses: true });
+    assert.strictEqual(signatureOf(input), signatureOf(result), `formatting changed meaning: ${result}`);
+  });
+
+  test('does not split >= inside a member filter', () => {
+    const input = '^ 816080008 |International Patient Summary| {{ M effectiveTime >= "20210731" }}';
+    const result = formatDocument(input, defaultFormattingOptions);
+    assert.ok(result.includes('>='), `>= must not be split: ${result}`);
+    assert.ok(!result.includes('> ='), `>= must not be split: ${result}`);
   });
 });

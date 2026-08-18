@@ -6,6 +6,7 @@ import { FormattingOptions } from './options';
 import { formatRefinementColon, formatRefinementEquals, getIndentString, normalizeTerm } from './rules';
 import { extractComments, reinsertComments } from './comments';
 import { printAst } from './ast-printer';
+import { signatureOf, structuralSignature } from './semantic-guard';
 
 // Task 4.1-4.5: Split document by /* ECL-END */ delimiters
 // Ignores /* ECL-END */ that appears inside a line comment (//)
@@ -256,8 +257,13 @@ function normalizeFilterBlocks(text: string): string {
       });
     }
 
-    // Normalize spacing around = and !=
-    normalized = normalized.replace(/\s*(!?=)\s*/g, ' $1 '); // eslint-disable-line sonarjs/slow-regex -- bounded filter content
+    // Normalize spacing around comparison operators. Multi-character operators
+    // must be handled first, otherwise `>=` would be split into `> =` and the
+    // filter would no longer parse (member filters allow <, <=, >, >=).
+    /* eslint-disable sonarjs/slow-regex -- bounded filter content */
+    normalized = normalized.replace(/\s*(!=|>=|<=)\s*/g, ' $1 ');
+    normalized = normalized.replace(/\s*(?<![!<>])=\s*/g, ' = ');
+    /* eslint-enable sonarjs/slow-regex */
 
     // Ensure single space after commas
     normalized = normalized.replace(/,\s*/g, ', ');
@@ -271,6 +277,40 @@ function normalizeFilterBlocks(text: string): string {
 
     return '{{' + normalized + '}}';
   });
+}
+
+/**
+ * Apply AST-based indentation and line breaking to already-normalized text.
+ *
+ * The AST printer needs source text that matches the AST's range offsets, and
+ * the caller's AST was parsed from the ORIGINAL text, so the normalized text is
+ * re-parsed here to get an AST with correct offsets.
+ *
+ * Returns the normalized text unchanged when the AST is unusable, or when the
+ * printed output would not mean the same thing (see `semantic-guard`).
+ */
+function applyAstPrinter(normalizedText: string, options: FormattingOptions): string {
+  try {
+    const reParsed = parseECL(normalizedText);
+    // Only use the AST printer when the re-parsed AST covers the full input text
+    // and there are no parse errors. A partial parse (e.g. missing colon before
+    // braces) would truncate the output. Parse errors (e.g. missing spaces when
+    // spaceAroundOperators=false) can cause the AST to lose information.
+    const coversAll =
+      reParsed.ast && reParsed.errors.length === 0 && reParsed.ast.range.end.offset >= normalizedText.trimEnd().length;
+    if (!coversAll || !reParsed.ast) {
+      return normalizedText;
+    }
+    // Safety net: only accept the printer's output when it still means the same
+    // thing. A shape the printer cannot render faithfully must leave the
+    // expression alone rather than silently select a different concept set.
+    const before = structuralSignature(reParsed.ast, normalizedText);
+    const printed = printAst(reParsed.ast, normalizedText, options);
+    return signatureOf(printed) === before ? printed : normalizedText;
+  } catch {
+    // AST printer error — keep the normalized text
+    return normalizedText;
+  }
 }
 
 // Core expression formatting — only called on the body (lines with actual ECL code).
@@ -316,32 +356,29 @@ function formatExpressionBody(text: string, options: FormattingOptions, ast?: Ex
   });
 
   // AST-based indentation and line breaking.
-  // The AST printer needs source text that matches the AST's range offsets.
-  // The `formatted` text has been through spacing normalization, but the `ast`
-  // parameter was parsed from the ORIGINAL text, so offsets won't match.
-  // Re-parse the normalized text to get an AST with correct offsets.
   if (ast) {
-    try {
-      const reParsed = parseECL(formatted);
-      // Only use AST printer when the re-parsed AST covers the full input text
-      // and there are no parse errors. A partial parse (e.g. missing colon before
-      // braces) would truncate the output. Parse errors (e.g. missing spaces when
-      // spaceAroundOperators=false) can cause the AST to lose information.
-      const astCoversAll =
-        reParsed.ast && reParsed.errors.length === 0 && reParsed.ast.range.end.offset >= formatted.trimEnd().length;
-      if (astCoversAll && reParsed.ast) {
-        formatted = printAst(reParsed.ast, formatted, options);
-      } else {
-        // Re-parse failed or partial — return normalized text as-is (no indentation)
-      }
-    } catch {
-      // AST printer error — return normalized text as-is
-    }
+    formatted = applyAstPrinter(formatted, options);
   }
 
   // Refinement comma breaks still operate as post-processing
   if (options.breakOnRefinementComma) {
     formatted = applyRefinementCommaBreaks(formatted, options);
+  }
+
+  // Final safety net across every stage, including the text-level spacing
+  // normalization that runs before the AST printer. If the result no longer
+  // means what the input meant — or no longer parses at all — return the input
+  // unchanged: a differently-scoped expression is far worse than an unformatted
+  // one. Skipped when spaceAroundOperators is off, because that option
+  // deliberately strips whitespace the grammar requires around keyword operators.
+  if (options.spaceAroundOperators) {
+    // The baseline is filter-normalized because filter blocks are opaque to the
+    // AST, so their (intentional) keyword and spacing normalization would
+    // otherwise read as a change of meaning.
+    const baseline = signatureOf(normalizeFilterBlocks(textWithoutComments));
+    if (baseline !== null && signatureOf(formatted) !== baseline) {
+      formatted = textWithoutComments;
+    }
   }
 
   // Task 5.3-5.5: Reinsert comments into formatted text

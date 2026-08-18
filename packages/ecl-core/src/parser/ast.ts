@@ -25,6 +25,8 @@ export enum NodeType {
   ConstraintOperator = 'ConstraintOperator',
   LogicalOperator = 'LogicalOperator',
   Refinement = 'Refinement',
+  AttributeSet = 'AttributeSet',
+  AttributeGroup = 'AttributeGroup',
   Attribute = 'Attribute',
   AttributeName = 'AttributeName',
   AttributeValue = 'AttributeValue',
@@ -91,9 +93,59 @@ export interface LogicalOperatorNode extends ASTNode {
   operator: 'AND' | 'OR' | 'MINUS';
 }
 
+/**
+ * A member of a refinement tree: a single attribute, a `{ }` attribute group,
+ * or a conjunction/disjunction set of members.
+ */
+export type RefinementMemberNode = AttributeNode | AttributeGroupNode | AttributeSetNode;
+
 export interface RefinementNode extends ASTNode {
   type: NodeType.Refinement;
+  /**
+   * Every attribute in the refinement, in source order.
+   *
+   * This is a flattened convenience view that carries NO operator or grouping
+   * information — use `content` when the distinction between `,`/`AND`
+   * (conjunction) and `OR` (disjunction) matters, e.g. when printing.
+   */
   attributes: AttributeNode[];
+  /**
+   * The refinement tree, preserving the conjunction/disjunction operators and
+   * the grouping (parentheses and `{ }` attribute groups) written in the source.
+   * `null` only when the refinement contains no attributes at all.
+   */
+  content: RefinementMemberNode | null;
+}
+
+/**
+ * A conjunction (`,` or `AND`) or disjunction (`OR`) of refinement members.
+ *
+ * The ECL grammar forbids mixing conjunction and disjunction at the same level,
+ * so every set is homogeneous; mixed expressions nest sets inside one another
+ * via parentheses.
+ */
+export interface AttributeSetNode extends ASTNode {
+  type: NodeType.AttributeSet;
+  operator: 'AND' | 'OR';
+  /** How a conjunction was written in the source. Always ',' for disjunctions. */
+  conjunctionStyle: ',' | 'AND';
+  /**
+   * True when the source wrote this set inside `( )`.
+   *
+   * The grammar nests attribute sets inside refinements even without
+   * parentheses, so this distinguishes real source parentheses from the
+   * implicit nesting a parser introduces.
+   */
+  parenthesized?: boolean;
+  members: RefinementMemberNode[];
+}
+
+/** An attribute group — `{ ... }`, optionally preceded by a cardinality like `[1..2]`. */
+export interface AttributeGroupNode extends ASTNode {
+  type: NodeType.AttributeGroup;
+  /** Raw cardinality text including brackets, e.g. `[0..1]`. */
+  cardinality?: string;
+  content: RefinementMemberNode;
 }
 
 export interface AttributeNode extends ASTNode {
@@ -101,6 +153,8 @@ export interface AttributeNode extends ASTNode {
   name: AttributeNameNode;
   value: AttributeValueNode;
   reversed?: boolean;
+  /** Raw cardinality text including brackets, e.g. `[0..1]`. */
+  cardinality?: string;
 }
 
 export interface AttributeNameNode extends ASTNode {

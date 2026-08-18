@@ -1006,4 +1006,84 @@ describe('ECL Parser', () => {
       }
     });
   });
+  // Regression: https://github.com/aehrc/ecl-lsp/issues/69
+  // Bare multi-digit concrete integers (#20, #100, #-20) were truncated to their
+  // first digit because the start rule is not EOF-anchored, so ANTLR's full-context
+  // prediction resolved the `digit*` loop in `integervalue` to "exit".
+  describe('Concrete numeric values (#69)', () => {
+    /** Parses cleanly and consumes the whole input. */
+    function assertParsesFully(ecl: string) {
+      const result = parseECL(ecl);
+      assert.equal(result.errors.length, 0, `${ecl}: expected no errors, got ${JSON.stringify(result.errors)}`);
+      assert.ok(result.ast, `${ecl}: expected an AST`);
+    }
+
+    describe('attribute comparison', () => {
+      const values = ['#5', '#0', '#20', '#100', '#1000000', '#-20', '#+20', '#20.0', '#-20.5', '#+3.14159', '#0.5'];
+      for (const value of values) {
+        test(`should parse bare concrete value ${value}`, () => {
+          assertParsesFully(`^ 929360051000036108 : 1142142004 = ${value}`);
+        });
+      }
+
+      test('should parse the exact expression from issue #69', () => {
+        assertParsesFully('^929360051000036108 : 1142142004 = #20');
+      });
+
+      test('should not lose digits when the value ends the expression', () => {
+        const result = parseECL('^929360051000036108 : 1142142004 = #100');
+        assert.equal(result.errors.length, 0, JSON.stringify(result.errors));
+      });
+
+      test('should parse a multi-digit value followed by a conjoined attribute', () => {
+        assertParsesFully('^929360051000036108 : 1142142004 = #20 AND 1142135004 = #30');
+      });
+
+      test('should parse a multi-digit value inside a parenthesised conjunction', () => {
+        assertParsesFully('(^929360051000036108 : 1142142004 = #20) AND ^929360051000036108');
+      });
+
+      test('should parse a multi-digit value inside an attribute group', () => {
+        assertParsesFully('< 763158003 : { 1142135004 >= #250 , 732945000 = 258684004 }');
+      });
+    });
+
+    describe('numeric comparison operators', () => {
+      const operators = ['=', '!=', '>=', '<=', '>', '<'];
+      for (const op of operators) {
+        test(`should parse '${op} #20'`, () => {
+          assertParsesFully(`< 763158003 : 1142135004 ${op} #20`);
+        });
+      }
+    });
+
+    describe('member filters', () => {
+      test('should parse a multi-digit value in a member field filter', () => {
+        assertParsesFully('^ 447562003 {{ M mapPriority = #20 }}');
+      });
+
+      test('should parse a single-digit value in a member field filter', () => {
+        assertParsesFully('^ 447562003 {{ M mapPriority = #2 }}');
+      });
+
+      test('should parse a decimal value in a member field filter', () => {
+        assertParsesFully('^ 447562003 {{ M mapPriority = #20.0 }}');
+      });
+
+      const operators = ['=', '!=', '>=', '<=', '>', '<'];
+      for (const op of operators) {
+        test(`should parse member field filter with '${op} #100'`, () => {
+          assertParsesFully(`^ 447562003 {{ M mapPriority ${op} #100 }}`);
+        });
+      }
+    });
+
+    describe('token coverage', () => {
+      test('should keep every digit of the value in the parsed text', () => {
+        const ecl = '^929360051000036108 : 1142142004 = #1000000';
+        const result = parseECL(ecl);
+        assert.equal(result.errors.length, 0, JSON.stringify(result.errors));
+      });
+    });
+  });
 });

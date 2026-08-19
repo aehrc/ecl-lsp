@@ -41,6 +41,25 @@ jobs:
         id: version
         run: echo "version=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
 
+      # The publish job takes the version from package.json, but rewrites
+      # workspace dependency ranges from the tag. If the two disagree we would
+      # publish mismatched metadata, so fail here rather than at publish time.
+      - name: Verify package versions match the tag
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          STATUS=0
+          for f in package.json clients/vscode/package.json packages/*/package.json; do
+            PKG_VERSION="$(node -p "require('./$f').version")"
+            if [ "$PKG_VERSION" != "$VERSION" ]; then
+              echo "::error file=$f::version is $PKG_VERSION but the tag is v$VERSION"
+              STATUS=1
+            fi
+          done
+          if [ "$STATUS" -ne 0 ]; then
+            echo "Bump every package.json to $VERSION and re-tag."
+          fi
+          exit "$STATUS"
+
       # Upload compiled output for downstream jobs
       - name: Upload compiled output
         uses: actions/upload-artifact@v4
@@ -98,11 +117,28 @@ jobs:
             sed -i "s|\"file:../ecl-editor-core\"|\"^$VERSION\"|g" "packages/$pkg/package.json"
           done
 
+      # A publish failure used to be swallowed by `|| true`, so the job went green
+      # having published nothing. Now every package is still attempted, but a real
+      # failure fails the job. A version already present on the registry is treated
+      # as success so the workflow stays re-runnable after a partial failure.
       - name: Publish npm packages
         run: |
+          STATUS=0
           for pkg in ecl-core ecl-lsp-server ecl-editor-core ecl-editor-react ecl-editor; do
-            (cd packages/$pkg && npm publish --access public --provenance) || true
+            PKG_NAME="$(node -p "require('./packages/$pkg/package.json').name")"
+            PKG_VERSION="$(node -p "require('./packages/$pkg/package.json').version")"
+            if npm view "$PKG_NAME@$PKG_VERSION" version >/dev/null 2>&1; then
+              echo "::notice::$PKG_NAME@$PKG_VERSION is already published, skipping"
+              continue
+            fi
+            if (cd "packages/$pkg" && npm publish --access public --provenance); then
+              echo "published $PKG_NAME@$PKG_VERSION"
+            else
+              echo "::error::failed to publish $PKG_NAME@$PKG_VERSION"
+              STATUS=1
+            fi
           done
+          exit "$STATUS"
 
       - name: Pack npm tarballs
         run: |

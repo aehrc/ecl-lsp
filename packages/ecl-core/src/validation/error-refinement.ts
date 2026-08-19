@@ -7,7 +7,7 @@ import { ParseError } from '../parser/error-listener';
 function getSymbolText(sym: unknown): string {
   if (typeof sym === 'string') return sym;
   if (sym && typeof sym === 'object' && 'text' in sym) {
-    const text = (sym as { text: unknown }).text;
+    const text = sym.text;
     return typeof text === 'string' ? text : '';
   }
   return '';

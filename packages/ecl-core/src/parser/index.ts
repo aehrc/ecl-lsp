@@ -67,7 +67,7 @@ function runParseAttempt(input: string, predictionMode: PredictionMode): ParseAt
   try {
     const tree = parser.expressionconstraint();
     const visitor = new ECLASTVisitor();
-    ast = visitor.visit(tree);
+    ast = visitor.visit(tree) as ExpressionNode | null;
 
     // Check if all input was consumed
     const currentToken = parser.currentToken;

@@ -17,7 +17,7 @@ const fetchImpl: FetchFn = (() => {
 
   // eslint-disable-next-line @typescript-eslint/no-require-imports -- dynamic require needed to avoid bundler static resolution
   const nodeFetch = require(modName) as { default?: FetchFn } & FetchFn;
-  return nodeFetch.default ?? (nodeFetch as unknown as FetchFn);
+  return nodeFetch.default ?? nodeFetch;
 })();
 
 export default fetchImpl;

@@ -77,7 +77,7 @@ describe('ECL Text Extraction', () => {
     const result = parseECL(text);
     assert.ok(result.ast);
     assert.strictEqual(result.ast.expression.type, NodeType.RefinedExpression);
-    const info = extractRefinementInfo(result.ast.expression as any, text);
+    const info = extractRefinementInfo(result.ast.expression, text);
     assert.strictEqual(info.focusEcl, '< 404684003');
   });
 

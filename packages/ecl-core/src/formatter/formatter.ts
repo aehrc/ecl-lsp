@@ -329,10 +329,10 @@ function formatExpressionBody(text: string, options: FormattingOptions, ast?: Ex
   formatted = formatted.replace(
     // eslint-disable-next-line sonarjs/slow-regex -- bounded ECL expression text; no ReDoS risk
     /(\S?)(?<![A-Za-z])\s*(AND|OR|MINUS)\s*(?![A-Za-z])(\S?)/g,
-    (match, before, op, after) => {
+    (_match: string, before: string, op: string, after: string) => {
       // Keyword operators always keep the whitespace the grammar requires.
       const formattedOp = ` ${op} `;
-      return (before ?? '') + formattedOp + (after ?? '');
+      return before + formattedOp + after;
     },
   );
 
@@ -352,7 +352,7 @@ function formatExpressionBody(text: string, options: FormattingOptions, ast?: Ex
   formatted = formatted.replace(/(\d)\s+(\|)/g, '$1$2');
 
   // Normalize terms: ensure single space on each side of pipe
-  formatted = formatted.replace(/\|([^|]+)\|/g, (match, content) => {
+  formatted = formatted.replace(/\|([^|]+)\|/g, (_match: string, content: string) => {
     return normalizeTerm(content);
   });
 

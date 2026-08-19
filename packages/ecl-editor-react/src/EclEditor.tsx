@@ -78,7 +78,9 @@ export function EclEditor({
   onDiagnosticsRef.current = onDiagnostics;
 
   const handleMount: OnMount = useCallback(
-    (editor, monaco) => {
+    // Annotate explicitly: monaco-editor 0.55's types make @monaco-editor/react's
+    // OnMount params resolve to `error` under typed-linting (tsc tolerates via skipLibCheck).
+    (editor: Monaco.editor.IStandaloneCodeEditor, monaco: typeof Monaco) => {
       editorRef.current = editor;
       monacoRef.current = monaco;
 

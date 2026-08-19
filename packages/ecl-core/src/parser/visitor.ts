@@ -141,11 +141,11 @@ export class ECLASTVisitor extends AbstractParseTreeVisitor<any> implements ECLV
 
     const wildcard = ctx.wildcard();
     if (wildcard) {
-      return { type: NodeType.Wildcard, range: this.getRange(ctx) } as WildcardNode;
+      return { type: NodeType.Wildcard, range: this.getRange(ctx) };
     }
 
     // altidentifier — treat as wildcard for now
-    return { type: NodeType.Wildcard, range: this.getRange(ctx) } as WildcardNode;
+    return { type: NodeType.Wildcard, range: this.getRange(ctx) };
   }
 
   visitEclconceptreference(ctx: ECL.EclconceptreferenceContext): ConceptReferenceNode {

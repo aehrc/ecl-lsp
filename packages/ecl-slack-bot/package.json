@@ -23,12 +23,12 @@
   },
   "dependencies": {
     "@aehrc/ecl-core": "file:../ecl-core",
-    "@slack/bolt": "^4.3.0",
+    "@slack/bolt": "^4.7.3",
     "dotenv": "^16.4.7"
   },
   "devDependencies": {
-    "typescript": "^5.3.3",
-    "@types/node": "^20.10.6",
+    "typescript": "^6.0.2",
+    "@types/node": "^25.5.0",
     "rimraf": "^5.0.5"
   }
 }

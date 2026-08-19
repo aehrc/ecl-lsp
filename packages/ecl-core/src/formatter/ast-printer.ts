@@ -162,7 +162,9 @@ function printCompoundExpression(
   src: string,
 ): string {
   const op = node.operator.operator; // 'AND' | 'OR' | 'MINUS'
-  const opSep = opts.spaceAroundOperators ? ` ${op} ` : op;
+  // Mandatory whitespace: AND/OR/MINUS are keywords, not symbols (see
+  // formatLogicalOperator). `spaceAroundOperators` deliberately has no effect.
+  const opSep = ` ${op} `;
 
   // Flatten same-operator nested compounds when removing redundant parens
   let operands = node.operands;

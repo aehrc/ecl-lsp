@@ -8,11 +8,12 @@ export function getIndentString(level: number, options: FormattingOptions): stri
   return unit.repeat(level);
 }
 
-export function formatLogicalOperator(operator: string, options: FormattingOptions): string {
-  if (options.spaceAroundOperators) {
-    return ` ${operator} `;
-  }
-  return operator;
+export function formatLogicalOperator(operator: string, _options: FormattingOptions): string {
+  // AND, OR and MINUS are keyword tokens: the ECL grammar requires mandatory
+  // whitespace (`mws`) around them, so their spacing is not configurable.
+  // `spaceAroundOperators` is accepted but has no effect here — stripping these
+  // spaces produced output that no longer parsed (`< 404684003AND< 19829001`).
+  return ` ${operator} `;
 }
 
 export function formatRefinementColon(operator: string): string {

@@ -95,19 +95,25 @@ describe('rules — formatLogicalOperator', () => {
     assert.strictEqual(result, ' MINUS ');
   });
 
-  test('AND with spaceAroundOperators false', () => {
+  test('AND keeps mandatory whitespace even with spaceAroundOperators false', () => {
+    // The grammar requires whitespace around keyword operators, so this option
+    // has no effect on them; `'AND'` alone would not re-parse.
     const result = formatLogicalOperator('AND', makeOptions({ spaceAroundOperators: false }));
-    assert.strictEqual(result, 'AND');
+    assert.strictEqual(result, ' AND ');
   });
 
-  test('OR with spaceAroundOperators false', () => {
+  test('OR keeps mandatory whitespace even with spaceAroundOperators false', () => {
+    // The grammar requires whitespace around keyword operators, so this option
+    // has no effect on them; `'OR'` alone would not re-parse.
     const result = formatLogicalOperator('OR', makeOptions({ spaceAroundOperators: false }));
-    assert.strictEqual(result, 'OR');
+    assert.strictEqual(result, ' OR ');
   });
 
-  test('MINUS with spaceAroundOperators false', () => {
+  test('MINUS keeps mandatory whitespace even with spaceAroundOperators false', () => {
+    // The grammar requires whitespace around keyword operators, so this option
+    // has no effect on them; `'MINUS'` alone would not re-parse.
     const result = formatLogicalOperator('MINUS', makeOptions({ spaceAroundOperators: false }));
-    assert.strictEqual(result, 'MINUS');
+    assert.strictEqual(result, ' MINUS ');
   });
 
   test('uses default options (spaceAroundOperators true)', () => {

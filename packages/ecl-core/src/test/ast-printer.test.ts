@@ -438,12 +438,13 @@ describe('AST Printer — Leaf Nodes and Sub-Expressions', () => {
   });
 
   describe('spaceAroundOperators option', () => {
-    test('should render compound with no spaces around operator when false', () => {
+    test('should keep mandatory spaces around AND even when false', () => {
       const input = '<< 404684003 AND << 19829001';
       const { ast } = parseECL(input);
       const result = printAst(ast, input, { ...opts, spaceAroundOperators: false });
-      assert.ok(result.includes('AND'), 'should contain AND');
-      assert.ok(!result.includes(' AND '), 'should not have spaces around AND');
+      // Keyword operators keep the whitespace the grammar requires; the option
+      // has no effect on them (bare 'AND' would not re-parse).
+      assert.ok(result.includes(' AND '), 'should keep mandatory spaces around AND');
     });
 
     test('should render compound with spaces around operator when true (default)', () => {
@@ -453,20 +454,22 @@ describe('AST Printer — Leaf Nodes and Sub-Expressions', () => {
       assert.ok(result.includes(' AND '), 'should have spaces around AND');
     });
 
-    test('should render OR without spaces when spaceAroundOperators is false', () => {
+    test('should keep mandatory spaces around OR even when false', () => {
       const input = '<< 404684003 OR << 19829001';
       const { ast } = parseECL(input);
       const result = printAst(ast, input, { ...opts, spaceAroundOperators: false });
-      assert.ok(result.includes('OR'), 'should contain OR');
-      assert.ok(!result.includes(' OR '), 'should not have spaces around OR');
+      // Keyword operators keep the whitespace the grammar requires; the option
+      // has no effect on them (bare 'OR' would not re-parse).
+      assert.ok(result.includes(' OR '), 'should keep mandatory spaces around OR');
     });
 
-    test('should render MINUS without spaces when spaceAroundOperators is false', () => {
+    test('should keep mandatory spaces around MINUS even when false', () => {
       const input = '<< 404684003 MINUS << 19829001';
       const { ast } = parseECL(input);
       const result = printAst(ast, input, { ...opts, spaceAroundOperators: false });
-      assert.ok(result.includes('MINUS'), 'should contain MINUS');
-      assert.ok(!result.includes(' MINUS '), 'should not have spaces around MINUS');
+      // Keyword operators keep the whitespace the grammar requires; the option
+      // has no effect on them (bare 'MINUS' would not re-parse).
+      assert.ok(result.includes(' MINUS '), 'should keep mandatory spaces around MINUS');
     });
   });
 

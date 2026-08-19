@@ -330,7 +330,8 @@ function formatExpressionBody(text: string, options: FormattingOptions, ast?: Ex
     // eslint-disable-next-line sonarjs/slow-regex -- bounded ECL expression text; no ReDoS risk
     /(\S?)(?<![A-Za-z])\s*(AND|OR|MINUS)\s*(?![A-Za-z])(\S?)/g,
     (match, before, op, after) => {
-      const formattedOp = options.spaceAroundOperators ? ` ${op} ` : op;
+      // Keyword operators always keep the whitespace the grammar requires.
+      const formattedOp = ` ${op} `;
       return (before ?? '') + formattedOp + (after ?? '');
     },
   );
@@ -369,9 +370,9 @@ function formatExpressionBody(text: string, options: FormattingOptions, ast?: Ex
   // normalization that runs before the AST printer. If the result no longer
   // means what the input meant — or no longer parses at all — return the input
   // unchanged: a differently-scoped expression is far worse than an unformatted
-  // one. Skipped when spaceAroundOperators is off, because that option
-  // deliberately strips whitespace the grammar requires around keyword operators.
-  if (options.spaceAroundOperators) {
+  // one. This now runs for every option combination; it used to stand down when
+  // spaceAroundOperators was off, because that option emitted unparseable ECL.
+  {
     // The baseline is filter-normalized because filter blocks are opaque to the
     // AST, so their (intentional) keyword and spacing normalization would
     // otherwise read as a change of meaning.

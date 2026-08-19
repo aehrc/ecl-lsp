@@ -6,6 +6,7 @@ import assert from 'node:assert';
 import { formatDocument } from '../formatter/formatter';
 import { FormattingOptions, defaultFormattingOptions } from '../formatter/options';
 import { canonicalise } from '../canonical/comparator';
+import { parseECL } from '../parser';
 import { signatureOf } from '../formatter/semantic-guard';
 
 describe('ECL Formatter', () => {
@@ -192,9 +193,11 @@ describe('ECL Formatter', () => {
 
   // Test configurable options
   describe('Configurable options', () => {
-    test('should respect spaceAroundOperators=false', () => {
+    test('spaceAroundOperators=false leaves keyword operators spaced', () => {
       const input = '<404684003 OR <19829001';
-      const expected = '< 404684003OR< 19829001';
+      // Was '< 404684003OR< 19829001', which did not re-parse. The option has
+      // no effect on keyword operators; constraint operators are still spaced.
+      const expected = '< 404684003 OR < 19829001';
       const options: FormattingOptions = {
         ...defaultFormattingOptions,
         spaceAroundOperators: false,
@@ -339,16 +342,20 @@ describe('ECL Formatter', () => {
     });
 
     test('should remove spaces around operators with spaceAroundOperators=false', () => {
-      const input = '< 404684003 AND < 19829001 OR < 234567890';
+      // Parenthesised: ECL forbids mixing AND and OR without explicit grouping,
+      // so the unparenthesised form this test used to pass was invalid input.
+      const input = '(< 404684003 AND < 19829001) OR < 234567890';
       const options: FormattingOptions = {
         ...defaultFormattingOptions,
         spaceAroundOperators: false,
       };
       const result = formatDocument(input, options);
-      assert.ok(result.includes('AND'), 'Should have AND');
-      assert.ok(!result.includes(' AND '), 'Should not have spaces around AND');
-      assert.ok(result.includes('OR'), 'Should have OR');
-      assert.ok(!result.includes(' OR '), 'Should not have spaces around OR');
+      // spaceAroundOperators has no effect on keyword operators: the grammar
+      // requires whitespace around them, and stripping it produced output that
+      // did not re-parse.
+      assert.ok(result.includes(' AND '), 'AND keeps mandatory spaces');
+      assert.ok(result.includes(' OR '), 'OR keeps mandatory spaces');
+      assert.strictEqual(parseECL(result).errors.length, 0, `Output must re-parse: ${result}`);
     });
 
     test('should not affect constraint operators with spaceAroundOperators setting', () => {
@@ -377,8 +384,48 @@ describe('ECL Formatter', () => {
         spaceAroundOperators: false,
       };
       const result = formatDocument(input, options);
-      assert.ok(result.includes('MINUS'), 'Should have MINUS');
-      assert.ok(!result.includes(' MINUS '), 'Should not have spaces around MINUS');
+      assert.ok(result.includes(' MINUS '), 'MINUS keeps mandatory spaces');
+      assert.strictEqual(parseECL(result).errors.length, 0, `Output must re-parse: ${result}`);
+    });
+  });
+
+  // Regression: the formatter must never emit ECL that fails to re-parse.
+  // `spaceAroundOperators: false` used to strip the whitespace the grammar
+  // makes mandatory around the AND/OR/MINUS keywords, producing output such
+  // as `< 404684003AND< 19829001`.
+  describe('spaceAroundOperators=false still emits parseable ECL', () => {
+    const inputs = [
+      '< 404684003 AND < 19829001',
+      '<< 73211009 OR << 84757009',
+      '< 404684003 MINUS < 19829001',
+      '(< 404684003 AND < 19829001) OR < 234567890',
+      '< 71388002 : (405813007 = << 39937001 OR 260686004 = << 129304002)',
+      '(< 404684003 OR < 19829001) MINUS < 234567890',
+    ];
+
+    for (const input of inputs) {
+      test(`re-parses: ${input}`, () => {
+        const options: FormattingOptions = {
+          ...defaultFormattingOptions,
+          spaceAroundOperators: false,
+        };
+        const result = formatDocument(input, options);
+        const errors = parseECL(result).errors;
+        assert.strictEqual(
+          errors.length,
+          0,
+          `Formatted output must re-parse, got: ${result} (${errors[0]?.message ?? ''})`,
+        );
+      });
+    }
+
+    test('keyword operators keep their mandatory whitespace', () => {
+      const options: FormattingOptions = {
+        ...defaultFormattingOptions,
+        spaceAroundOperators: false,
+      };
+      const result = formatDocument('< 404684003 AND < 19829001', options);
+      assert.ok(result.includes(' AND '), `Expected mandatory spaces around AND, got: ${result}`);
     });
   });
 

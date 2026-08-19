@@ -4,6 +4,15 @@
 export interface FormattingOptions {
   indentSize: number;
   indentStyle: 'space' | 'tab';
+  /**
+   * Accepted for backwards compatibility, but has no effect.
+   *
+   * It only ever applied to the AND, OR and MINUS keywords, and the ECL grammar
+   * requires mandatory whitespace around those. Setting it to `false` produced
+   * output that no longer parsed (`< 404684003AND< 19829001`), so keyword
+   * operators now always keep their spaces. Constraint operators (`<`, `<<`,
+   * `^`) were never affected by this option.
+   */
   spaceAroundOperators: boolean;
   maxLineLength: number;
   alignTerms: boolean;

@@ -3,6 +3,8 @@
 
 export { EclEditor } from './EclEditor';
 export type { EclEditorProps } from './EclEditor';
+export { EclEditorProvider } from './EclEditorContext';
+export type { EclEditorProviderProps, EclEditorContextValue } from './EclEditorContext';
 export { useEclEditor } from './useEclEditor';
 export type { UseEclEditorOptions, UseEclEditorReturn } from './useEclEditor';
 

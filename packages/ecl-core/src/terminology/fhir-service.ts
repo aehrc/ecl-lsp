@@ -112,6 +112,35 @@ export function isEclEvaluationStrategy(value: unknown): value is EclEvaluationS
   return value === 'auto' || value === 'implicit-url' || value === 'post';
 }
 
+class ConcurrencyQueue {
+  private running = 0;
+  private readonly waiters: (() => void)[] = [];
+
+  constructor(private readonly max: number) {}
+
+  run<T>(fn: () => Promise<T>): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      const attempt = () => {
+        this.running++;
+        fn()
+          .then(resolve, reject)
+          .finally(() => {
+            this.running--;
+            const next = this.waiters.shift();
+            if (next) next();
+          });
+      };
+      if (this.running < this.max) attempt();
+      else this.waiters.push(attempt);
+    });
+  }
+}
+
+const RETRY_BASE_DELAY_MS = 500;
+const RETRY_MAX_DELAY_MS = 10_000;
+const RETRY_MAX_ATTEMPTS = 3;
+const RETRY_JITTER_MS = 200;
+
 export interface FhirTerminologyServiceOptions {
   baseUrl?: string;
   timeout?: number;
@@ -120,6 +149,7 @@ export interface FhirTerminologyServiceOptions {
   /** ECL evaluation transport; defaults to `'auto'`. See {@link EclEvaluationStrategy}. */
   evaluationStrategy?: EclEvaluationStrategy;
   onResolvedVersion?: (versionUri: string) => void;
+  maxConcurrency?: number;
 }
 
 /**
@@ -218,8 +248,12 @@ export class FhirTerminologyService implements ITerminologyService {
    * transient and do not latch.
    */
   private bulkExpandUnsupported = false;
+  private readonly queue: ConcurrencyQueue;
 
   constructor(options: FhirTerminologyServiceOptions = {}) {
+    const maxConcurrency = options.maxConcurrency ?? 25;
+    if (maxConcurrency <= 0) throw new Error(`maxConcurrency must be > 0, got ${maxConcurrency}`);
+    this.queue = new ConcurrencyQueue(maxConcurrency);
     this.baseUrl = options.baseUrl ?? 'https://tx.ontoserver.csiro.au/fhir';
     this.timeout = options.timeout ?? 2000;
     this.userAgent = options.userAgent ?? DEFAULT_USER_AGENT;
@@ -352,7 +386,9 @@ export class FhirTerminologyService implements ITerminologyService {
     init?: { method?: string; headers?: Record<string, string>; body?: string },
   ) {
     try {
-      return await this.fetchWithTimeout(url, timeoutMs, init);
+      // Goes through the concurrency queue and the 429 retry/backoff layer, then
+      // translates any network-level failure into a typed transport error.
+      return await this.fetchQueued(url, timeoutMs, init);
     } catch (error) {
       throw toTransportError(error, { url, operation, timeoutMs });
     }
@@ -428,6 +464,39 @@ export class FhirTerminologyService implements ITerminologyService {
    * @throws {TerminologyHttpError} when the server answered with an error
    *   status that is not an "unknown code" response.
    */
+  private async fetchWithRetry(
+    url: string,
+    timeoutMs: number,
+    init?: { method?: string; headers?: Record<string, string>; body?: string },
+  ): Promise<Response> {
+    for (let attempt = 0; attempt < RETRY_MAX_ATTEMPTS; attempt++) {
+      const response = await this.fetchWithTimeout(url, timeoutMs, init);
+      if (response.status !== 429) return response;
+
+      if (attempt === RETRY_MAX_ATTEMPTS - 1) {
+        throw new Error(`FHIR request rate-limited after ${RETRY_MAX_ATTEMPTS} attempts`);
+      }
+
+      const retryAfterHeader = response.headers.get('Retry-After');
+      const retryAfterMs = retryAfterHeader ? parseInt(retryAfterHeader, 10) * 1000 : 0;
+      const backoff = Math.min(RETRY_BASE_DELAY_MS * Math.pow(2, attempt), RETRY_MAX_DELAY_MS);
+      const jitter = Math.random() * RETRY_JITTER_MS; // eslint-disable-line sonarjs/pseudo-random -- jitter for retry backoff; cryptographic randomness not needed
+      const waitMs = Math.max(retryAfterMs, backoff + jitter);
+
+      await new Promise<void>((resolve) => setTimeout(resolve, waitMs));
+    }
+
+    throw new Error('Unreachable');
+  }
+
+  private fetchQueued(
+    url: string,
+    timeoutMs: number,
+    init?: { method?: string; headers?: Record<string, string>; body?: string },
+  ): Promise<Response> {
+    return this.queue.run(() => this.fetchWithRetry(url, timeoutMs, init));
+  }
+
   async getConceptInfo(conceptId: string): Promise<ConceptInfo | null> {
     // Check cache first
     const cached = this.cache.get(conceptId);
@@ -543,7 +612,7 @@ export class FhirTerminologyService implements ITerminologyService {
         `&target=${encodeURIComponent(targetUrl)}` +
         `&url=${encodeURIComponent(cmUrl)}`;
 
-      const response = await this.fetchWithTimeout(url, this.timeout, {
+      const response = await this.fetchQueued(url, this.timeout, {
         headers: { Accept: 'application/fhir+json' },
       });
       if (!response.ok) return [];
@@ -874,7 +943,7 @@ export class FhirTerminologyService implements ITerminologyService {
       return await this.evaluateViaPostExpand(expression, limit, deadline);
     }
 
-    const response = await this.fetchWithTimeout(
+    const response = await this.fetchQueued(
       this.buildImplicitEvaluationUrl(expression, limit),
       this.remainingTimeout(deadline),
     );
@@ -926,7 +995,7 @@ export class FhirTerminologyService implements ITerminologyService {
       filter: [{ property: 'constraint', op: '=', value: expression }],
     };
 
-    const response = await this.fetchWithTimeout(
+    const response = await this.fetchQueued(
       `${this.baseUrl}/ValueSet/$expand?count=${limit}`,
       this.remainingTimeout(deadline),
       {

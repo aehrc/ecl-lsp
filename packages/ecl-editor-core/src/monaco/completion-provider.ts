@@ -74,9 +74,14 @@ function isInsideExpression(text: string, lineNumber: number): boolean {
   return false;
 }
 
+const SEARCH_DEBOUNCE_MS = 200;
+
 export function createCompletionProvider(
   getTerminologyService: () => ITerminologyService | null,
 ): Monaco.languages.CompletionItemProvider {
+  let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+  let latestSearchItems: CoreCompletionItem[] = [];
+
   return {
     triggerCharacters: ['^', ':', '=', '{', '<', '>', '!', ' '],
     provideCompletionItems: async (
@@ -99,15 +104,37 @@ export function createCompletionProvider(
         const cursorColumn = position.column - 1; // 0-based
         const inExpression = isInsideExpression(text, line0);
 
-        const service = getTerminologyService();
-        const coreItems: CoreCompletionItem[] = await getCompletionItemsWithSearch(
+        // Return static completions (operators/snippets) immediately without waiting for
+        // concept search, so the dropdown is never empty while the debounce is pending.
+        const staticItems: CoreCompletionItem[] = await getCompletionItemsWithSearch(
           inExpression,
           textBeforeCursor,
           currentLine,
           cursorColumn,
           line0,
-          service ?? null,
+          null,
         );
+
+        const service = getTerminologyService();
+        if (service) {
+          // Cancel previous pending search and schedule a new one after the debounce window.
+          if (debounceTimer !== null) clearTimeout(debounceTimer);
+          debounceTimer = setTimeout(() => {
+            debounceTimer = null;
+            getCompletionItemsWithSearch(inExpression, textBeforeCursor, currentLine, cursorColumn, line0, service)
+              .then((items: CoreCompletionItem[]) => {
+                latestSearchItems = items;
+              })
+              .catch(() => {
+                /* silently degrade */
+              });
+          }, SEARCH_DEBOUNCE_MS);
+        }
+
+        // Merge static items with results from the most recent completed search.
+        // Monaco's `incomplete: true` causes a re-query when latestSearchItems updates.
+        const seen = new Set(staticItems.map((i) => i.label));
+        const merged = [...staticItems, ...latestSearchItems.filter((i) => !seen.has(i.label))];
 
         const word = model.getWordUntilPosition(position);
         const range: Monaco.IRange = {
@@ -119,7 +146,7 @@ export function createCompletionProvider(
 
         return {
           incomplete: true,
-          suggestions: coreItems.map((item) => mapCompletionItem(item, range, model)),
+          suggestions: merged.map((item) => mapCompletionItem(item, range, model)),
         };
       } catch {
         return { incomplete: true, suggestions: [] };

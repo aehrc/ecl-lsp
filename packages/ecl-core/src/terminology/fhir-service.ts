@@ -12,7 +12,13 @@ import {
   HistoricalAssociationType,
 } from './types';
 import { isValidSnomedId } from './verhoeff';
-import { TerminologyTransportError, isTerminologyTransportError, toHttpError, toTransportError } from './errors';
+import {
+  TerminologyTransportError,
+  isTerminologyHttpError,
+  isTerminologyTransportError,
+  toHttpError,
+  toTransportError,
+} from './errors';
 
 // ── FHIR response types ────────────────────────────────────────────────
 
@@ -203,6 +209,15 @@ export class FhirTerminologyService implements ITerminologyService {
    * evaluations skip the wasted round-trip for the lifetime of this instance.
    */
   private usePostExpand = false;
+
+  /**
+   * Latched once a bulk `ValueSet/$expand` has been rejected with a 4xx: the server does
+   * not accept a POSTed ValueSet enumerating concepts in `compose.include.concept`, and
+   * the request shape never varies, so retrying it on every validation pass only costs a
+   * wasted round-trip and a console warning (issue #55). 5xx responses are treated as
+   * transient and do not latch.
+   */
+  private bulkExpandUnsupported = false;
 
   constructor(options: FhirTerminologyServiceOptions = {}) {
     this.baseUrl = options.baseUrl ?? 'https://tx.ontoserver.csiro.au/fhir';
@@ -581,22 +596,15 @@ export class FhirTerminologyService implements ITerminologyService {
       return results;
     }
 
+    // The server has already rejected this request shape; go straight to lookups.
+    if (this.bulkExpandUnsupported) {
+      await this.lookupEach(uncachedIds, results);
+      return results;
+    }
+
     try {
       const expandResults = await this.bulkExpand(uncachedIds);
-
-      // Process results: concepts in response exist, those missing need individual lookup
-      const missingIds: string[] = [];
-      for (const id of uncachedIds) {
-        const info = expandResults.get(id);
-        if (info) {
-          results.set(id, info);
-          if (this.cache.size < 10000) {
-            this.cache.set(id, info);
-          }
-        } else {
-          missingIds.push(id);
-        }
-      }
+      const missingIds = this.mergeExpandResults(uncachedIds, expandResults, results);
 
       // For concepts not in the expansion, do individual $lookup to distinguish
       // "inactive but filtered out" from "truly unknown". This handles servers
@@ -612,9 +620,41 @@ export class FhirTerminologyService implements ITerminologyService {
       // Otherwise the server rejected the bulk $expand (it may not support
       // POSTed ValueSets); fall back to individual lookups, which propagate
       // their own typed errors if they fail too.
+      //
+      // A 4xx means this server will not accept the request shape we build, and
+      // that shape never varies — so stop attempting it. A 5xx may be transient,
+      // so leave bulk expand enabled for the next pass.
+      if (isTerminologyHttpError(error) && error.status >= 400 && error.status < 500) {
+        this.bulkExpandUnsupported = true;
+      }
+
       await this.lookupEach(uncachedIds, results);
       return results;
     }
+  }
+
+  /**
+   * Move concepts found in a bulk expansion into `results` (and the cache),
+   * returning the IDs that were absent and still need an individual lookup.
+   */
+  private mergeExpandResults(
+    uncachedIds: string[],
+    expandResults: Map<string, ConceptInfo>,
+    results: Map<string, ConceptInfo | null>,
+  ): string[] {
+    const missingIds: string[] = [];
+    for (const id of uncachedIds) {
+      const info = expandResults.get(id);
+      if (info) {
+        results.set(id, info);
+        if (this.cache.size < 10000) {
+          this.cache.set(id, info);
+        }
+      } else {
+        missingIds.push(id);
+      }
+    }
+    return missingIds;
   }
 
   /**

@@ -361,6 +361,36 @@ describe('FhirTerminologyService.validateConcepts — failure discrimination', (
     assert.strictEqual(results.get('404684003')?.fsn, 'Clinical finding (finding)');
   });
 
+  // Issue #55: the reporter's server 404s the bulk $expand on every validation
+  // pass. Without a latch the doomed POST is reissued each time, adding a wasted
+  // round-trip and a console warning per pass.
+  it('latches an unsupported bulk expand and stops reissuing it', async () => {
+    const svc = new FhirTerminologyService({ baseUrl, timeout: 2000 });
+    mock.setHandler((req) =>
+      req.method === 'POST'
+        ? { status: 404, body: { resourceType: 'OperationOutcome', issue: [{ code: 'not-found' }] } }
+        : { status: 200, body: LOOKUP_OK },
+    );
+
+    await svc.validateConcepts(['404684003']);
+    await svc.validateConcepts(['19829001']);
+    await svc.validateConcepts(['39057004']);
+
+    const bulkAttempts = mock.requests.filter((r) => r.method === 'POST').length;
+    assert.strictEqual(bulkAttempts, 1, `bulk $expand should be attempted once, was ${bulkAttempts}`);
+  });
+
+  it('does not latch on a transient 5xx from bulk expand', async () => {
+    const svc = new FhirTerminologyService({ baseUrl, timeout: 2000 });
+    mock.setHandler((req) => (req.method === 'POST' ? { status: 503, body: {} } : { status: 200, body: LOOKUP_OK }));
+
+    await svc.validateConcepts(['404684003']);
+    await svc.validateConcepts(['19829001']);
+
+    const bulkAttempts = mock.requests.filter((r) => r.method === 'POST').length;
+    assert.strictEqual(bulkAttempts, 2, 'a 5xx is transient and must not disable bulk expand');
+  });
+
   it('maps a genuinely absent concept to null', async () => {
     const svc = new FhirTerminologyService({ baseUrl, timeout: 2000 });
     mock.setHandler((req) =>

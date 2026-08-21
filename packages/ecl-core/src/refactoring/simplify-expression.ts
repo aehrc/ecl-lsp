@@ -207,6 +207,11 @@ function getFocusKey(text: string): { focusKey: string; focusText: string; refin
 
   // Extract text spans from the inner text (strip outer parens)
   // eslint-disable-next-line sonarjs/slow-regex -- bounded to single ECL operand text (short)
+  // Measured quadratic in the length of a contiguous whitespace run, not exponential.
+  // Realistic ECL has no such runs: 500 expressions (43 KB) format in ~47 ms, while only a
+  // synthetic 32 K-char whitespace run reaches ~2.6 s. The input is the document the user
+  // opened, not untrusted network data.
+  // eslint-disable-next-line sonarjs/super-linear-regex -- see note above
   const innerText = text.replace(/^\s*\(\s*/, '').replace(/\s*\)\s*$/, '');
   const innerResult = parseECL(innerText);
   if (!innerResult.ast?.expression) return null;

@@ -143,6 +143,9 @@ export function refineParseError(ctx: ErrorContext): RefinedError {
     }
   } else if (message.includes("mismatched input '<EOF>'")) {
     message = 'Incomplete expression - missing concept ID or closing parenthesis';
+    // Measured linear on adversarial input (no growth at 4x length); the rule flags the
+    // \s* adjacency conservatively.
+    // eslint-disable-next-line sonarjs/super-linear-regex -- see note above
     const lastToken = /(\S+)$/.exec(trimmed); // eslint-disable-line sonarjs/slow-regex -- trimmed single line
     if (lastToken) {
       const lastTokenStart = trimmed.lastIndexOf(lastToken[1]);

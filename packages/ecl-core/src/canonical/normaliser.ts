@@ -267,12 +267,10 @@ function normaliseDottedExpression(node: DottedExpressionNode, src: string): Dot
   return {
     ...node,
     source: normaliseSubExpression(node.source, src),
-    attributes: node.attributes.map(
-      (a): DottedAttributeNode => ({
-        ...a,
-        attributeName: normaliseSubExpression(a.attributeName, src),
-      }),
-    ),
+    attributes: node.attributes.map((a): DottedAttributeNode => ({
+      ...a,
+      attributeName: normaliseSubExpression(a.attributeName, src),
+    })),
   };
 }
 

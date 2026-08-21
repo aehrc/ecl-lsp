@@ -51,14 +51,12 @@ export async function getFhirFilterCompletions(
 
   try {
     const response = await terminologyService.evaluateEcl(ecl, EXPANSION_LIMIT);
-    const items = response.concepts.map(
-      (concept: EvaluationConcept, index: number): CoreCompletionItem => ({
-        label: `${concept.code} |${concept.display}|`,
-        kind: 'value',
-        detail: concept.display,
-        sortText: `e-${(20 + index).toString().padStart(3, '0')}`,
-      }),
-    );
+    const items = response.concepts.map((concept: EvaluationConcept, index: number): CoreCompletionItem => ({
+      label: `${concept.code} |${concept.display}|`,
+      kind: 'value',
+      detail: concept.display,
+      sortText: `e-${(20 + index).toString().padStart(3, '0')}`,
+    }));
 
     cache.set(key, { items, timestamp: Date.now() });
     return items;

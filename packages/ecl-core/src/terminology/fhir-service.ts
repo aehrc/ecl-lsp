@@ -630,8 +630,7 @@ export class FhirTerminologyService implements ITerminologyService {
         const conceptPart = parts.find((p) => p.name === 'concept');
         // valueCoding is not in our FhirParameterPart type — access via type assertion
         const coding = (conceptPart as Record<string, unknown> | undefined)?.valueCoding as
-          | { code?: string; display?: string }
-          | undefined;
+          { code?: string; display?: string } | undefined;
         if (coding?.code) {
           targets.push({ code: coding.code, display: coding.display ?? '' });
         }

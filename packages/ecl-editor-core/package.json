@@ -52,10 +52,10 @@
     }
   },
   "devDependencies": {
-    "monaco-editor": "^0.55.1",
+    "monaco-editor": "^0.56.0",
     "typescript": "^6.0.2",
     "vite": "^6.3.5",
     "vite-plugin-dts": "^4.5.4",
-    "vitest": "^4.1.2"
+    "vitest": "^4.1.10"
   }
 }

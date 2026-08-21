@@ -206,9 +206,11 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v6
 
+      # Version comes from the tag so the artifact filename matches the release
+      # rather than whatever is committed in gradle.properties.
       - name: Build IntelliJ plugin
         working-directory: clients/intellij
-        run: ./gradlew buildPlugin
+        run: ./gradlew buildPlugin -PpluginVersion="${GITHUB_REF#refs/tags/v}"
 
       - uses: actions/upload-artifact@v7
         with:
@@ -244,6 +246,19 @@ jobs:
           path: ~/.m2/repository
           key: maven-${{ hashFiles('clients/eclipse/**/pom.xml', 'clients/eclipse/**/*.target') }}
           restore-keys: maven-
+
+      # Tycho reads the version from the poms and MANIFEST.MFs, so set them from
+      # the tag first; otherwise the update site zip carries the committed
+      # -SNAPSHOT version instead of the release version.
+      - name: Set Eclipse plugin version from tag
+        working-directory: clients/eclipse
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          # Read Tycho's version from .mvn/maven.config so a Tycho bump does not
+          # silently leave this pinned to an older plugin.
+          TYCHO=$(grep -oE 'tycho\.version=[0-9.]+' .mvn/maven.config | cut -d= -f2)
+          echo "Using Tycho $TYCHO to set version $VERSION"
+          mvn -B "org.eclipse.tycho:tycho-versions-plugin:${TYCHO}:set-version" -DnewVersion="$VERSION"
 
       - name: Build Eclipse update site
         working-directory: clients/eclipse

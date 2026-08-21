@@ -70,7 +70,7 @@
     "generate-license-file": "^4.2.1",
     "globals": "^17.6.0",
     "prettier": "^3.8.3",
-    "sonarqube-scanner": "^4.3.6",
+    "sonarqube-scanner": "^5.0.0",
     "typescript-eslint": "^8.60.1"
   },
   "overrides": {

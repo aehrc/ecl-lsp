@@ -283,7 +283,7 @@
     "@vscode/test-electron": "^2.4.1",
     "@vscode/vsce": "^3.9.2",
     "esbuild": "^0.28.0",
-    "mocha": "^10.7.3",
+    "mocha": "^11.8.0",
     "rimraf": "^5.0.5",
     "typescript": "^6.0.2"
   }

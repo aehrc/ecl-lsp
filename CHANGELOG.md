@@ -5,6 +5,22 @@ All notable changes to the ECL Language Server will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-08-23
+
+> **Note:** this release raises the minimum Node.js version to 22. Node 20
+> reached end-of-life on 2026-04-30 and no longer receives security patches.
+> Consumers on Node 20 should stay on 1.2.x or upgrade their runtime.
+
+### Changed
+
+- **Node.js 22 is now the minimum supported version** (all packages): `engines.node` moves from `>=20.0.0` to `>=22.0.0` and CI now tests on Node 22 and 24 rather than 20 and 22. Node 20's maintenance window ended on 2026-04-30; Node 22 is supported until 2027-04-30 and Node 24 until 2028-04-30. Dropping 20 also unblocks four dev dependencies that had already raised their own floor to 22 and were being held back: `eslint-plugin-unicorn` 64 → 73, `jsdom` 29 → 30, `@testing-library/jest-dom` 6 → 7 and `@vscode/test-electron` 2 → 3. None of these ship in the published runtime.
+- **Dependencies brought current** ([#78](https://github.com/aehrc/ecl-lsp/pull/78)): all semver-compatible updates plus dev and build majors — `eslint` 10.8.1, `eslint-plugin-sonarjs` 4.2.0, `prettier` 3.9.6, `@types/node` 26, `@playwright/test` 1.62.1 and `@storybook/*` 10.5.10 among them. Runtime dependencies are deliberately untouched, so nothing that ships changes behaviour. `monaco-editor` remains pinned to 0.55.1 pending [#75](https://github.com/aehrc/ecl-lsp/issues/75); `vscode-languageserver`, `@slack/bolt`, `dotenv` and `node-fetch` majors are held as runtime changes out of scope for a dependency sweep.
+
+### Fixed
+
+- **Release artifacts carry the release version** ([#77](https://github.com/aehrc/ecl-lsp/pull/77)): the 1.2.0 release attached `ecl-lsp-intellij-1.0.0.zip` and `au.csiro.ecl.eclipse.updatesite-1.0.0-SNAPSHOT.zip`, because neither the IntelliJ nor the Eclipse client derived its version from the tag. The release workflow now injects the tag version into both builds, and the committed versions are kept in step with the npm packages.
+- **`EclEditor`'s `terminologyService` prop type** (`ecl-editor-react`): the prop was typed as `EclEditorConfig['terminologyService']`, which already includes `undefined`, so combining it with `?` produced a redundant union. Narrowed to `NonNullable<...>`; the runtime behaviour is unchanged.
+
 ## [1.2.0] - 2026-08-19
 
 > **Note for `@aehrc/ecl-core` consumers:** this release changes the failure

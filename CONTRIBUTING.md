@@ -6,7 +6,7 @@ Thank you for your interest in contributing! This guide covers how to set up the
 
 ### Prerequisites
 
-- Node.js 20+
+- Node.js 22+
 - npm 7+ (for workspace support)
 - VSCode (for testing the VSCode extension)
 - IntelliJ IDEA Ultimate 2024.2+ (for IntelliJ plugin development)

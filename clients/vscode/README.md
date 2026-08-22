@@ -5,7 +5,7 @@ VSCode extension providing full IDE support for SNOMED CT Expression Constraint 
 ## Prerequisites
 
 - VSCode 1.75+
-- Node.js 18+ (for building from source)
+- Node.js 22+ (for building from source)
 
 ## Install
 

@@ -3,7 +3,7 @@
 ## Prerequisites
 
 - IntelliJ IDEA Ultimate 2024.2+
-- Node.js 18+
+- Node.js 22+
 
 ## Install the server
 

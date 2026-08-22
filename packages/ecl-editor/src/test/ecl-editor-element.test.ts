@@ -180,35 +180,17 @@ describe('EclEditorElement', () => {
       expect(el.style.width).toBe('100%');
     });
 
-    it('should not throw when setting theme without Monaco', () => {
+    // Setting any of these before Monaco has loaded must be a no-op rather than a throw.
+    it.each([
+      ['theme', 'vs-dark'],
+      ['read-only', ''],
+      ['value', '< 404684003'],
+      ['fhir-server-url', 'https://tx.example.com/fhir'],
+    ])('should not throw when setting %s before the editor exists', (attribute, value) => {
       const el = document.createElement(TAG_NAME) as EclEditorElement;
       document.body.appendChild(el);
       expect(() => {
-        el.setAttribute('theme', 'vs-dark');
-      }).not.toThrow();
-    });
-
-    it('should not throw when setting read-only without Monaco', () => {
-      const el = document.createElement(TAG_NAME) as EclEditorElement;
-      document.body.appendChild(el);
-      expect(() => {
-        el.setAttribute('read-only', '');
-      }).not.toThrow();
-    });
-
-    it('should not throw when setting value without editor', () => {
-      const el = document.createElement(TAG_NAME) as EclEditorElement;
-      document.body.appendChild(el);
-      expect(() => {
-        el.setAttribute('value', '< 404684003');
-      }).not.toThrow();
-    });
-
-    it('should not throw when setting fhir-server-url without registration', () => {
-      const el = document.createElement(TAG_NAME) as EclEditorElement;
-      document.body.appendChild(el);
-      expect(() => {
-        el.setAttribute('fhir-server-url', 'https://tx.example.com/fhir');
+        el.setAttribute(attribute, value);
       }).not.toThrow();
     });
 
@@ -236,7 +218,7 @@ describe('EclEditorElement', () => {
 
       // Should be the same container, not a duplicate (3 divs: container + hintsBar + resizeHandle)
       expect(secondContainer).toBe(firstContainer);
-      expect(el.querySelectorAll('div').length).toBe(3);
+      expect(el.querySelectorAll('div')).toHaveLength(3);
     });
   });
 

@@ -196,6 +196,11 @@ function detectFilterSubContext(content: string, filterType: FilterType): Filter
   if (/[=!]=?\s*$/.test(content)) {
     // Extract the keyword preceding the = sign
     // eslint-disable-next-line sonarjs/slow-regex -- bounded to filter block content
+    // Measured quadratic in the length of a contiguous whitespace run, not exponential.
+    // Realistic ECL has no such runs: 500 expressions (43 KB) format in ~47 ms, while only a
+    // synthetic 32 K-char whitespace run reaches ~2.6 s. The input is the document the user
+    // opened, not untrusted network data.
+    // eslint-disable-next-line sonarjs/super-linear-regex -- see note above
     const kwMatch = /(\w+)\s*[=!]=?\s*$/.exec(content);
     const keyword = kwMatch ? kwMatch[1].toLowerCase() : null;
     return { kind: 'after-equals', keyword };

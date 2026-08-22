@@ -183,14 +183,7 @@ export type CoreInsertTextFormat = 'plainText' | 'snippet';
 
 /** Completion item kind. */
 export type CoreCompletionItemKind =
-  | 'keyword'
-  | 'operator'
-  | 'snippet'
-  | 'value'
-  | 'concept'
-  | 'property'
-  | 'text'
-  | 'function';
+  'keyword' | 'operator' | 'snippet' | 'value' | 'concept' | 'property' | 'text' | 'function';
 
 /** A completion item. */
 export interface CoreCompletionItem {

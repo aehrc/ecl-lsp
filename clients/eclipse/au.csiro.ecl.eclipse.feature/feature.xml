@@ -2,7 +2,7 @@
 <feature
       id="au.csiro.ecl.eclipse.feature"
       label="ECL Language Support"
-      version="1.0.0.qualifier"
+      version="1.2.0.qualifier"
       provider-name="CSIRO Australian e-Health Research Centre">
 
    <description>

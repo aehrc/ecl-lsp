@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Release artifacts carry the release version** ([#77](https://github.com/aehrc/ecl-lsp/pull/77)): the 1.2.0 release attached `ecl-lsp-intellij-1.0.0.zip` and `au.csiro.ecl.eclipse.updatesite-1.0.0-SNAPSHOT.zip`, because neither the IntelliJ nor the Eclipse client derived its version from the tag. The release workflow now injects the tag version into both builds, and the committed versions are kept in step with the npm packages.
+- **Regex lint suppressions applied to comments instead of code** (`ecl-core`, `ecl-editor-core`, `ecl-lsp-server`): thirteen `eslint-disable-next-line sonarjs/slow-regex` directives sat immediately above another comment rather than above the regex, so they suppressed nothing and `npm run lint` reported them as unused. With the suppression genuinely in effect ESLint showed `slow-regex` never fires on any of these patterns — only `super-linear-regex` was load-bearing — so the redundant rule name is gone and the site-specific rationale is kept as prose. Lint is now silent. No runtime code changed.
 - **`EclEditor`'s `terminologyService` prop type** (`ecl-editor-react`): the prop was typed as `EclEditorConfig['terminologyService']`, which already includes `undefined`, so combining it with `?` produced a redundant union. Narrowed to `NonNullable<...>`; the runtime behaviour is unchanged.
 
 ## [1.2.0] - 2026-08-19

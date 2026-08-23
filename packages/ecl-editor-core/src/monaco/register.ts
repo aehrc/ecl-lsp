@@ -26,7 +26,6 @@ const eclMonarchLanguage: Monaco.languages.IMonarchLanguage = {
   tokenizer: {
     root: [
       [/\/\*/, 'comment', '@comment'],
-      // eslint-disable-next-line sonarjs/slow-regex
       // Measured linear on adversarial input (no growth at 4x length); the rule flags the
       // \s* adjacency conservatively.
       // eslint-disable-next-line sonarjs/super-linear-regex -- see note above

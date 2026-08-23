@@ -3,7 +3,7 @@
 ## Prerequisites
 
 - Neovim 0.8+ (built-in LSP client)
-- Node.js 18+
+- Node.js 22+
 
 ## Install the server
 

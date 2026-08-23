@@ -3,7 +3,7 @@
 ## Prerequisites
 
 - Emacs 29+ (with built-in `eglot`) or Emacs 26+ with [lsp-mode](https://emacs-lsp.github.io/lsp-mode/)
-- Node.js 18+
+- Node.js 22+
 
 ## Install the server
 

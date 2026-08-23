@@ -146,7 +146,7 @@ export function refineParseError(ctx: ErrorContext): RefinedError {
     // Measured linear on adversarial input (no growth at 4x length); the rule flags the
     // \s* adjacency conservatively.
     // eslint-disable-next-line sonarjs/super-linear-regex -- see note above
-    const lastToken = /(\S+)$/.exec(trimmed); // eslint-disable-line sonarjs/slow-regex -- trimmed single line
+    const lastToken = /(\S+)$/.exec(trimmed);
     if (lastToken) {
       const lastTokenStart = trimmed.lastIndexOf(lastToken[1]);
       startChar = leadingWhitespace + lastTokenStart;

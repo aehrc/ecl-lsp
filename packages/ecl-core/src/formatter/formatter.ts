@@ -237,7 +237,7 @@ const FILTER_KEYWORD_MAP: Record<string, string> = {
  */
 function normalizeFilterBlocks(text: string): string {
   // Match {{ ... }} blocks (non-greedy within the outer braces)
-  // eslint-disable-next-line sonarjs/slow-regex -- bounded ECL expression text; no ReDoS risk
+  // Bounded ECL expression text; no ReDoS risk.
   // Measured linear on adversarial input (no growth at 4x length); the rule flags the
   // \s* adjacency conservatively.
   // eslint-disable-next-line sonarjs/super-linear-regex -- see note above
@@ -263,7 +263,6 @@ function normalizeFilterBlocks(text: string): string {
     // Normalize spacing around comparison operators. Multi-character operators
     // must be handled first, otherwise `>=` would be split into `> =` and the
     // filter would no longer parse (member filters allow <, <=, >, >=).
-    /* eslint-disable sonarjs/slow-regex -- bounded filter content */
     // Measured quadratic in the length of a contiguous whitespace run, not exponential.
     // Realistic ECL has no such runs: 500 expressions (43 KB) format in ~47 ms, while only a
     // synthetic 32 K-char whitespace run reaches ~2.6 s. The input is the document the user
@@ -276,7 +275,6 @@ function normalizeFilterBlocks(text: string): string {
     // opened, not untrusted network data.
     // eslint-disable-next-line sonarjs/super-linear-regex -- see note above
     normalized = normalized.replace(/\s*(?<![!<>])=\s*/g, ' = ');
-    /* eslint-enable sonarjs/slow-regex */
 
     // Ensure single space after commas
     normalized = normalized.replace(/,\s*/g, ', ');
@@ -285,7 +283,7 @@ function normalizeFilterBlocks(text: string): string {
     normalized = normalized.replace(/ {2,}/g, ' ');
 
     // Ensure single space padding: {{ X ... }}
-    // eslint-disable-next-line sonarjs/slow-regex -- bounded filter content
+    // Bounded filter content.
     // Measured linear on adversarial input (no growth at 4x length); the rule flags the
     // \s* adjacency conservatively.
     // eslint-disable-next-line sonarjs/super-linear-regex -- see note above
@@ -343,7 +341,7 @@ function formatExpressionBody(text: string, options: FormattingOptions, ast?: Ex
   // Normalize spaces around logical operators.
   // Use a negative lookbehind for letters to avoid matching inside words like HISTORY.
   formatted = formatted.replace(
-    // eslint-disable-next-line sonarjs/slow-regex -- bounded ECL expression text; no ReDoS risk
+    // Bounded ECL expression text; no ReDoS risk.
     // Measured quadratic in the length of a contiguous whitespace run, not exponential.
     // Realistic ECL has no such runs: 500 expressions (43 KB) format in ~47 ms, while only a
     // synthetic 32 K-char whitespace run reaches ~2.6 s. The input is the document the user
@@ -358,7 +356,6 @@ function formatExpressionBody(text: string, options: FormattingOptions, ast?: Ex
   );
 
   // Normalize spaces around refinement operators (preserve newlines)
-  /* eslint-disable sonarjs/slow-regex -- bounded ECL expression text; no ReDoS risk */
   // Measured quadratic in the length of a contiguous whitespace run, not exponential.
   // Realistic ECL has no such runs: 500 expressions (43 KB) format in ~47 ms, while only a
   // synthetic 32 K-char whitespace run reaches ~2.6 s. The input is the document the user
@@ -379,7 +376,6 @@ function formatExpressionBody(text: string, options: FormattingOptions, ast?: Ex
   // opened, not untrusted network data.
   // eslint-disable-next-line sonarjs/super-linear-regex -- see note above
   formatted = formatted.replace(/[ \t]*(?<![!<>])(=)[ \t]*/g, formatRefinementEquals('$1'));
-  /* eslint-enable sonarjs/slow-regex */
 
   // Normalize spaces after constraint operators (collapse multiple spaces to single space)
   formatted = formatted.replace(/(<<|<|>>|>)\s*(\d)/g, '$1 $2');

@@ -208,7 +208,7 @@ export function computeSemanticTokens(text: string): SemanticToken[] {
   }
 
   // b. Line comments
-  // eslint-disable-next-line sonarjs/slow-regex -- `.*$` is linear in line length; no backtracking risk
+  // `.*$` is linear in line length; no backtracking risk.
   // Measured linear on adversarial input (no growth at 4x length); the rule flags the
   // \s* adjacency conservatively.
   // eslint-disable-next-line sonarjs/super-linear-regex -- see note above

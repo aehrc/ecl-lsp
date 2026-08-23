@@ -11,3 +11,4 @@ grammar/
 package-lock.json
 docs/
 **/dist-standalone/
+clients/intellij/.intellijPlatform/

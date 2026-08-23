@@ -4,7 +4,7 @@
 
 - Sublime Text 4
 - [LSP](https://packagecontrol.io/packages/LSP) package (install via Package Control)
-- Node.js 18+
+- Node.js 22+
 
 ## Install the server
 

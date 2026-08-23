@@ -6,7 +6,7 @@ Eclipse IDE plugin providing full IDE support for SNOMED CT Expression Constrain
 
 - Eclipse IDE 2024-12 or later
 - Java 17+
-- Node.js 18+ (bundled server uses Node.js runtime)
+- Node.js 22+ (bundled server uses Node.js runtime)
 
 ## Install
 

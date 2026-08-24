@@ -6,6 +6,13 @@ on:
   pull_request:
     branches: [main]
 
+# Supersede in-flight runs for the same ref so a cancelled job means "a newer commit
+# replaced this run", not "something died mid-step". Pushes to main are never
+# cancelled: main's history is the release gate and every commit needs its own result.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
@@ -160,6 +167,10 @@ jobs:
   e2e-tests:
     runs-on: ubuntu-latest
     needs: build-and-test
+    # The job normally finishes in about 5 minutes. Without a cap, a hung browser
+    # download ran until the runner was reclaimed and surfaced as "cancelled",
+    # which is indistinguishable from a deliberate cancellation.
+    timeout-minutes: 20
 
     steps:
       - uses: actions/checkout@v6
@@ -178,10 +189,35 @@ jobs:
         with:
           name: compiled-output
 
+      # Key the cache on the resolved @playwright/test version, not on the lockfile
+      # hash: browser builds track Playwright's version, so keying on the lockfile
+      # would evict them on every unrelated dependency bump.
+      - name: Resolve Playwright version
+        id: playwright
+        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-browsers-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+
+      # Split from the browser download: system packages live outside
+      # ~/.cache/ms-playwright so the cache cannot cover them, and they must be
+      # installed on every run. This is the apt-get step, and it is the one that hung.
+      - name: Install Playwright system dependencies
+        timeout-minutes: 8
+        run: npx playwright install-deps chromium
+
+      # Skipped entirely on a cache hit, which is where the time is saved.
       - name: Install Playwright browsers
-        run: npx playwright install --with-deps chromium
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        timeout-minutes: 8
+        run: npx playwright install chromium
 
       - name: Run E2E tests
+        timeout-minutes: 15
         run: npm run test:e2e
 
   intellij-plugin:

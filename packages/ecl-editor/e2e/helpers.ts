@@ -125,7 +125,40 @@ export async function getCompletionLabels(page: Page): Promise<string[]> {
 /**
  * Trigger document formatting.
  */
+/**
+ * Wait for a formatting request to land.
+ *
+ * Monaco applies formatting edits asynchronously, and how long that takes depends
+ * on the monaco build: 0.55.x applies them in ~15 ms, but a build whose editor
+ * worker fails to load stalls for ~1 s first. A fixed sleep therefore encodes an
+ * assumption about the bundle, and when monaco 0.56.0 broke worker loading the
+ * old 500 ms sleep turned a 1 s delay into an apparent "format silently did
+ * nothing" - see #75. Waiting for the document to actually change is correct on
+ * both.
+ *
+ * Formatting an already-canonical document produces no change, so a timeout here
+ * is not an error: callers that assert "unchanged" depend on this resolving.
+ */
+async function waitForFormatToApply(page: Page, before: string): Promise<void> {
+  await page
+    .waitForFunction(
+      (prev) => {
+        const editors = (
+          window as { monaco?: { editor: { getEditors: () => unknown[] } } }
+        ).monaco?.editor.getEditors();
+        const model = (editors?.[0] as { getModel?: () => { getValue: () => string } } | undefined)?.getModel?.();
+        return (model?.getValue() ?? '') !== prev;
+      },
+      before,
+      { timeout: 10_000 },
+    )
+    .catch(() => {
+      /* no change: the document was already formatted */
+    });
+}
+
 export async function triggerFormatDocument(page: Page): Promise<void> {
+  const before = await getEditorValue(page);
   await page.evaluate(() => {
     const editors = (window as any).monaco.editor.getEditors();
     const editor = editors[0];
@@ -134,7 +167,7 @@ export async function triggerFormatDocument(page: Page): Promise<void> {
       editor.trigger('e2e-test', 'editor.action.formatDocument', {});
     }
   });
-  await page.waitForTimeout(500);
+  await waitForFormatToApply(page, before);
 }
 
 /**
@@ -232,11 +265,12 @@ export async function waitForNoMarkers(page: Page, timeout = 5_000): Promise<voi
  * Call the web component's format() method.
  */
 export async function callFormat(page: Page): Promise<void> {
+  const before = await getEditorValue(page);
   await page.evaluate(() => {
     const el = document.querySelector('ecl-editor') as any;
     el?.format();
   });
-  await page.waitForTimeout(500);
+  await waitForFormatToApply(page, before);
 }
 
 /**

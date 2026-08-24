@@ -26,6 +26,38 @@ function App() {
 }
 ```
 
+## Where monaco comes from
+
+`@monaco-editor/react` loads monaco through `@monaco-editor/loader`, which by
+default fetches a **pinned build from a CDN**:
+
+```
+https://cdn.jsdelivr.net/npm/monaco-editor@0.55.1/min/vs
+```
+
+Two consequences worth knowing:
+
+- The `monaco-editor` version in your `package.json` does not control what runs.
+  It supplies types; the CDN supplies the editor.
+- Your app needs network access to that CDN at runtime, which may not suit
+  offline, air-gapped or locked-down deployments.
+
+To use your bundled copy instead, configure the loader before rendering:
+
+```tsx
+import loader from '@monaco-editor/loader';
+import * as monaco from 'monaco-editor';
+
+loader.config({ monaco });
+```
+
+If you do that, monaco's web worker becomes your responsibility - the CDN build
+sets up its own, a bundled one does not. Skipping it is silent but costly: on
+monaco 0.56.0 formatting takes ~1025 ms without the worker versus ~15-150 ms with
+it. See
+[`@aehrc/ecl-editor-core`](../ecl-editor-core/README.md#monaco-web-workers) for
+the setup.
+
 ## Props
 
 | Prop                      | Type                                      | Default                                 | Description                                      |

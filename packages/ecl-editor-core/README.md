@@ -36,6 +36,64 @@ disposable.updateConfig({ snomedVersion: 'http://snomed.info/sct/325060210000361
 disposable.dispose();
 ```
 
+## Monaco web workers
+
+Monaco runs some services in a web worker and expects **you** to tell your bundler
+how to load it. If you do not, monaco reports:
+
+```
+Failed to load worker script for label: editorWorkerService.
+Ensure your bundler properly bundles modules referenced by
+"new URL('...?esm', import.meta.url)".
+```
+
+The editor still works, but every operation that waits on the worker pays a
+timeout first. Measured on the same document, formatting via
+`editor.action.formatDocument`:
+
+| monaco 0.56.0         | time to format |
+| --------------------- | -------------- |
+| worker not configured | ~1025 ms       |
+| worker configured     | ~15-150 ms     |
+
+That is a ~60x difference, and it is silent - nothing throws, and the only signal
+is a console error most people never look for.
+
+### Vite
+
+```typescript
+import * as monaco from 'monaco-editor';
+import EditorWorker from 'monaco-editor/editor/editor.worker?worker';
+
+self.MonacoEnvironment = {
+  getWorker: () => new EditorWorker(),
+};
+```
+
+The specifier changed in monaco 0.56.0. Use whichever matches your version:
+
+| monaco    | worker specifier                            |
+| --------- | ------------------------------------------- |
+| >= 0.56.0 | `monaco-editor/editor/editor.worker`        |
+| <= 0.55.x | `monaco-editor/esm/vs/editor/editor.worker` |
+
+0.56.0 [reorganised its ESM entry points](https://github.com/microsoft/monaco-editor/pull/5155)
+so that `./*` maps to `./esm/vs/*`. The older deep path therefore resolves to a
+doubled `esm/vs/esm/vs/...` and fails with `ERR_MODULE_NOT_FOUND` - which is worth
+knowing for any deep import into monaco, not just the worker.
+
+### Webpack
+
+Use [`monaco-editor-webpack-plugin`](https://github.com/microsoft/monaco-editor/tree/main/webpack-plugin),
+which wires the workers up for you.
+
+### AMD loader / script tag
+
+No setup needed. `monaco-editor/min/vs/loader.js` configures its own workers.
+
+ECL support itself needs only the editor worker: this package registers plain
+language providers and does not add a worker of its own.
+
 ## API
 
 ### `registerEclLanguage(monaco, config?)`

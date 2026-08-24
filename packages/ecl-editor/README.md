@@ -16,8 +16,24 @@ npm install @aehrc/ecl-editor
 
 ### Module
 
+You supply monaco yourself, so you also configure its web worker. Without that,
+monaco waits on a worker that never loads and formatting takes ~1 s instead of
+~15 ms - silently. See [Monaco web workers](#monaco-web-workers) below.
+
 ```typescript
+import * as monaco from 'monaco-editor';
+import EditorWorker from 'monaco-editor/editor/editor.worker?worker'; // vite
 import { defineEclEditor } from '@aehrc/ecl-editor';
+
+self.MonacoEnvironment = {
+  getWorker: () => new EditorWorker(),
+};
+
+// Assign monaco globally. The element checks `globalThis.monaco` first and
+// otherwise polls for it for up to 30 seconds before falling back to a dynamic
+// `import('monaco-editor')` - so skipping this costs a 30 s delay before the
+// editor appears, even when monaco is already bundled.
+(globalThis as any).monaco = monaco;
 
 // Register the custom element (call once)
 defineEclEditor();
@@ -41,6 +57,31 @@ When loaded via `<script>` (non-module), the element auto-registers as `<ecl-edi
 
 <ecl-editor value="<< 404684003"></ecl-editor>
 ```
+
+No worker setup is needed on this path - the AMD loader configures its own.
+
+## Monaco web workers
+
+`monaco-editor` is a peer dependency, so wiring its web worker into your bundler
+is your responsibility. Skipping it is not fatal but is expensive and silent: on
+monaco 0.56.0, formatting takes **~1025 ms** without the worker versus
+**~15-150 ms** with it.
+
+```typescript
+import EditorWorker from 'monaco-editor/editor/editor.worker?worker'; // vite
+
+self.MonacoEnvironment = {
+  getWorker: () => new EditorWorker(),
+};
+```
+
+The specifier is `monaco-editor/editor/editor.worker` on monaco >= 0.56.0 and
+`monaco-editor/esm/vs/editor/editor.worker` on <= 0.55.x - 0.56.0 reorganised its
+ESM entry points. Webpack users can use `monaco-editor-webpack-plugin` instead,
+and the AMD loader needs nothing.
+
+Full details, including why it matters, are in
+[`@aehrc/ecl-editor-core`](../ecl-editor-core/README.md#monaco-web-workers).
 
 ## Attributes
 

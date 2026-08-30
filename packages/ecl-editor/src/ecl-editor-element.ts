@@ -290,33 +290,58 @@ export class EclEditorElement extends HTMLElement {
     });
   }
 
-  private async resolveMonaco(): Promise<typeof import('monaco-editor') | null> {
+  /**
+   * Poll `globalThis.monaco` until it appears or the budget runs out.
+   *
+   * This is the AMD/CDN path: the loader assigns the global asynchronously, so
+   * there is nothing to await other than its arrival.
+   */
+  private async pollForGlobalMonaco(
+    maxWait: number,
+    stopped: { value: boolean },
+  ): Promise<typeof import('monaco-editor') | null> {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const g: any = globalThis;
-
-    // Check global immediately
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return
-    if (g.monaco) return g.monaco;
-
-    // Poll for Monaco (e.g. loading async via AMD loader from CDN).
-    // Wait up to 30 seconds with increasing intervals.
-    const maxWait = 30_000;
     const start = Date.now();
     let delay = 50;
     while (Date.now() - start < maxWait) {
       await new Promise((resolve) => setTimeout(resolve, delay));
+      if (stopped.value) return null;
       // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return
       if (g.monaco) return g.monaco;
       delay = Math.min(delay * 1.5, 500);
     }
+    return null;
+  }
 
-    // Last resort: try dynamic import (works in bundled ES module environments)
-    try {
-      const mod = await import('monaco-editor');
-      return mod;
-    } catch {
-      return null;
-    }
+  private async resolveMonaco(): Promise<typeof import('monaco-editor') | null> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const g: any = globalThis;
+
+    // A global that is already set wins outright: assigning `globalThis.monaco`
+    // is how a host page chooses which instance every editor should share.
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return
+    if (g.monaco) return g.monaco;
+
+    // Otherwise race the two remaining sources rather than sequencing them.
+    // These are mutually exclusive in practice - a bundled ES module app
+    // resolves the import in milliseconds, while an AMD/CDN page cannot resolve
+    // the bare specifier at all and rejects immediately, leaving the poll to
+    // win. Running the poll first cost bundled consumers the entire 30 s budget
+    // before the import that would have succeeded was ever attempted (#96).
+    const stopped = { value: false };
+    const viaImport = import('monaco-editor').then((mod) => mod).catch(() => null);
+    const viaGlobal = this.pollForGlobalMonaco(30_000, stopped);
+
+    const resolved = await Promise.race([
+      viaImport.then(async (mod) => mod ?? viaGlobal),
+      viaGlobal.then(async (mod) => mod ?? viaImport),
+    ]);
+
+    // Let the polling loop exit at its next tick instead of holding a timer for
+    // the rest of the budget after the race has already been decided.
+    stopped.value = true;
+    return resolved;
   }
 
   private dispose(): void {

@@ -276,3 +276,81 @@ export async function getModelLanguageId(page: Page): Promise<string> {
     return editors[0]?.getModel()?.getLanguageId() ?? '';
   });
 }
+
+/**
+ * Serve a canned `ValueSet/$expand` response for the inactive-concept lookup.
+ *
+ * The inactive-concept diagnostic and its quick fix need exactly one call to the
+ * terminology server:
+ *
+ *   POST /ValueSet/$expand?property=inactive&activeOnly=false
+ *   {"resourceType":"ValueSet","compose":{"include":[
+ *     {"system":"http://snomed.info/sct","concept":[{"code":"75304006"}]}]}}
+ *
+ * Left unstubbed, that is a live round-trip to Ontoserver inside a 15 s budget,
+ * which made the test fail whenever the server was slow or briefly unavailable
+ * (#85). What the test is actually asserting - that ecl-lsp raises the
+ * diagnostic and offers the replacement action - does not depend on the request
+ * really being served remotely.
+ *
+ * Codes not listed in `inactiveCodes` come back as an empty expansion, so an
+ * unexpected lookup surfaces as a missing marker rather than silently passing.
+ *
+ * Routes are per-page in Playwright, so this only affects the test that calls it;
+ * the other FHIR-backed tests still exercise the real server.
+ */
+export async function stubInactiveConceptExpansion(
+  page: Page,
+  inactiveCodes: Record<string, string> = { '75304006': 'Black heron' },
+): Promise<void> {
+  // Matched with a predicate rather than a glob: the `$` in `$expand` is
+  // awkward to express reliably in Playwright's glob syntax, and a pattern that
+  // silently fails to match would leave the live call in place - which is the
+  // exact failure mode this helper exists to remove.
+  await page.route(
+    (url) => url.pathname.endsWith('/ValueSet/$expand'),
+    async (route) => {
+      const request = route.request();
+      let codes: string[] = [];
+      try {
+        const body = JSON.parse(request.postData() ?? '{}') as {
+          compose?: { include?: { concept?: { code?: string }[] }[] };
+        };
+        codes = (body.compose?.include ?? []).flatMap((inc) =>
+          (inc.concept ?? []).map((c) => c.code ?? '').filter(Boolean),
+        );
+      } catch {
+        codes = [];
+      }
+
+      const contains = codes
+        .filter((code) => code in inactiveCodes)
+        .map((code) => ({
+          extension: [
+            {
+              url: 'http://ontoserver.csiro.au/profiles/expansion',
+              extension: [{ url: 'inactive', valueBoolean: true }],
+            },
+          ],
+          system: 'http://snomed.info/sct',
+          inactive: true,
+          code,
+          display: inactiveCodes[code],
+        }));
+
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/fhir+json',
+        body: JSON.stringify({
+          resourceType: 'ValueSet',
+          expansion: {
+            identifier: 'urn:uuid:00000000-0000-4000-8000-000000000000',
+            total: contains.length,
+            parameter: [{ name: 'activeOnly', valueBoolean: false }],
+            contains,
+          },
+        }),
+      });
+    },
+  );
+}

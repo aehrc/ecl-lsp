@@ -124,6 +124,7 @@ export async function getCompletionLabels(page: Page): Promise<string[]> {
  * Trigger document formatting via Monaco command.
  */
 export async function triggerFormatDocument(page: Page): Promise<void> {
+  const before = await getEditorValue(page);
   await page.evaluate(() => {
     const editors = (window as any).monaco.editor.getEditors();
     const editor = editors[0];
@@ -132,8 +133,37 @@ export async function triggerFormatDocument(page: Page): Promise<void> {
       editor.trigger('e2e-test', 'editor.action.formatDocument', {});
     }
   });
-  // Small wait for formatting to apply
-  await page.waitForTimeout(500);
+  await waitForFormatToApply(page, before);
+}
+
+/**
+ * Wait for a formatting request to land.
+ *
+ * Monaco applies formatting edits asynchronously, and how long that takes
+ * depends on the build: 0.55.x applies them in ~15 ms, but a build whose editor
+ * worker is still warming up can take substantially longer. A fixed sleep
+ * therefore encodes an assumption about the bundle - the same one that made
+ * monaco 0.56.0 look like it had broken formatting outright in #75. This is the
+ * sibling of the fix applied to the web component helpers in #82, which changed
+ * only the web component's copy and left this one behind.
+ *
+ * Formatting an already-canonical document produces no change, so a timeout here
+ * is not an error: callers that assert "unchanged" depend on this resolving.
+ */
+async function waitForFormatToApply(page: Page, before: string): Promise<void> {
+  await page
+    .waitForFunction(
+      (prev) => {
+        const editors = (window as any).monaco?.editor?.getEditors();
+        const model = editors?.[0]?.getModel();
+        return (model?.getValue() ?? '') !== prev;
+      },
+      before,
+      { timeout: 10_000 },
+    )
+    .catch(() => {
+      /* no change: the document was already formatted */
+    });
 }
 
 /**

@@ -237,4 +237,86 @@ describe('EclEditorElement', () => {
       expect(() => (el as any).disconnectedCallback?.()).not.toThrow();
     });
   });
+
+  describe('resolveMonaco()', () => {
+    // Regression tests for #96: the poll for `globalThis.monaco` used to run to
+    // completion *before* the dynamic import was attempted, so a consumer who
+    // bundled monaco as an ES module but never assigned the global waited the
+    // full 30 s budget for an import that would have resolved immediately.
+    const g = globalThis as unknown as { monaco?: unknown };
+
+    afterEach(() => {
+      delete g.monaco;
+    });
+
+    it('should return globalThis.monaco immediately when it is already set', async () => {
+      const sentinel = { editor: {}, languages: {} };
+      g.monaco = sentinel;
+
+      const el = document.createElement(TAG_NAME) as EclEditorElement;
+      const resolved: unknown = await (el as any).resolveMonaco();
+
+      expect(resolved).toBe(sentinel);
+    });
+
+    it('should resolve without waiting out the 30s poll when no global is set', async () => {
+      expect(g.monaco).toBeUndefined();
+
+      const el = document.createElement(TAG_NAME) as EclEditorElement;
+      const start = Date.now();
+      await (el as any).resolveMonaco();
+      const elapsed = Date.now() - start;
+
+      // The pre-fix implementation could not return before ~30_000 ms here.
+      // The generous ceiling keeps this from being a latency benchmark: it only
+      // has to distinguish "raced the import" from "waited out the poll".
+      expect(elapsed).toBeLessThan(2_000);
+    });
+
+    it('should pick up a global that arrives while polling', async () => {
+      // The AMD/CDN path: the loader assigns `globalThis.monaco` some time after
+      // the element starts looking. Exercised against the poll directly, because
+      // under vitest the aliased `monaco-editor` stub always resolves, so
+      // resolveMonaco()'s race would settle on the import before the global
+      // lands - the opposite of a real AMD page, where the bare specifier
+      // cannot resolve at all.
+      const sentinel = { editor: {}, languages: {}, __late: true };
+      const el = document.createElement(TAG_NAME) as EclEditorElement;
+
+      setTimeout(() => {
+        g.monaco = sentinel;
+      }, 120);
+
+      const resolved = (await (el as any).pollForGlobalMonaco(5_000, { value: false })) as {
+        __late?: boolean;
+      } | null;
+
+      expect(resolved?.__late).toBe(true);
+    });
+
+    it('should stop polling once the race has been decided', async () => {
+      const el = document.createElement(TAG_NAME) as EclEditorElement;
+      const stopped = { value: false };
+
+      const pending = (el as any).pollForGlobalMonaco(30_000, stopped) as Promise<unknown>;
+      stopped.value = true;
+
+      // Without the stop flag this would hold a timer for the full 30 s budget.
+      const start = Date.now();
+      await expect(pending).resolves.toBeNull();
+      expect(Date.now() - start).toBeLessThan(2_000);
+    });
+
+    it('should prefer an already-set global over the bundled import', async () => {
+      // The global is how a host page pins which monaco instance every editor
+      // shares, so it has to keep winning even though the import would resolve.
+      const sentinel = { editor: {}, languages: {}, __fromGlobal: true };
+      g.monaco = sentinel;
+
+      const el = document.createElement(TAG_NAME) as EclEditorElement;
+      const resolved = (await (el as any).resolveMonaco()) as { __fromGlobal?: boolean };
+
+      expect(resolved.__fromGlobal).toBe(true);
+    });
+  });
 });

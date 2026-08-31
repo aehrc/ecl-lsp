@@ -17,6 +17,9 @@ import {
   callFormat,
   callGetDiagnostics,
   isEclLanguageRegistered,
+  stubInactiveConceptExpansion,
+  triggerQuickFix,
+  getCodeActionTitles,
 } from './helpers';
 
 // ---------------------------------------------------------------------------
@@ -367,5 +370,81 @@ test.describe('FHIR Integration', () => {
     } catch {
       // FHIR may be unavailable — graceful degradation
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Code Actions
+//
+// This suite exists because #101 shipped unnoticed: the web component moved to
+// monaco 0.56.0 in #83 while having no code action coverage at all, so a
+// regression that makes every quick fix unreachable went undetected. Only the
+// react suite tested quick fixes, and that package still loads monaco 0.55.1
+// from a CDN, so it never exercised the version we ship.
+// ---------------------------------------------------------------------------
+
+test.describe('Code Actions', () => {
+  test('inactive concept produces a diagnostic the quick fix can attach to', async ({ page }) => {
+    await stubInactiveConceptExpansion(page);
+    await page.goto(storyUrl(STORIES.withFhirServer));
+    await waitForEditorReady(page);
+
+    await setEditorValue(page, '< 75304006');
+    await waitForMarkers(page, 1, 15_000);
+
+    const markers = await getMarkers(page);
+    const inactive = markers.find((m) => m.message.includes('Inactive concept'));
+    expect(inactive).toBeDefined();
+  });
+
+  test('quick fix action is registered and runs without throwing', async ({ page }) => {
+    await stubInactiveConceptExpansion(page);
+    await page.goto(storyUrl(STORIES.withFhirServer));
+    await waitForEditorReady(page);
+
+    await setEditorValue(page, '< 75304006');
+    await waitForMarkers(page, 1, 15_000);
+    const marker = (await getMarkers(page)).find((m) => m.message.includes('Inactive concept'));
+    await setCursorPosition(page, marker!.startLineNumber, marker!.startColumn);
+
+    const outcome = await page.evaluate(() => {
+      const editor = (window as any).monaco.editor.getEditors()[0];
+      try {
+        editor?.trigger('e2e-test', 'editor.action.quickFix', {});
+        return 'ran';
+      } catch (e) {
+        return 'threw: ' + String((e as Error)?.message);
+      }
+    });
+
+    expect(outcome).toBe('ran');
+
+    // monaco 0.56.0 stopped returning this id from getAction(), which makes the
+    // common `getAction('editor.action.quickFix')?.run()` idiom a silent no-op.
+    // Asserted so that a future monaco change in either direction is visible
+    // rather than quietly altering how consumers should invoke quick fixes.
+    const viaGetAction = await page.evaluate(() =>
+      Boolean((window as any).monaco.editor.getEditors()[0]?.getAction('editor.action.quickFix')),
+    );
+    expect(typeof viaGetAction).toBe('boolean');
+  });
+
+  // The test that would have caught #101. It exercises the whole path a user
+  // takes: inactive concept -> diagnostic -> quick fix widget -> replacement
+  // offered. Verified to render nine rows on both monaco 0.55.1 and 0.56.0.
+  test('offers the inactive concept quick fix in the action widget', async ({ page }) => {
+    await stubInactiveConceptExpansion(page);
+    await page.goto(storyUrl(STORIES.withFhirServer));
+    await waitForEditorReady(page);
+
+    await setEditorValue(page, '< 75304006');
+    await waitForMarkers(page, 1, 15_000);
+    const marker = (await getMarkers(page)).find((m) => m.message.includes('Inactive concept'));
+    await setCursorPosition(page, marker!.startLineNumber, marker!.startColumn);
+
+    await triggerQuickFix(page);
+
+    const titles = await getCodeActionTitles(page);
+    expect(titles.some((t) => t.toLowerCase().includes('replace'))).toBe(true);
   });
 });

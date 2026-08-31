@@ -415,7 +415,11 @@ test.describe('Code Actions', () => {
       );
 
       try {
-        const actions = await monaco.editor.getEditors()[0].getAction('editor.action.quickFix')?.run();
+        // `trigger`, not `getAction(...)?.run()`: monaco 0.56.0 no longer returns
+        // this id from getAction(), so the optional-chained call silently
+        // becomes a no-op and this test would pass without doing anything.
+        // See #101.
+        monaco.editor.getEditors()[0].trigger('e2e-test', 'editor.action.quickFix', {});
         return 'triggered';
       } catch {
         return 'error';
@@ -457,7 +461,10 @@ test.describe('Inactive Concept Replacement', () => {
     // Trigger quick fix and wait for the widget to populate
     await page.evaluate(async () => {
       const editor = (window as any).monaco.editor.getEditors()[0];
-      editor?.getAction('editor.action.quickFix')?.run();
+      // See #101: getAction('editor.action.quickFix') returns undefined on monaco
+      // 0.56.0, so this must go through the command path to keep working when
+      // this package moves off the pinned CDN build (#84).
+      editor?.trigger('e2e-test', 'editor.action.quickFix', {});
     });
     await page.waitForTimeout(2000);
 

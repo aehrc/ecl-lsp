@@ -17,6 +17,7 @@ import {
   isEclLanguageRegistered,
   getModelLanguageId,
   getCodeActionTitles,
+  stubInactiveConceptExpansion,
 } from './helpers';
 
 // ---------------------------------------------------------------------------
@@ -431,6 +432,11 @@ test.describe('Code Actions', () => {
 
 test.describe('Inactive Concept Replacement', () => {
   test('offers quick fix to replace inactive concept with active replacement', async ({ page }) => {
+    // Serve the inactive-concept lookup locally. This test asserts ecl-lsp
+    // behaviour, not the terminology server's, and the live round-trip inside a
+    // 15 s budget made it fail intermittently (#85).
+    await stubInactiveConceptExpansion(page);
+
     // Use withFhirServer story for FHIR-backed diagnostics and code actions
     await page.goto(storyUrl(STORIES.withFhirServer));
     await waitForMonacoReady(page);

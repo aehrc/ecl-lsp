@@ -47,16 +47,21 @@ To use your bundled copy instead, configure the loader before rendering:
 ```tsx
 import loader from '@monaco-editor/loader';
 import * as monaco from 'monaco-editor';
+import EditorWorker from 'monaco-editor/editor/editor.worker?worker'; // vite, monaco >= 0.56
 
 loader.config({ monaco });
+
+// The CDN build wires up its own workers; a bundled one does not.
+self.MonacoEnvironment = { getWorker: () => new EditorWorker() };
 ```
 
-If you do that, monaco's web worker becomes your responsibility - the CDN build
-sets up its own, a bundled one does not. Skipping it is silent but costly: on
-monaco 0.56.0 formatting takes ~1025 ms without the worker versus ~15-150 ms with
-it. See
+Both halves matter. Skipping the worker is silent but costly: on monaco 0.56.0
+formatting takes ~1025 ms without it versus ~15-150 ms with it. See
 [`@aehrc/ecl-editor-core`](../ecl-editor-core/README.md#monaco-web-workers) for
-the setup.
+the version-dependent specifier and the webpack equivalent.
+
+This package's own Storybook and e2e suite are configured exactly this way, so
+the setup above is the one that is actually exercised in CI.
 
 ## Props
 

@@ -133,6 +133,28 @@ const disposable = registerToggleTermsAction(editor, monaco, () => registration.
 
 Language ID constant: `"ecl"`.
 
+## Invoking code actions
+
+Trigger quick fixes through the editor's command path, not `getAction`:
+
+```typescript
+editor.trigger('my-app', 'editor.action.quickFix', {});
+```
+
+The widely-used idiom
+
+```typescript
+editor.getAction('editor.action.quickFix')?.run(); // breaks on monaco >= 0.56.0
+```
+
+**fails silently** on monaco 0.56.0 and later: `getAction('editor.action.quickFix')`
+returns `undefined` there, so the optional chain short-circuits and nothing
+happens - no error, no widget, no indication that the call did nothing. The
+command path works on 0.55.x and 0.56.x alike.
+
+This is a lookup change, not a broken feature. Invoked correctly, the action
+widget renders identically on both versions, ECL quick fixes included.
+
 ## CORS
 
 When running in a browser, FHIR requests may be blocked by CORS. Use the `corsProxy` option to route requests through a proxy:

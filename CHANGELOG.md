@@ -5,6 +5,23 @@ All notable changes to the ECL Language Server will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.1] - 2026-08-31
+
+### Fixed
+
+- **`<ecl-editor>` took 30 seconds to appear for bundled ES module consumers** (`ecl-editor`) ([#96](https://github.com/aehrc/ecl-lsp/issues/96)): `resolveMonaco()` checked `globalThis.monaco`, then polled for it for up to 30 seconds, and only afterwards tried `import('monaco-editor')`. A consumer who bundles monaco but never assigns the global waited out the entire budget for an import that would have resolved in milliseconds — with nothing thrown and nothing logged, so the component simply did not appear. The two sources are now raced: a bundled app resolves the import immediately, while an AMD/CDN page cannot resolve the bare specifier and leaves the poll to win. An already-set global still wins outright, so a host page can still pin which instance every editor shares.
+
+### Documentation
+
+- **Monaco web worker setup** (`ecl-editor-core`, `ecl-editor`, `ecl-editor-react`): `monaco-editor` is a peer dependency, so wiring its worker into your bundler is the consumer's responsibility, and skipping it is silent but expensive — formatting takes ~1025 ms instead of ~15–150 ms on monaco 0.56.0. The READMEs now cover the vite and webpack setup, and record that the worker specifier changed in 0.56.0 (`monaco-editor/editor/editor.worker`, previously `monaco-editor/esm/vs/editor/editor.worker`) because that release [reorganised its ESM entry points](https://github.com/microsoft/monaco-editor/pull/5155). The AMD loader path needs no setup.
+- **Invoking code actions** (`ecl-editor-core`): trigger quick fixes with `editor.trigger('app', 'editor.action.quickFix', {})`. The common `editor.getAction('editor.action.quickFix')?.run()` idiom **fails silently** on monaco 0.56.0 and later, where `getAction` no longer returns that id, so the optional chain short-circuits and nothing happens. This is a lookup change rather than a broken feature: invoked through the command path, the action widget behaves identically on 0.55.x and 0.56.x.
+- **Where `ecl-editor-react` gets monaco**: `@monaco-editor/react` loads a pinned build from a CDN by default, so the `monaco-editor` version in your `package.json` supplies types while the CDN supplies the editor, and the app needs network access at runtime. The README documents `loader.config({ monaco })` for using the bundled copy, along with the worker setup that then becomes necessary.
+
+### Changed
+
+- **Development toolchain**: the `monaco-editor` devDependency moves from 0.55.1 to 0.56.0 across the editor packages, with the editor worker configured for vite. `monaco-editor` remains a peer dependency at `>=0.40.0`, and the published bundles list it as external, so this does not change what consumers receive. Also `junit-jupiter` 5.11.4 → 6.1.0 for the IntelliJ plugin tests, `vitest` 4.1.2 → 4.1.11, and GitHub Actions `checkout`/`setup-node`/`cache` major bumps.
+- **CI and test reliability**: the `e2e-tests` job gained a timeout, Playwright browser caching keyed on the resolved Playwright version, and a `concurrency` group. Several e2e tests that waited a fixed 500 ms after formatting now wait for the document to actually change, one test that depended on a live terminology round-trip is now stubbed, and the web component gained code action coverage it previously had none of.
+
 ## [1.3.0] - 2026-08-23
 
 > **Note:** this release raises the minimum Node.js version to 22. Node 20

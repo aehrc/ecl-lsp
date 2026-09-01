@@ -203,7 +203,7 @@ jobs:
         with:
           name: compiled-output
 
-      - uses: actions/setup-java@v5
+      - uses: actions/setup-java@v6
         with:
           java-version: '21'
           distribution: temurin
@@ -241,7 +241,7 @@ jobs:
         with:
           name: compiled-output
 
-      - uses: actions/setup-java@v5
+      - uses: actions/setup-java@v6
         with:
           java-version: '21'
           distribution: temurin

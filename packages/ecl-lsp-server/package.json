@@ -39,7 +39,7 @@
   "dependencies": {
     "@aehrc/ecl-core": "file:../ecl-core",
     "vscode-languageserver": "^9.0.1",
-    "vscode-languageserver-textdocument": "^1.0.11"
+    "vscode-languageserver-textdocument": "^1.0.14"
   },
   "devDependencies": {
     "@types/node": "^25.5.0",

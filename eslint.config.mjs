@@ -24,6 +24,7 @@ export default tseslint.config(
       '**/e2e/**',
       'packages/ecl-editor-core/src/test/**',
       'clients/vscode/test/**',
+      '**/.vscode-test/**',
       'examples/**',
     ],
   },

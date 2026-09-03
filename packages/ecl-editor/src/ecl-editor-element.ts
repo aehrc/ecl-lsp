@@ -14,14 +14,40 @@ const OBSERVED_ATTRS = [
   'fhir-server-url',
   'snomed-version',
   'theme',
+  'light-theme',
+  'dark-theme',
   'height',
   'width',
   'read-only',
   'minimap',
+  'gutter',
   'line-numbers',
+  'glyph-margin',
+  'folding',
   'semantic-validation',
   'cors-proxy',
 ] as const;
+
+/** Monaco's built-in themes, and whether each one is dark. */
+const BUILTIN_THEME_DARKNESS: Record<string, boolean> = {
+  vs: false,
+  'vs-dark': true,
+  'hc-black': true,
+  'hc-light': false,
+};
+
+const DEFAULT_LIGHT_THEME = 'vs';
+const DEFAULT_DARK_THEME = 'vs-dark';
+
+/** Gutter presets, from full chrome to none at all. */
+type GutterPreset = 'full' | 'minimal' | 'none';
+
+const GUTTER_PRESETS: Record<GutterPreset, { lineNumbers: boolean; glyphMargin: boolean; folding: boolean }> = {
+  full: { lineNumbers: true, glyphMargin: true, folding: true },
+  // Keeps the glyph margin so the quick-fix lightbulb still has somewhere to render.
+  minimal: { lineNumbers: false, glyphMargin: true, folding: false },
+  none: { lineNumbers: false, glyphMargin: false, folding: false },
+};
 
 /** Shared language registration singleton — prevents duplicate tooltips when multiple editors exist. */
 let sharedRegistration: EclEditorDisposable | null = null;
@@ -38,6 +64,8 @@ export class EclEditorElement extends HTMLElement {
   private registration: EclEditorDisposable | null = null;
   private monacoInstance: typeof import('monaco-editor') | null = null;
   private _value = '';
+  private colorSchemeQuery: MediaQueryList | null = null;
+  private onColorSchemeChange: (() => void) | null = null;
 
   connectedCallback(): void {
     // Render in light DOM — Monaco injects CSS into document.head which is
@@ -65,7 +93,7 @@ export class EclEditorElement extends HTMLElement {
         'user-select:none;-webkit-user-select:none;';
 
       // Apply theme-appropriate colors
-      this.applyThemeColors(this.getAttribute('theme'));
+      this.applyThemeColors(this.resolvedTheme);
       this.setupResizeHandle(this.resizeHandle);
 
       // Default host element styles
@@ -80,6 +108,8 @@ export class EclEditorElement extends HTMLElement {
       this.appendChild(this.resizeHandle);
     }
 
+    this.syncColorSchemeListener();
+
     // Defer initialization to allow Monaco to load
     requestAnimationFrame(() => void this.initEditor());
   }
@@ -90,32 +120,64 @@ export class EclEditorElement extends HTMLElement {
 
   attributeChangedCallback(name: string, oldValue: string | null, newValue: string | null): void {
     if (oldValue === newValue) return;
+    if (this.applyPresentationAttribute(name, newValue)) return;
 
-    if (name === 'value' && this.editor) {
-      const currentVal = this.editor.getValue();
-      if (newValue !== null && newValue !== currentVal) {
-        this.editor.setValue(newValue);
-        this._value = newValue;
-      }
-    } else if (name === 'theme' && this.monacoInstance && newValue) {
-      this.monacoInstance.editor.setTheme(newValue);
-      this.applyThemeColors(newValue);
-    } else if (name === 'read-only' && this.editor) {
-      this.editor.updateOptions({ readOnly: newValue !== null && newValue !== 'false' });
-    } else if (name === 'height') {
-      this.style.height = newValue ?? '300px';
-      this.editor?.layout();
-    } else if (name === 'width') {
-      this.style.width = newValue ?? '100%';
-      this.editor?.layout();
-    } else if (this.registration) {
-      // Propagate config changes
-      this.registration.updateConfig({
-        fhirServerUrl: this.getAttribute('fhir-server-url') ?? undefined,
-        snomedVersion: this.getAttribute('snomed-version') ?? undefined,
-        corsProxy: this.getAttribute('cors-proxy') ?? undefined,
-        semanticValidation: this.getAttribute('semantic-validation') !== 'false',
-      });
+    // Anything not handled above is language-service configuration.
+    this.registration?.updateConfig({
+      fhirServerUrl: this.getAttribute('fhir-server-url') ?? undefined,
+      snomedVersion: this.getAttribute('snomed-version') ?? undefined,
+      corsProxy: this.getAttribute('cors-proxy') ?? undefined,
+      semanticValidation: this.getAttribute('semantic-validation') !== 'false',
+    });
+  }
+
+  /**
+   * Apply an attribute that affects presentation rather than configuration.
+   *
+   * Returns whether the attribute was recognised, so the caller can treat the
+   * remainder as language-service config.
+   */
+  private applyPresentationAttribute(name: string, newValue: string | null): boolean {
+    switch (name) {
+      case 'value':
+        this.applyValueAttribute(newValue);
+        return true;
+      case 'theme':
+      case 'light-theme':
+      case 'dark-theme':
+        this.syncColorSchemeListener();
+        this.applyTheme();
+        return true;
+      case 'gutter':
+      case 'line-numbers':
+      case 'glyph-margin':
+      case 'folding':
+        this.editor?.updateOptions(this.buildGutterOptions());
+        return true;
+      case 'minimap':
+        this.editor?.updateOptions({ minimap: { enabled: newValue !== null && newValue !== 'false' } });
+        return true;
+      case 'read-only':
+        this.editor?.updateOptions({ readOnly: newValue !== null && newValue !== 'false' });
+        return true;
+      case 'height':
+        this.style.height = newValue ?? '300px';
+        this.editor?.layout();
+        return true;
+      case 'width':
+        this.style.width = newValue ?? '100%';
+        this.editor?.layout();
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  private applyValueAttribute(newValue: string | null): void {
+    if (!this.editor || newValue === null) return;
+    if (newValue !== this.editor.getValue()) {
+      this.editor.setValue(newValue);
+      this._value = newValue;
     }
   }
 
@@ -170,8 +232,91 @@ export class EclEditorElement extends HTMLElement {
     });
   }
 
+  /**
+   * The Monaco theme currently applied.
+   *
+   * With `theme="auto"` this is whichever of `light-theme`/`dark-theme` the OS
+   * colour scheme currently selects, so it is not simply the `theme` attribute.
+   */
+  get resolvedTheme(): string {
+    const requested = this.getAttribute('theme');
+    if (requested !== null && requested !== 'auto') return requested;
+    // No theme at all keeps the historical light default; only an explicit
+    // `auto` opts in to following the OS.
+    if (requested === null) return DEFAULT_LIGHT_THEME;
+    return this.prefersDark()
+      ? (this.getAttribute('dark-theme') ?? DEFAULT_DARK_THEME)
+      : (this.getAttribute('light-theme') ?? DEFAULT_LIGHT_THEME);
+  }
+
+  /**
+   * The dark-mode media query, or undefined where `matchMedia` is unavailable.
+   *
+   * Non-browser environments (jsdom without a stub, SSR) have no `matchMedia`,
+   * and the DOM lib types it as always present, so the lookup is widened here
+   * rather than guarded at each call site.
+   */
+  private darkSchemeQuery(): MediaQueryList | undefined {
+    const mm = (globalThis as { matchMedia?: (query: string) => MediaQueryList }).matchMedia;
+    return mm?.call(globalThis, '(prefers-color-scheme: dark)');
+  }
+
+  private prefersDark(): boolean {
+    return this.darkSchemeQuery()?.matches ?? false;
+  }
+
+  /**
+   * Track the OS colour scheme while `theme="auto"` is in effect.
+   *
+   * The listener is attached only in auto mode and torn down whenever the mode
+   * or the element goes away, so a page full of explicitly-themed editors adds
+   * no media query listeners at all.
+   */
+  private syncColorSchemeListener(): void {
+    const isAuto = this.getAttribute('theme') === 'auto';
+    if (isAuto && !this.colorSchemeQuery) {
+      const query = this.darkSchemeQuery();
+      if (!query) return;
+      this.onColorSchemeChange = () => {
+        this.applyTheme();
+      };
+      query.addEventListener('change', this.onColorSchemeChange);
+      this.colorSchemeQuery = query;
+    } else if (!isAuto && this.colorSchemeQuery && this.onColorSchemeChange) {
+      this.colorSchemeQuery.removeEventListener('change', this.onColorSchemeChange);
+      this.colorSchemeQuery = null;
+      this.onColorSchemeChange = null;
+    }
+  }
+
+  /** Push the resolved theme into Monaco and recolour the element's own chrome. */
+  private applyTheme(): void {
+    const theme = this.resolvedTheme;
+    this.monacoInstance?.editor.setTheme(theme);
+    this.applyThemeColors(theme);
+    this.dispatchEvent(
+      new CustomEvent('ecl-theme-change', {
+        detail: { theme, dark: this.isDarkTheme(theme) },
+        bubbles: true,
+        composed: true,
+      }),
+    );
+  }
+
+  /**
+   * Whether a theme name is dark.
+   *
+   * Built-in names are looked up rather than pattern-matched — `hc-black` is
+   * dark but contains no "dark", and got light chrome before. Custom themes
+   * fall back to the name heuristic, which is all we can infer without asking
+   * Monaco to resolve the theme.
+   */
+  private isDarkTheme(theme: string): boolean {
+    return BUILTIN_THEME_DARKNESS[theme] ?? /dark|black/i.test(theme);
+  }
+
   private applyThemeColors(theme: string | null): void {
-    const isDark = theme?.includes('dark') ?? false;
+    const isDark = theme !== null && this.isDarkTheme(theme);
     if (this.hintsBar) {
       this.hintsBar.style.color = isDark ? '#858585' : '#999';
       this.hintsBar.style.background = isDark ? '#1e1e1e' : '#fafafa';
@@ -180,6 +325,56 @@ export class EclEditorElement extends HTMLElement {
     if (this.resizeHandle) {
       this.resizeHandle.style.background = isDark ? '#333' : '#e0e0e0';
     }
+  }
+
+  /** Read a boolean attribute that defaults to `fallback` when absent. */
+  private boolAttr(name: string, fallback: boolean): boolean {
+    const raw = this.getAttribute(name);
+    if (raw === null) return fallback;
+    return raw !== 'false';
+  }
+
+  /**
+   * Build the gutter-related editor options.
+   *
+   * `gutter` picks a preset; the individual `line-numbers`, `glyph-margin` and
+   * `folding` attributes override whatever the preset chose. Widths are zeroed
+   * when nothing is left to show, because Monaco still reserves the line-number
+   * column and decoration strip otherwise — which is what makes the left margin
+   * stay visible after turning line numbers off.
+   */
+  private buildGutterOptions(): import('monaco-editor').editor.IEditorOptions {
+    const presetName = this.getAttribute('gutter');
+    const preset =
+      presetName !== null && presetName in GUTTER_PRESETS
+        ? GUTTER_PRESETS[presetName as GutterPreset]
+        : GUTTER_PRESETS.full;
+
+    const rawLineNumbers = this.getAttribute('line-numbers');
+    // `relative` and `interval` are Monaco's own modes; `true`/`false` stay
+    // supported because they were the original API.
+    let lineNumbers: 'on' | 'off' | 'relative' | 'interval';
+    if (rawLineNumbers === null) {
+      lineNumbers = preset.lineNumbers ? 'on' : 'off';
+    } else if (rawLineNumbers === 'relative' || rawLineNumbers === 'interval') {
+      lineNumbers = rawLineNumbers;
+    } else {
+      lineNumbers = rawLineNumbers === 'false' || rawLineNumbers === 'off' ? 'off' : 'on';
+    }
+
+    const glyphMargin = this.boolAttr('glyph-margin', preset.glyphMargin);
+    const folding = this.boolAttr('folding', preset.folding);
+    const bare = lineNumbers === 'off' && !glyphMargin && !folding;
+
+    return {
+      lineNumbers,
+      glyphMargin,
+      folding,
+      // Monaco reserves space for line numbers even when they are off unless
+      // the minimum character count is zeroed too.
+      lineNumbersMinChars: lineNumbers === 'off' ? 0 : 3,
+      lineDecorationsWidth: bare ? 0 : 10,
+    };
   }
 
   private setupResizeHandle(handle: HTMLDivElement): void {
@@ -254,17 +449,16 @@ export class EclEditorElement extends HTMLElement {
     this.editor = monaco.editor.create(this.container, {
       value: this.getAttribute('value') ?? this._value,
       language: ECL_LANGUAGE_ID,
-      theme: this.getAttribute('theme') ?? 'vs',
+      theme: this.resolvedTheme,
       readOnly: this.hasAttribute('read-only') && this.getAttribute('read-only') !== 'false',
       minimap: { enabled: this.hasAttribute('minimap') && this.getAttribute('minimap') !== 'false' },
-      lineNumbers: this.getAttribute('line-numbers') === 'false' ? 'off' : 'on',
+      ...this.buildGutterOptions(),
       wordWrap: 'on',
       automaticLayout: true,
       scrollBeyondLastLine: false,
       fixedOverflowWidgets: true,
       fontSize: 14,
       tabSize: 2,
-      glyphMargin: true,
       renderLineHighlight: 'none',
       hover: { above: false },
       // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-explicit-any
@@ -345,6 +539,11 @@ export class EclEditorElement extends HTMLElement {
   }
 
   private dispose(): void {
+    if (this.colorSchemeQuery && this.onColorSchemeChange) {
+      this.colorSchemeQuery.removeEventListener('change', this.onColorSchemeChange);
+      this.colorSchemeQuery = null;
+      this.onColorSchemeChange = null;
+    }
     this.editor?.dispose();
     this.editor = null;
     // Don't dispose the shared registration — other instances may still be using it.

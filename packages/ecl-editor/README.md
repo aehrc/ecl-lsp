@@ -85,26 +85,97 @@ Full details, including why it matters, are in
 
 ## Attributes
 
-| Attribute             | Type      | Default                                 | Description                                      |
-| --------------------- | --------- | --------------------------------------- | ------------------------------------------------ |
-| `value`               | `string`  | `''`                                    | Editor content                                   |
-| `fhir-server-url`     | `string`  | `'https://tx.ontoserver.csiro.au/fhir'` | FHIR terminology server URL                      |
-| `snomed-version`      | `string`  | `''`                                    | SNOMED CT edition/version URI                    |
-| `theme`               | `string`  | `'vs'`                                  | Monaco theme (`'vs'`, `'vs-dark'`, `'hc-black'`) |
-| `height`              | `string`  | `'300px'`                               | Editor height                                    |
-| `width`               | `string`  | `'100%'`                                | Editor width                                     |
-| `read-only`           | `boolean` | `false`                                 | Read-only mode                                   |
-| `minimap`             | `boolean` | `false`                                 | Show minimap                                     |
-| `line-numbers`        | `boolean` | `true`                                  | Show line numbers                                |
-| `semantic-validation` | `boolean` | `true`                                  | Enable semantic validation                       |
-| `cors-proxy`          | `string`  |                                         | CORS proxy URL prefix                            |
+| Attribute             | Type      | Default                                 | Description                                |
+| --------------------- | --------- | --------------------------------------- | ------------------------------------------ |
+| `value`               | `string`  | `''`                                    | Editor content                             |
+| `fhir-server-url`     | `string`  | `'https://tx.ontoserver.csiro.au/fhir'` | FHIR terminology server URL                |
+| `snomed-version`      | `string`  | `''`                                    | SNOMED CT edition/version URI              |
+| `theme`               | `string`  | `'vs'`                                  | Monaco theme, or `'auto'` — see below      |
+| `light-theme`         | `string`  | `'vs'`                                  | Theme used by `theme="auto"` in light mode |
+| `dark-theme`          | `string`  | `'vs-dark'`                             | Theme used by `theme="auto"` in dark mode  |
+| `height`              | `string`  | `'300px'`                               | Editor height                              |
+| `width`               | `string`  | `'100%'`                                | Editor width                               |
+| `read-only`           | `boolean` | `false`                                 | Read-only mode                             |
+| `minimap`             | `boolean` | `false`                                 | Show minimap                               |
+| `gutter`              | `string`  | `'full'`                                | Gutter preset — see below                  |
+| `line-numbers`        | `string`  | `'on'`                                  | `on`, `off`, `relative` or `interval`      |
+| `glyph-margin`        | `boolean` | `true`                                  | Show the glyph margin                      |
+| `folding`             | `boolean` | `true`                                  | Show folding controls                      |
+| `semantic-validation` | `boolean` | `true`                                  | Enable semantic validation                 |
+| `cors-proxy`          | `string`  |                                         | CORS proxy URL prefix                      |
+
+## Dark mode
+
+The `theme` attribute takes any Monaco theme name (`vs`, `vs-dark`, `hc-black`, `hc-light`,
+or one you registered yourself), plus a special value `auto`:
+
+```html
+<ecl-editor theme="auto"></ecl-editor>
+```
+
+`auto` follows the operating system's `prefers-color-scheme` and **switches live** when it
+changes — no reload or attribute update needed. It picks `vs` or `vs-dark` by default; point
+it at your own themes with `light-theme` and `dark-theme`:
+
+```html
+<ecl-editor theme="auto" light-theme="my-light" dark-theme="my-dark"></ecl-editor>
+```
+
+The default is still `vs`, so existing embedders keep a light editor regardless of OS
+setting. Opt in with `auto` when you want the editor to follow the page.
+
+The element's own chrome (the shortcut hints bar and resize handle) is recoloured to match,
+and an `ecl-theme-change` event fires whenever the resolved theme changes, so you can keep
+surrounding UI in sync. The current theme is also readable as a property:
+
+```javascript
+document.querySelector('ecl-editor').resolvedTheme; // 'vs-dark'
+```
+
+> **Note:** Monaco applies themes globally, so all editors on a page share one theme. Mixing
+> a light and a dark `<ecl-editor>` on the same page is a Monaco limitation, not this
+> component's.
+
+## Gutter
+
+Monaco's left margin holds line numbers, the glyph margin (where the quick-fix lightbulb
+appears) and folding controls. For a compact single-expression input that margin is often
+wasted space, so `gutter` offers three presets:
+
+| Preset    | Line numbers | Glyph margin | Folding | Use for                                |
+| --------- | ------------ | ------------ | ------- | -------------------------------------- |
+| `full`    | yes          | yes          | yes     | Default — a full editing surface       |
+| `minimal` | no           | yes          | no      | Compact, but quick fixes still visible |
+| `none`    | no           | no           | no      | No left margin at all                  |
+
+```html
+<ecl-editor gutter="none" height="60px"></ecl-editor>
+```
+
+`none` zeroes the reserved widths as well as hiding the content — setting `line-numbers`
+alone leaves Monaco still reserving the column.
+
+The individual `line-numbers`, `glyph-margin` and `folding` attributes override whichever
+preset is in effect, so you can start from a preset and adjust one thing:
+
+```html
+<!-- No glyph margin or folding, but keep relative line numbers -->
+<ecl-editor gutter="none" line-numbers="relative"></ecl-editor>
+```
+
+> **Note:** `gutter="none"` removes the glyph margin, which is where the quick-fix lightbulb
+> renders. Quick fixes still work via Cmd+. / Ctrl+., but there is no lightbulb to click.
+> Use `minimal` if you want a compact gutter that keeps it.
+
+All of these attributes can be changed at runtime and take effect immediately.
 
 ## Events
 
-| Event             | Detail                              | Description                       |
-| ----------------- | ----------------------------------- | --------------------------------- |
-| `ecl-change`      | `{ value: string }`                 | Fired when editor content changes |
-| `ecl-diagnostics` | `{ diagnostics: CoreDiagnostic[] }` | Fired when diagnostics update     |
+| Event              | Detail                              | Description                           |
+| ------------------ | ----------------------------------- | ------------------------------------- |
+| `ecl-change`       | `{ value: string }`                 | Fired when editor content changes     |
+| `ecl-diagnostics`  | `{ diagnostics: CoreDiagnostic[] }` | Fired when diagnostics update         |
+| `ecl-theme-change` | `{ theme: string, dark: boolean }`  | Fired when the resolved theme changes |
 
 ```javascript
 document.querySelector('ecl-editor').addEventListener('ecl-change', (e) => {
@@ -127,6 +198,13 @@ document.querySelector('ecl-editor').addEventListener('ecl-change', (e) => {
 | ------------------ | ------------------ | ----------------------- |
 | `format()`         | `void`             | Format the document     |
 | `getDiagnostics()` | `CoreDiagnostic[]` | Get current diagnostics |
+
+## Properties
+
+| Property        | Type     | Description                                                      |
+| --------------- | -------- | ---------------------------------------------------------------- |
+| `value`         | `string` | Editor content (get/set)                                         |
+| `resolvedTheme` | `string` | The Monaco theme currently applied, after resolving `auto` (get) |
 
 ## Storybook
 

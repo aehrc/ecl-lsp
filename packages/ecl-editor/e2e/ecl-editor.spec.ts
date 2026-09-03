@@ -20,6 +20,10 @@ import {
   stubInactiveConceptExpansion,
   triggerQuickFix,
   getCodeActionTitles,
+  getMarginWidth,
+  getLineNumberCount,
+  getAppliedTheme,
+  waitForTheme,
 } from './helpers';
 
 // ---------------------------------------------------------------------------
@@ -66,6 +70,8 @@ test.describe('Web Component Rendering', () => {
 
     const value = await getEditorValue(page);
     expect(value).toContain('Diabetes mellitus');
+    // Assert the theme actually rendered, not just that the story loaded.
+    expect(await getAppliedTheme(page)).toBe('vs-dark');
   });
 
   test('read-only prevents editing', async ({ page }) => {
@@ -446,5 +452,110 @@ test.describe('Code Actions', () => {
 
     const titles = await getCodeActionTitles(page);
     expect(titles.some((t) => t.toLowerCase().includes('replace'))).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Automatic dark/light theme
+// ---------------------------------------------------------------------------
+
+test.describe('Automatic theme', () => {
+  test('resolves to the dark theme when the OS prefers dark', async ({ page }) => {
+    await page.emulateMedia({ colorScheme: 'dark' });
+    await page.goto(storyUrl(STORIES.autoTheme));
+    await waitForEditorReady(page);
+
+    expect(await getAppliedTheme(page)).toBe('vs-dark');
+  });
+
+  test('resolves to the light theme when the OS prefers light', async ({ page }) => {
+    await page.emulateMedia({ colorScheme: 'light' });
+    await page.goto(storyUrl(STORIES.autoTheme));
+    await waitForEditorReady(page);
+
+    expect(await getAppliedTheme(page)).toBe('vs');
+  });
+
+  test('follows the OS colour scheme when it changes at runtime', async ({ page }) => {
+    await page.emulateMedia({ colorScheme: 'light' });
+    await page.goto(storyUrl(STORIES.autoTheme));
+    await waitForEditorReady(page);
+    expect(await getAppliedTheme(page)).toBe('vs');
+
+    // The responsiveness requirement: no reload, no attribute change.
+    await page.emulateMedia({ colorScheme: 'dark' });
+    await waitForTheme(page, 'vs-dark');
+
+    await page.emulateMedia({ colorScheme: 'light' });
+    await waitForTheme(page, 'vs');
+  });
+
+  test('drives custom light/dark themes', async ({ page }) => {
+    await page.emulateMedia({ colorScheme: 'dark' });
+    await page.goto(storyUrl(STORIES.autoThemeHighContrast));
+    await waitForEditorReady(page);
+
+    expect(await getAppliedTheme(page)).toBe('hc-black');
+  });
+
+  test('a fixed theme ignores the OS colour scheme', async ({ page }) => {
+    await page.emulateMedia({ colorScheme: 'dark' });
+    await page.goto(storyUrl(STORIES.default));
+    await waitForEditorReady(page);
+
+    // theme="vs" is explicit, so dark mode must not override it.
+    expect(await getAppliedTheme(page)).toBe('vs');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Gutter configuration
+// ---------------------------------------------------------------------------
+
+test.describe('Gutter', () => {
+  test('gutter="none" reclaims the left margin entirely', async ({ page }) => {
+    await page.goto(storyUrl(STORIES.gutterPresets));
+    await waitForEditorReady(page);
+    await page.waitForFunction(() => document.querySelectorAll('.monaco-editor .margin').length >= 3);
+
+    // Stories render full, minimal, none in that order.
+    const full = await getMarginWidth(page, 0);
+    const minimal = await getMarginWidth(page, 1);
+    const none = await getMarginWidth(page, 2);
+
+    expect(full).toBeGreaterThan(0);
+    expect(none).toBe(0);
+    // Minimal keeps the glyph margin for the lightbulb, so it is narrower than
+    // full but not gone.
+    expect(minimal).toBeGreaterThan(0);
+    expect(minimal).toBeLessThan(full);
+  });
+
+  test('line numbers render only for the full preset', async ({ page }) => {
+    await page.goto(storyUrl(STORIES.gutterPresets));
+    await waitForEditorReady(page);
+    await page.waitForFunction(() => document.querySelectorAll('.monaco-editor').length >= 3);
+
+    expect(await getLineNumberCount(page, 0)).toBeGreaterThan(0);
+    expect(await getLineNumberCount(page, 1)).toBe(0);
+    expect(await getLineNumberCount(page, 2)).toBe(0);
+  });
+
+  test('an individual attribute overrides the preset', async ({ page }) => {
+    await page.goto(storyUrl(STORIES.gutterOverrides));
+    await waitForEditorReady(page);
+
+    // gutter="none" with line-numbers="relative": numbers come back, so the
+    // margin cannot have collapsed.
+    expect(await getLineNumberCount(page)).toBeGreaterThan(0);
+    expect(await getMarginWidth(page)).toBeGreaterThan(0);
+  });
+
+  test('the default story keeps the full gutter', async ({ page }) => {
+    await page.goto(storyUrl(STORIES.default));
+    await waitForEditorReady(page);
+
+    expect(await getMarginWidth(page)).toBeGreaterThan(0);
+    expect(await getLineNumberCount(page)).toBeGreaterThan(0);
   });
 });

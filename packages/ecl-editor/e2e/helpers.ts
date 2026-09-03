@@ -11,6 +11,10 @@ export function storyUrl(storyId: string): string {
 export const STORIES = {
   default: 'ecl-editor-ecl-editor--default',
   darkTheme: 'ecl-editor-ecl-editor--dark-theme',
+  autoTheme: 'ecl-editor-ecl-editor--auto-theme',
+  autoThemeHighContrast: 'ecl-editor-ecl-editor--auto-theme-high-contrast',
+  gutterPresets: 'ecl-editor-ecl-editor--gutter-presets',
+  gutterOverrides: 'ecl-editor-ecl-editor--gutter-overrides',
   withFhirServer: 'ecl-editor-ecl-editor--with-fhir-server',
   readOnly: 'ecl-editor-ecl-editor--read-only',
   eventListening: 'ecl-editor-ecl-editor--event-listening',
@@ -406,4 +410,55 @@ export async function triggerQuickFix(page: Page): Promise<void> {
     .catch(() => {
       /* no widget appeared; the caller asserts on that */
     });
+}
+
+/**
+ * Width in pixels of the editor's left margin (line numbers, glyphs, folding).
+ *
+ * This is what the `gutter` attribute controls, and reading the rendered width
+ * is the only way to tell that the space was actually reclaimed rather than
+ * merely emptied of content.
+ */
+export async function getMarginWidth(page: Page, index = 0): Promise<number> {
+  return page.evaluate((i) => {
+    const margin = document.querySelectorAll('.monaco-editor .margin')[i] as HTMLElement | undefined;
+    return margin ? margin.getBoundingClientRect().width : -1;
+  }, index);
+}
+
+/** Number of rendered line-number elements in the nth editor. */
+export async function getLineNumberCount(page: Page, index = 0): Promise<number> {
+  return page.evaluate((i) => {
+    const editor = document.querySelectorAll('.monaco-editor')[i];
+    return editor ? editor.querySelectorAll('.line-numbers').length : -1;
+  }, index);
+}
+
+/**
+ * The Monaco theme currently applied, read from the editor's own class list.
+ *
+ * Monaco stamps `vs`, `vs-dark` or `hc-black` onto the `.monaco-editor` element,
+ * so this reflects what is actually rendered rather than what was requested.
+ */
+export async function getAppliedTheme(page: Page): Promise<string | null> {
+  return page.evaluate(() => {
+    const editor = document.querySelector('.monaco-editor');
+    if (!editor) return null;
+    for (const cls of ['hc-black', 'hc-light', 'vs-dark', 'vs']) {
+      if (editor.classList.contains(cls)) return cls;
+    }
+    return null;
+  });
+}
+
+/** Wait for Monaco to settle on a given theme after a colour-scheme change. */
+export async function waitForTheme(page: Page, theme: string, timeout = 5_000): Promise<void> {
+  await page.waitForFunction(
+    (expected) => {
+      const editor = document.querySelector('.monaco-editor');
+      return editor?.classList.contains(expected) ?? false;
+    },
+    theme,
+    { timeout },
+  );
 }

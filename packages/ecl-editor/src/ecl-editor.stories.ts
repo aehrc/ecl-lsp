@@ -10,11 +10,16 @@ const meta: Meta = {
   tags: ['autodocs'],
   argTypes: {
     value: { control: 'text' },
-    theme: { control: 'select', options: ['vs', 'vs-dark', 'hc-black'] },
+    theme: { control: 'select', options: ['auto', 'vs', 'vs-dark', 'hc-black', 'hc-light'] },
+    'light-theme': { control: 'text' },
+    'dark-theme': { control: 'text' },
     height: { control: 'text' },
     'read-only': { control: 'boolean' },
     minimap: { control: 'boolean' },
-    'line-numbers': { control: 'boolean' },
+    gutter: { control: 'select', options: ['full', 'minimal', 'none'] },
+    'line-numbers': { control: 'select', options: ['on', 'off', 'relative', 'interval'] },
+    'glyph-margin': { control: 'boolean' },
+    folding: { control: 'boolean' },
     'fhir-server-url': { control: 'text' },
     'snomed-version': { control: 'text' },
     'semantic-validation': { control: 'boolean' },
@@ -39,6 +44,70 @@ export const DarkTheme: Story = {
       value="<< 73211009 |Diabetes mellitus| : 363698007 |Finding site| = < 113331007 |Structure of endocrine system|"
       theme="vs-dark"
       height="300px"
+    ></ecl-editor>
+  `,
+};
+
+/**
+ * `theme="auto"` follows the OS colour scheme and switches live when it
+ * changes — try toggling your system appearance with this story open.
+ */
+export const AutoTheme: Story = {
+  render: () => html`
+    <ecl-editor
+      value="<< 73211009 |Diabetes mellitus| : 363698007 |Finding site| = < 113331007 |Structure of endocrine system|"
+      theme="auto"
+      height="300px"
+    ></ecl-editor>
+  `,
+};
+
+/** `auto` can drive custom themes too, via `light-theme`/`dark-theme`. */
+export const AutoThemeHighContrast: Story = {
+  render: () => html`
+    <ecl-editor
+      value="< 404684003 |Clinical finding|"
+      theme="auto"
+      light-theme="hc-light"
+      dark-theme="hc-black"
+      height="300px"
+    ></ecl-editor>
+  `,
+};
+
+/**
+ * The three gutter presets side by side. `none` reclaims the whole left margin,
+ * which is what an embedder wants for a compact single-expression input.
+ */
+export const GutterPresets: Story = {
+  render: () => html`
+    <div style="display:flex;flex-direction:column;gap:16px;padding:10px;">
+      <div>
+        <div style="font:12px system-ui;margin-bottom:4px;">gutter="full" (default)</div>
+        <ecl-editor value="< 404684003 |Clinical finding|" gutter="full" height="120px"></ecl-editor>
+      </div>
+      <div>
+        <div style="font:12px system-ui;margin-bottom:4px;">
+          gutter="minimal" — no line numbers, lightbulb still shown
+        </div>
+        <ecl-editor value="< 404684003 |Clinical finding|" gutter="minimal" height="120px"></ecl-editor>
+      </div>
+      <div>
+        <div style="font:12px system-ui;margin-bottom:4px;">gutter="none" — no left margin at all</div>
+        <ecl-editor value="< 404684003 |Clinical finding|" gutter="none" height="120px"></ecl-editor>
+      </div>
+    </div>
+  `,
+};
+
+/** Individual attributes override whatever the preset chose. */
+export const GutterOverrides: Story = {
+  render: () => html`
+    <ecl-editor
+      value="<< 73211009 |Diabetes mellitus| : 363698007 |Finding site| = < 113331007 |Structure of endocrine system|"
+      gutter="none"
+      line-numbers="relative"
+      height="200px"
     ></ecl-editor>
   `,
 };

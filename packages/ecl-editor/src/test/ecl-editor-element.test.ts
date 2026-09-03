@@ -63,8 +63,17 @@ describe('EclEditorElement', () => {
       expect(attrs).toContain('cors-proxy');
     });
 
-    it('should return exactly 11 observed attributes', () => {
-      expect(EclEditorElement.observedAttributes).toHaveLength(11);
+    it('should include the theme and gutter attributes', () => {
+      const attrs = EclEditorElement.observedAttributes;
+      expect(attrs).toContain('light-theme');
+      expect(attrs).toContain('dark-theme');
+      expect(attrs).toContain('gutter');
+      expect(attrs).toContain('glyph-margin');
+      expect(attrs).toContain('folding');
+    });
+
+    it('should return exactly 16 observed attributes', () => {
+      expect(EclEditorElement.observedAttributes).toHaveLength(16);
     });
   });
 
@@ -317,6 +326,196 @@ describe('EclEditorElement', () => {
       const resolved = (await (el as any).resolveMonaco()) as { __fromGlobal?: boolean };
 
       expect(resolved.__fromGlobal).toBe(true);
+    });
+  });
+
+  describe('theme resolution', () => {
+    const originalMatchMedia = globalThis.matchMedia;
+
+    /** Stub `prefers-color-scheme: dark` and capture any listener registered. */
+    function stubColorScheme(dark: boolean) {
+      const listeners: (() => void)[] = [];
+      const query = {
+        matches: dark,
+        addEventListener: (_: string, fn: () => void) => listeners.push(fn),
+        removeEventListener: (_: string, fn: () => void) => {
+          const i = listeners.indexOf(fn);
+          if (i >= 0) listeners.splice(i, 1);
+        },
+      };
+      (globalThis as any).matchMedia = () => query;
+      return { query, listeners };
+    }
+
+    afterEach(() => {
+      (globalThis as any).matchMedia = originalMatchMedia;
+    });
+
+    it('should default to the light theme when no theme attribute is set', () => {
+      stubColorScheme(true);
+      const el = document.createElement(TAG_NAME) as EclEditorElement;
+      // Absent theme keeps the historical light default rather than silently
+      // following the OS — only an explicit `auto` opts in.
+      expect(el.resolvedTheme).toBe('vs');
+    });
+
+    it.each([
+      {
+        name: 'should pass an explicit theme through unchanged',
+        dark: true,
+        attrs: { theme: 'hc-black' },
+        expected: 'hc-black',
+      },
+      {
+        name: 'should resolve auto to vs-dark when the OS prefers dark',
+        dark: true,
+        attrs: { theme: 'auto' },
+        expected: 'vs-dark',
+      },
+      {
+        name: 'should resolve auto to vs when the OS prefers light',
+        dark: false,
+        attrs: { theme: 'auto' },
+        expected: 'vs',
+      },
+      {
+        name: 'should honour a custom dark theme in auto mode',
+        dark: true,
+        attrs: { theme: 'auto', 'light-theme': 'hc-light', 'dark-theme': 'hc-black' },
+        expected: 'hc-black',
+      },
+      {
+        name: 'should honour a custom light theme in auto mode',
+        dark: false,
+        attrs: { theme: 'auto', 'light-theme': 'hc-light', 'dark-theme': 'hc-black' },
+        expected: 'hc-light',
+      },
+    ])('$name', ({ dark, attrs, expected }) => {
+      stubColorScheme(dark);
+      const el = document.createElement(TAG_NAME) as EclEditorElement;
+      for (const [key, val] of Object.entries(attrs)) el.setAttribute(key, val);
+      expect(el.resolvedTheme).toBe(expected);
+    });
+
+    it('should treat hc-black as dark for the element chrome', () => {
+      const el = document.createElement(TAG_NAME) as EclEditorElement;
+      // hc-black contains no "dark", so a name substring check got this wrong.
+      expect((el as any).isDarkTheme('hc-black')).toBe(true);
+      expect((el as any).isDarkTheme('hc-light')).toBe(false);
+      expect((el as any).isDarkTheme('vs')).toBe(false);
+      expect((el as any).isDarkTheme('vs-dark')).toBe(true);
+    });
+
+    it('should fall back to a name heuristic for unknown custom themes', () => {
+      const el = document.createElement(TAG_NAME) as EclEditorElement;
+      expect((el as any).isDarkTheme('my-dark-theme')).toBe(true);
+      expect((el as any).isDarkTheme('solarized-light')).toBe(false);
+    });
+
+    it('should register a colour-scheme listener only in auto mode', () => {
+      const { listeners } = stubColorScheme(false);
+      const el = document.createElement(TAG_NAME) as EclEditorElement;
+      el.setAttribute('theme', 'auto');
+      document.body.appendChild(el);
+      expect(listeners).toHaveLength(1);
+    });
+
+    it('should not register a colour-scheme listener for a fixed theme', () => {
+      const { listeners } = stubColorScheme(false);
+      const el = document.createElement(TAG_NAME) as EclEditorElement;
+      el.setAttribute('theme', 'vs-dark');
+      document.body.appendChild(el);
+      expect(listeners).toHaveLength(0);
+    });
+
+    it('should drop the colour-scheme listener when the element disconnects', () => {
+      const { listeners } = stubColorScheme(false);
+      const el = document.createElement(TAG_NAME) as EclEditorElement;
+      el.setAttribute('theme', 'auto');
+      document.body.appendChild(el);
+      expect(listeners).toHaveLength(1);
+      el.remove();
+      expect(listeners).toHaveLength(0);
+    });
+
+    it('should drop the listener when switching from auto to a fixed theme', () => {
+      const { listeners } = stubColorScheme(false);
+      const el = document.createElement(TAG_NAME) as EclEditorElement;
+      el.setAttribute('theme', 'auto');
+      document.body.appendChild(el);
+      el.setAttribute('theme', 'vs');
+      expect(listeners).toHaveLength(0);
+    });
+
+    it('should emit ecl-theme-change when the theme attribute changes', () => {
+      stubColorScheme(false);
+      const el = document.createElement(TAG_NAME) as EclEditorElement;
+      document.body.appendChild(el);
+      const seen: { theme: string; dark: boolean }[] = [];
+      el.addEventListener('ecl-theme-change', ((e: CustomEvent) => {
+        seen.push(e.detail as { theme: string; dark: boolean });
+      }) as EventListener);
+      el.setAttribute('theme', 'vs-dark');
+      expect(seen).toEqual([{ theme: 'vs-dark', dark: true }]);
+    });
+  });
+
+  describe('gutter options', () => {
+    function gutterOptions(attrs: Record<string, string>) {
+      const el = document.createElement(TAG_NAME) as EclEditorElement;
+      for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+      return (el as any).buildGutterOptions() as Record<string, unknown>;
+    }
+
+    it('should show the full gutter by default', () => {
+      expect(gutterOptions({})).toMatchObject({ lineNumbers: 'on', glyphMargin: true, folding: true });
+    });
+
+    it('should reclaim the whole left margin for gutter="none"', () => {
+      // The point of the preset: no reserved width left behind.
+      expect(gutterOptions({ gutter: 'none' })).toMatchObject({
+        lineNumbers: 'off',
+        glyphMargin: false,
+        folding: false,
+        lineNumbersMinChars: 0,
+        lineDecorationsWidth: 0,
+      });
+    });
+
+    it('should keep the glyph margin for gutter="minimal" so the lightbulb still renders', () => {
+      expect(gutterOptions({ gutter: 'minimal' })).toMatchObject({
+        lineNumbers: 'off',
+        glyphMargin: true,
+        folding: false,
+      });
+    });
+
+    it('should let individual attributes override the preset', () => {
+      expect(gutterOptions({ gutter: 'none', 'line-numbers': 'relative' })).toMatchObject({
+        lineNumbers: 'relative',
+        glyphMargin: false,
+      });
+      expect(gutterOptions({ gutter: 'none', 'glyph-margin': 'true' })).toMatchObject({ glyphMargin: true });
+    });
+
+    it('should still accept the original boolean line-numbers values', () => {
+      expect(gutterOptions({ 'line-numbers': 'false' })).toMatchObject({ lineNumbers: 'off' });
+      expect(gutterOptions({ 'line-numbers': 'true' })).toMatchObject({ lineNumbers: 'on' });
+    });
+
+    it('should support monaco line-number modes', () => {
+      expect(gutterOptions({ 'line-numbers': 'relative' })).toMatchObject({ lineNumbers: 'relative' });
+      expect(gutterOptions({ 'line-numbers': 'interval' })).toMatchObject({ lineNumbers: 'interval' });
+    });
+
+    it('should ignore an unrecognised gutter preset', () => {
+      expect(gutterOptions({ gutter: 'nonsense' })).toMatchObject({ lineNumbers: 'on', glyphMargin: true });
+    });
+
+    it('should zero the line-number width whenever numbers are off', () => {
+      // Monaco otherwise keeps reserving the column, which is what made the
+      // margin stay visible after setting line-numbers="false".
+      expect(gutterOptions({ 'line-numbers': 'false' })).toMatchObject({ lineNumbersMinChars: 0 });
     });
   });
 });

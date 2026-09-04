@@ -12,3 +12,4 @@ package-lock.json
 docs/
 **/dist-standalone/
 clients/intellij/.intellijPlatform/
+.vscode-test/

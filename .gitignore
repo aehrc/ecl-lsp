@@ -54,3 +54,6 @@ Thumbs.db
 # Logs
 *.log
 npm-debug.log*
+
+# VSCode e2e downloads a full VS Code build here (~1 GB)
+.vscode-test/

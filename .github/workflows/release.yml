@@ -278,11 +278,12 @@ jobs:
   docker-image:
     needs: validate
     runs-on: ubuntu-latest
-    # The v1.3.1 release stalled here for 82 minutes pushing to ACR, against
-    # ~4 minutes on v1.3.0, and with no cap would have run to GitHub's 6 hour
-    # default. 30 minutes leaves ample room for the arm64 leg under emulation
-    # while still failing fast on a stall. `github-release` no longer waits on
-    # this job either - see the note there.
+    # The v1.3.1 release stalled here for 82 minutes and with no cap would have
+    # run to GitHub's 6 hour default. The cause was not the ACR push, as first
+    # assumed, but `npm ci` in the build stage running under QEMU for the arm64
+    # target; the Dockerfile now pins that stage to $BUILDPLATFORM so it runs
+    # once, natively. See #106. The cap stays as a backstop, and
+    # `github-release` no longer waits on this job either - see the note there.
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
@@ -305,6 +306,11 @@ jobs:
           tags: |
             ontoserver.azurecr.io/ecl-slack-bot:${{ needs.validate.outputs.version }}
             ontoserver.azurecr.io/ecl-slack-bot:latest
+          # Releases are far enough apart that every build is otherwise cold.
+          # Caching the layers keeps a slow registry or a re-run from costing
+          # the full build again.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
   # ── GitHub Release ──────────────────────────────────────────────────
   github-release:

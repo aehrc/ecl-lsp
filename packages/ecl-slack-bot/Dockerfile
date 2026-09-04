@@ -4,7 +4,16 @@
 # Build context: repository root (cd ../.. && docker build -f packages/ecl-slack-bot/Dockerfile .)
 
 # ── Stage 1: Build ────────────────────────────────────────────────────
-FROM node:22-alpine AS build
+# Pinned to the *build* platform, not the target. This stage installs the full
+# dev toolchain and runs tsc, whose output is plain JavaScript and therefore
+# architecture-independent - so there is nothing to gain from running it once
+# per target platform, and a great deal to lose: on a multi-arch build the
+# arm64 copy runs under QEMU emulation, where this `npm ci` stalled for over
+# 80 minutes during the v1.3.1 release (#106).
+#
+# Only the runtime stage below is built per-architecture, so arch-specific
+# binaries in the production dependencies are still resolved correctly.
+FROM --platform=$BUILDPLATFORM node:22-alpine AS build
 
 WORKDIR /app
 

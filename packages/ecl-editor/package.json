@@ -57,7 +57,7 @@
     "lit": "^3.3.3",
     "monaco-editor": "^0.56.0",
     "storybook": "^10.3.3",
-    "typescript": "^6.0.2",
+    "typescript": "^7.0.2",
     "vite": "^8.2.2",
     "vite-plugin-dts": "^5.0.3",
     "vite-plugin-node-polyfills": "^0.28.0",

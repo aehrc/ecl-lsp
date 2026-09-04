@@ -8,10 +8,10 @@
     <parent>
         <groupId>au.csiro.ecl</groupId>
         <artifactId>ecl-eclipse-parent</artifactId>
-        <version>1.3.1-SNAPSHOT</version>
+        <version>1.4.0-SNAPSHOT</version>
     </parent>
 
     <artifactId>au.csiro.ecl.eclipse.updatesite</artifactId>
-    <version>1.3.1-SNAPSHOT</version>
+    <version>1.4.0-SNAPSHOT</version>
     <packaging>eclipse-repository</packaging>
 </project>

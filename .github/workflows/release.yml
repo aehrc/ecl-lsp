@@ -317,8 +317,8 @@ jobs:
     # Deliberately does not wait on docker-image. That job pushes the Slack bot
     # image to a registry and uploads no artifact, so this job consumes nothing
     # from it - and because of `always()` below, the release publishes whatever
-    # the docker push does anyway. Waiting only added latency, which is how a
-    # hung registry push blocked the entire v1.3.1 release for 82 minutes.
+    # the docker job does anyway. Waiting only added latency, which is how a
+    # stalled docker build blocked the entire v1.3.1 release for 82 minutes.
     needs: [validate, npm-publish, vscode-extension, intellij-plugin, eclipse-plugin]
     if: always() && needs.validate.result == 'success'
     runs-on: ubuntu-latest

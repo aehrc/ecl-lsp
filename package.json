@@ -44,7 +44,7 @@
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "sonar": "sonar-scanner",
+    "sonar": "npx --yes sonarqube-scanner@5",
     "licenses": "generate-license-file --overwrite",
     "licenses:check": "generate-license-file --overwrite && git diff --exit-code THIRD-PARTY-LICENSES.txt"
   },
@@ -66,11 +66,10 @@
     "eslint": "^10.11.0",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-sonarjs": "^4.2.1",
-    "eslint-plugin-unicorn": "^74.0.0",
+    "eslint-plugin-unicorn": "^76.0.0",
     "generate-license-file": "^4.2.5",
     "globals": "^17.6.0",
     "prettier": "^3.9.9",
-    "sonarqube-scanner": "^5.0.1",
     "typescript-eslint": "^8.70.1",
     "vite": "^8.2.2"
   },

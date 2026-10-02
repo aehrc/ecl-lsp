@@ -31,6 +31,7 @@ export enum NodeType {
   AttributeName = 'AttributeName',
   AttributeValue = 'AttributeValue',
   Wildcard = 'Wildcard',
+  AlternateIdentifier = 'AlternateIdentifier',
   FilterConstraint = 'FilterConstraint',
   HistorySupplement = 'HistorySupplement',
 }
@@ -49,7 +50,9 @@ export interface SubExpressionNode extends ASTNode {
   type: NodeType.SubExpressionConstraint;
   operator?: OperatorNode;
   memberOf?: boolean;
-  focus: ConceptReferenceNode | WildcardNode | ExpressionNode;
+  /** Member field selection (`^ [refsetId, referencedComponentId]`), `['*']` for `^ [*]`. */
+  memberFields?: string[];
+  focus: ConceptReferenceNode | WildcardNode | AlternateIdentifierNode | ExpressionNode;
   filters?: FilterConstraintNode[];
   historySupplement?: HistorySupplementNode;
 }
@@ -153,6 +156,8 @@ export interface AttributeNode extends ASTNode {
   name: AttributeNameNode;
   value: AttributeValueNode;
   reversed?: boolean;
+  /** Comparison between name and value; `=` when absent. */
+  comparison?: '=' | '!=' | '<' | '<=' | '>' | '>=';
   /** Raw cardinality text including brackets, e.g. `[0..1]`. */
   cardinality?: string;
 }
@@ -172,6 +177,14 @@ export interface AttributeValueNode extends ASTNode {
 
 export interface WildcardNode extends ASTNode {
   type: NodeType.Wildcard;
+}
+
+/** A code from another code system, e.g. `LOINC#54486-6` or `"LOINC#54486-6"`. */
+export interface AlternateIdentifierNode extends ASTNode {
+  type: NodeType.AlternateIdentifier;
+  /** The identifier as written, without the term: scheme alias, `#`, code, and any quotes. */
+  identifier: string;
+  term?: string;
 }
 
 export interface FilterConstraintNode extends ASTNode {

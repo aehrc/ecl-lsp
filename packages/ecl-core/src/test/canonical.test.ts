@@ -4,6 +4,8 @@
 import { describe, it } from 'node:test';
 import * as assert from 'node:assert';
 import { canonicalise, compareExpressions, CanonicaliseError } from '../canonical/comparator';
+import { parseECL } from '../parser';
+import { roundTripCorpus, distinctPairs } from './roundtrip-corpus';
 
 // ── canonicalise: term stripping (§9.1) ─────────────────────────────────
 
@@ -300,4 +302,30 @@ describe('canonicalise — attribute name operators', () => {
   it('should distinguish a constrained attribute name from a bare one', () => {
     assert.strictEqual(compareExpressions('763158003 : << 127489000 = *', '763158003 : 127489000 = *'), 'different');
   });
+});
+
+// ── Round trip over the grammar corpus ──────────────────────────────────
+
+describe('canonicalise — round trip over the grammar corpus', () => {
+  for (const ecl of roundTripCorpus) {
+    it(`produces valid, stable ECL: ${ecl}`, () => {
+      const canonical = canonicalise(ecl);
+      assert.strictEqual(parseECL(canonical).errors.length, 0, `canonical form is not valid ECL: ${canonical}`);
+      assert.strictEqual(canonicalise(canonical), canonical, 'canonical form must be a fixed point');
+    });
+  }
+
+  it('treats quoted and unquoted forms of the same alternate identifier as equivalent', () => {
+    assert.strictEqual(compareExpressions('"LOINC#54486-6"', 'LOINC#54486-6'), 'structurally_equivalent');
+  });
+
+  it('keeps quotes an alternate identifier code needs', () => {
+    assert.strictEqual(canonicalise('"ICD-10#A00 B"'), '"ICD-10#A00 B"');
+  });
+
+  for (const [a, b] of distinctPairs) {
+    it(`distinguishes ${a}  vs  ${b}`, () => {
+      assert.strictEqual(compareExpressions(a, b), 'different');
+    });
+  }
 });

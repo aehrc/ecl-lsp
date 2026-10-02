@@ -761,3 +761,28 @@ describe('AST Printer — refinement operators and grouping (issue #73)', () => 
     assert.ok(/\bOR\b/.test(result), `must keep OR: ${result}`);
   });
 });
+
+describe('AST Printer — constraint operators on attribute names', () => {
+  for (const [label, src, expected] of [
+    ['descendant-or-self', '<< 763158003 : << 127489000 = << 387207008', '<< 763158003: << 127489000 = << 387207008'],
+    ['descendant', '< 763158003 : < 127489000 = 387207008', '< 763158003: < 127489000 = 387207008'],
+    ['ancestor-or-self', '763158003 : >> 127489000 = *', '763158003: >> 127489000 = *'],
+    ['member-of', '763158003 : ^ 816080008 = *', '763158003: ^ 816080008 = *'],
+    [
+      'inside an attribute group',
+      '763158003 : { << 127489000 = 387207008 }',
+      '763158003: { << 127489000 = 387207008 }',
+    ],
+  ] as const) {
+    test(`preserves ${label} on an attribute name`, () => {
+      const { ast } = parseECL(src);
+      assert.strictEqual(printAst(ast, src, opts), expected);
+    });
+  }
+
+  test('keeps the term on a bare attribute name', () => {
+    const src = '763158003 : 127489000 |Has active ingredient| = 387207008';
+    const { ast } = parseECL(src);
+    assert.strictEqual(printAst(ast, src, opts), '763158003: 127489000 | Has active ingredient | = 387207008');
+  });
+});

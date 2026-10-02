@@ -119,6 +119,60 @@ describe('canonicalise — redundant parenthesis removal', () => {
   it('should remove parens around refined expression', () => {
     assert.strictEqual(canonicalise('(404684003: 363698007 = *)'), '404684003:363698007 = *');
   });
+
+  it('should keep parens when an operator applies to a constrained inner expression', () => {
+    assert.strictEqual(canonicalise('< (<< 404684003)'), '<(<<404684003)');
+  });
+
+  it('should keep parens when an operator applies to a refined inner expression', () => {
+    assert.strictEqual(canonicalise('< (404684003: 363698007 = *)'), '<(404684003:363698007 = *)');
+  });
+
+  it('should remove parens around bare concept under an operator', () => {
+    assert.strictEqual(canonicalise('< (404684003)'), '<404684003');
+  });
+
+  it('should keep parens when a filter applies to a refined inner expression', () => {
+    assert.strictEqual(
+      canonicalise('(404684003: 363698007 = *) {{ term = "x" }}'),
+      '(404684003:363698007 = *) {{ term = "x" }}',
+    );
+  });
+
+  it('should keep parens when a filter applies to a same-operator compound group', () => {
+    assert.strictEqual(
+      canonicalise('404684003 AND (19829001 AND 73211009) {{ term = "x" }}'),
+      '(19829001 AND 73211009) {{ term = "x" }} AND 404684003',
+    );
+  });
+
+  it('should remove parens when a filter applies to a constrained concept', () => {
+    assert.strictEqual(canonicalise('(< 404684003) {{ term = "x" }}'), '<404684003 {{ term = "x" }}');
+  });
+
+  it('should remove nested parens around bare concept under an operator', () => {
+    assert.strictEqual(canonicalise('< ((404684003))'), '<404684003');
+  });
+});
+
+// ── Top and bottom of set ───────────────────────────────────────────────
+
+describe('canonicalise — top and bottom of set', () => {
+  it('should preserve top-of-set operator', () => {
+    assert.strictEqual(canonicalise('!!> (<< 404684003)'), '!!>(<<404684003)');
+  });
+
+  it('should preserve bottom-of-set operator', () => {
+    assert.strictEqual(canonicalise('!!< 404684003'), '!!<404684003');
+  });
+
+  it('should distinguish bottom-of-set from descendant-of', () => {
+    assert.strictEqual(compareExpressions('!!< 404684003', '< 404684003'), 'different');
+  });
+
+  it('should distinguish top-of-set from bottom-of-set', () => {
+    assert.strictEqual(compareExpressions('!!> 404684003', '!!< 404684003'), 'different');
+  });
 });
 
 // ── compareExpressions (§9.5) ────────────────────────────────────────────

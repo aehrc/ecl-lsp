@@ -85,7 +85,7 @@ export interface ConceptReferenceNode extends ASTNode {
 
 export interface OperatorNode extends ASTNode {
   type: NodeType.ConstraintOperator;
-  operator: '<' | '<<' | '>' | '>>' | '<!' | '<<!' | '>!' | '>>!';
+  operator: '<' | '<<' | '>' | '>>' | '<!' | '<<!' | '>!' | '>>!' | '!!>' | '!!<';
 }
 
 export interface LogicalOperatorNode extends ASTNode {

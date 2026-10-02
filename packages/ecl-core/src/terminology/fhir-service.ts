@@ -267,7 +267,7 @@ export class FhirTerminologyService implements ITerminologyService {
 
   /** The SNOMED CT system URL base for implicit ValueSet URLs. */
   private get snomedSystemUrl(): string {
-    return this.snomedVersion ?? 'http://snomed.info/sct'; // eslint-disable-line sonarjs/no-clear-text-protocols -- FHIR system URI, not a network URL
+    return this.snomedVersion ?? 'http://snomed.info/sct';
   }
 
   /** Get the resolved version URI from the most recent FHIR response, if captured. */
@@ -604,11 +604,11 @@ export class FhirTerminologyService implements ITerminologyService {
   ): Promise<{ code: string; display: string }[]> {
     try {
       const cmUrl = `${this.snomedSystemUrl}?fhir_cm=${refsetId}`;
-      const targetUrl = 'http://snomed.info/sct?fhir_vs'; // eslint-disable-line sonarjs/no-clear-text-protocols -- FHIR system URI, not a network URL
+      const targetUrl = 'http://snomed.info/sct?fhir_vs';
       const url =
         `${this.baseUrl}/ConceptMap/$translate` +
         `?code=${encodeURIComponent(conceptId)}` +
-        `&system=${encodeURIComponent('http://snomed.info/sct')}` + // eslint-disable-line sonarjs/no-clear-text-protocols -- FHIR system URI
+        `&system=${encodeURIComponent('http://snomed.info/sct')}` +
         `&target=${encodeURIComponent(targetUrl)}` +
         `&url=${encodeURIComponent(cmUrl)}`;
 
@@ -756,7 +756,7 @@ export class FhirTerminologyService implements ITerminologyService {
     const url = `${this.baseUrl}/ValueSet/$expand?property=inactive&activeOnly=false`;
 
     const include: Record<string, unknown> = {
-      system: 'http://snomed.info/sct', // eslint-disable-line sonarjs/no-clear-text-protocols -- FHIR system URI, not a network URL
+      system: 'http://snomed.info/sct',
       concept: conceptIds.map((code) => ({ code })),
     };
     if (this.snomedVersion) {
@@ -989,7 +989,7 @@ export class FhirTerminologyService implements ITerminologyService {
     deadline: number,
   ): Promise<EvaluationResponse> {
     const include: Record<string, unknown> = {
-      system: 'http://snomed.info/sct', // eslint-disable-line sonarjs/no-clear-text-protocols -- FHIR system URI, not a network URL
+      system: 'http://snomed.info/sct',
       ...(this.snomedVersion ? { version: this.snomedVersion } : {}),
       filter: [{ property: 'constraint', op: '=', value: expression }],
     };

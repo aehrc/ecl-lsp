@@ -6,11 +6,11 @@ import type { CoreDiagnostic, CoreDiagnosticSeverity } from '@aehrc/ecl-core';
 import { DiagnosticsEngine } from '../diagnostics-engine';
 import type { EclEditorConfig } from '../types';
 
-const SEVERITY_MAP: Record<CoreDiagnosticSeverity, number> = {
-  error: 8, // Monaco.MarkerSeverity.Error
-  warning: 4, // Monaco.MarkerSeverity.Warning
-  information: 2, // Monaco.MarkerSeverity.Info
-  hint: 1, // Monaco.MarkerSeverity.Hint
+const SEVERITY_MAP: Record<CoreDiagnosticSeverity, keyof typeof Monaco.MarkerSeverity> = {
+  error: 'Error',
+  warning: 'Warning',
+  information: 'Info',
+  hint: 'Hint',
 };
 
 /**
@@ -31,7 +31,7 @@ export class MonacoDiagnosticsAdapter {
 
     this.engine = new DiagnosticsEngine(config, (diagnostics) => {
       const markers: Monaco.editor.IMarkerData[] = diagnostics.map((d) => ({
-        severity: SEVERITY_MAP[d.severity],
+        severity: monaco.MarkerSeverity[SEVERITY_MAP[d.severity]],
         startLineNumber: d.range.start.line + 1,
         startColumn: d.range.start.character + 1,
         endLineNumber: d.range.end.line + 1,

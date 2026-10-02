@@ -5,6 +5,31 @@ All notable changes to the ECL Language Server will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.0] - 2026-10-02
+
+A minor rather than a patch, for two reasons: the VS Code extension now requires VS Code 1.91 or later (previously 1.75) — users on 1.75–1.90 are not offered this version and stay on 1.5.0 — and `@aehrc/ecl-core`'s AST gains an `AlternateIdentifier` node type and new `memberFields` and `comparison` properties.
+
+The headline is correctness: six places where the formatter or canonical form silently changed what an expression means, the most serious of which reprinted `<< attr = v` as `attr = v` and changed query results. Anyone formatting ECL with options, or comparing expressions with `compareExpressions()`, should upgrade.
+
+### Changed
+
+- **Language server protocol 3.18** ([#133](https://github.com/aehrc/ecl-lsp/pull/133)): `vscode-languageserver` and `vscode-languageclient` move from 9 to 10, and with them `vscode-languageserver-protocol` 3.17 → 3.18 and `vscode-jsonrpc` 8 → 9. The protocol version is negotiated, so editors speaking 3.17 continue to work with the server. `vscode-languageclient` 10 requires VS Code 1.91, which is why the extension's minimum version rises. The server and VS Code client now compile with `node16` module resolution, since v10 exposes its `/node` entry points only through package `exports`; output is still CommonJS. The IntelliJ and Eclipse plugins bundle the same set of packages as before.
+- **Development dependencies** ([#131](https://github.com/aehrc/ecl-lsp/pull/131)): `vitest` 5.0.3, Storybook 10.6.1 (previously held at 10.5 — the conflict with `vitest` 5 turned out to come from stale lockfile entries rather than a real incompatibility) and `eslint-plugin-unicorn` 76. `sonarqube-scanner` is no longer a dependency; `npm run sonar` fetches it on demand with `npx`. None of this reaches a published artifact.
+
+### Fixed
+
+- **Constraint operators on refinement attribute names were dropped** (`ecl-core`) ([#135](https://github.com/aehrc/ecl-lsp/pull/135)): an attribute name with a constraint operator, member-of or filters was stored in the AST as just its concept, so `formatDocument()` with options reprinted `<< 763158003 : << 127489000 = << 387207008` as `<< 763158003: 127489000 = << 387207008`. That changes the result — `<< 127489000` also matches subtypes such as `762949000 |Has precise active ingredient|` — and on the AU edition the reprinted query selected 266 concepts instead of 307. `canonicalise()` and the formatter's semantic guard shared the blind spot, so `compareExpressions()` equated the two forms and the guard could not catch the rewrite. Present since at least 1.4.0; the same class of fault as [#73](https://github.com/aehrc/ecl-lsp/issues/73).
+- **Five more meaning-changing reprints** (`ecl-core`) ([#136](https://github.com/aehrc/ecl-lsp/pull/136)), found by scanning the formatter and canonical form across every ECL 2.2 construct:
+  - Alternate identifiers were parsed as a wildcard, so `= LOINC#54486-6` was reprinted as `= *` — one specific code became any concept. They are now an `AlternateIdentifier` AST node.
+  - `<` and `>` comparisons on concrete values were reprinted as `=` (`1142135004 < #10` → `= #10`), because the operator was recovered from the source with a pattern that only matched `=`, `!=`, `<=` and `>=`. The comparison is now part of the AST.
+  - Member field selection was dropped (`^ [referencedComponentId] 700043003` → `^ 700043003`), changing what the expression returns.
+  - The canonical form flattened nested `MINUS`, so `A MINUS (B MINUS C)` and `(A MINUS B) MINUS C` compared as equivalent, and dropped the parentheses a refined or dotted operand needs, producing invalid ECL.
+
+  Quoted and unquoted forms of the same alternate identifier now compare as equivalent, and so do `(A OR B)` and `A OR B`. A round-trip test over a corpus of every grammar construct now guards the formatter and canonical form against this class of fault.
+
+- **Test declarations published in the editor packages** (`ecl-editor`, `ecl-editor-react`) ([#132](https://github.com/aehrc/ecl-lsp/pull/132)): declarations were generated for `src/test`, so the `@aehrc/ecl-editor-react` and `@aehrc/ecl-editor` tarballs carried ten and six test and mock `.d.ts` files respectively. They are no longer emitted; `dist/index.d.ts` is unchanged.
+- **High-severity `node-forge` advisory** ([#131](https://github.com/aehrc/ecl-lsp/pull/131)): `node-forge` has no fixed release and reached the tree only through `sonarqube-scanner`, a manually run CI tool. Removing that dependency clears it; `npm audit` reports no high or moderate findings. The remaining low-severity findings all require downgrades (`monaco-editor`'s exact `dompurify` pin and `vite-plugin-node-polyfills`' crypto chain) and none ship.
+
 ## [1.5.0] - 2026-10-02
 
 A minor rather than a patch: `@aehrc/ecl-core`'s exported `OperatorNode['operator']` type gains `'!!>'` and `'!!<'`, so TypeScript consumers with exhaustive switches over it will need to handle the new members.

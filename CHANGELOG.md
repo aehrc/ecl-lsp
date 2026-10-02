@@ -5,6 +5,20 @@ All notable changes to the ECL Language Server will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.0] - 2026-10-02
+
+A minor rather than a patch: the VS Code extension now requires VS Code 1.91 or later (previously 1.75). There are no new features and no public API changes in the npm packages. Users on VS Code 1.75–1.90 are not offered this version and stay on 1.5.0.
+
+### Changed
+
+- **Language server protocol 3.18** ([#133](https://github.com/aehrc/ecl-lsp/pull/133)): `vscode-languageserver` and `vscode-languageclient` move from 9 to 10, and with them `vscode-languageserver-protocol` 3.17 → 3.18 and `vscode-jsonrpc` 8 → 9. The protocol version is negotiated, so editors speaking 3.17 continue to work with the server. `vscode-languageclient` 10 requires VS Code 1.91, which is why the extension's minimum version rises. The server and VS Code client now compile with `node16` module resolution, since v10 exposes its `/node` entry points only through package `exports`; output is still CommonJS. The IntelliJ and Eclipse plugins bundle the same set of packages as before.
+- **Development dependencies** ([#131](https://github.com/aehrc/ecl-lsp/pull/131)): `vitest` 5.0.3, Storybook 10.6.1 (previously held at 10.5 — the conflict with `vitest` 5 turned out to come from stale lockfile entries rather than a real incompatibility) and `eslint-plugin-unicorn` 76. `sonarqube-scanner` is no longer a dependency; `npm run sonar` fetches it on demand with `npx`. None of this reaches a published artifact.
+
+### Fixed
+
+- **Test declarations published in the editor packages** (`ecl-editor`, `ecl-editor-react`) ([#132](https://github.com/aehrc/ecl-lsp/pull/132)): declarations were generated for `src/test`, so the `@aehrc/ecl-editor-react` and `@aehrc/ecl-editor` tarballs carried ten and six test and mock `.d.ts` files respectively. They are no longer emitted; `dist/index.d.ts` is unchanged.
+- **High-severity `node-forge` advisory** ([#131](https://github.com/aehrc/ecl-lsp/pull/131)): `node-forge` has no fixed release and reached the tree only through `sonarqube-scanner`, a manually run CI tool. Removing that dependency clears it; `npm audit` reports no high or moderate findings. The remaining low-severity findings all require downgrades (`monaco-editor`'s exact `dompurify` pin and `vite-plugin-node-polyfills`' crypto chain) and none ship.
+
 ## [1.5.0] - 2026-10-02
 
 A minor rather than a patch: `@aehrc/ecl-core`'s exported `OperatorNode['operator']` type gains `'!!>'` and `'!!<'`, so TypeScript consumers with exhaustive switches over it will need to handle the new members.

@@ -901,13 +901,15 @@ connection.onCodeAction(async (params: CodeActionParams): Promise<CodeAction[]> 
     if (diagnostic.source !== 'ecl') {
       continue;
     }
+    // LSP 3.18 widened Diagnostic.message to string | MarkupContent
+    const message = typeof diagnostic.message === 'string' ? diagnostic.message : diagnostic.message.value;
 
     const line = document.getText({
       start: { line: diagnostic.range.start.line, character: 0 },
       end: { line: diagnostic.range.start.line + 1, character: 0 },
     });
 
-    if (/Duplicate AND/i.test(diagnostic.message)) {
+    if (/Duplicate AND/i.test(message)) {
       const fixedLine = line.replace(/\bAND\s+AND\b/i, 'AND');
       codeActions.push({
         title: 'Remove duplicate AND operator',
@@ -929,7 +931,7 @@ connection.onCodeAction(async (params: CodeActionParams): Promise<CodeAction[]> 
       });
     }
 
-    if (/Duplicate OR/i.test(diagnostic.message)) {
+    if (/Duplicate OR/i.test(message)) {
       const fixedLine = line.replace(/\bOR\s+OR\b/i, 'OR');
       codeActions.push({
         title: 'Remove duplicate OR operator',
@@ -951,7 +953,7 @@ connection.onCodeAction(async (params: CodeActionParams): Promise<CodeAction[]> 
       });
     }
 
-    if (diagnostic.message.includes('Duplicate MINUS')) {
+    if (message.includes('Duplicate MINUS')) {
       const fixedLine = line.replace(/\bMINUS\s+MINUS\b/, 'MINUS');
       codeActions.push({
         title: 'Remove duplicate MINUS operator',
@@ -974,12 +976,12 @@ connection.onCodeAction(async (params: CodeActionParams): Promise<CodeAction[]> 
     }
 
     // Inactive concept: queue FHIR lookup for replacement actions
-    const inactiveMatch = /^Inactive concept (\d+)/.exec(diagnostic.message);
+    const inactiveMatch = /^Inactive concept (\d+)/.exec(message);
     if (inactiveMatch) {
       inactiveConcepts.push({ conceptId: inactiveMatch[1], diagnostic });
     }
 
-    if (diagnostic.message.includes('Missing operator')) {
+    if (message.includes('Missing operator')) {
       // Bounded to single editor line.
       // Measured quadratic in the length of a contiguous whitespace run, not exponential.
       // Realistic ECL has no such runs: 500 expressions (43 KB) format in ~47 ms, while only a

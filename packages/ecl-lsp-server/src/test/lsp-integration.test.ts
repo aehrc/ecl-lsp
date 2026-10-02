@@ -10,7 +10,7 @@ import {
   StreamMessageWriter,
   createMessageConnection,
   MessageConnection,
-} from 'vscode-jsonrpc/node';
+} from 'vscode-languageserver/node';
 
 // Default settings the server expects from workspace/configuration
 const DEFAULT_SETTINGS = {

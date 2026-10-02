@@ -119,6 +119,42 @@ describe('canonicalise — redundant parenthesis removal', () => {
   it('should remove parens around refined expression', () => {
     assert.strictEqual(canonicalise('(404684003: 363698007 = *)'), '404684003:363698007 = *');
   });
+
+  it('should keep parens when an operator applies to a constrained inner expression', () => {
+    assert.strictEqual(canonicalise('< (<< 404684003)'), '<(<<404684003)');
+  });
+
+  it('should keep parens when an operator applies to a refined inner expression', () => {
+    assert.strictEqual(canonicalise('< (404684003: 363698007 = *)'), '<(404684003:363698007 = *)');
+  });
+
+  it('should remove parens around bare concept under an operator', () => {
+    assert.strictEqual(canonicalise('< (404684003)'), '<404684003');
+  });
+
+  it('should remove nested parens around bare concept under an operator', () => {
+    assert.strictEqual(canonicalise('< ((404684003))'), '<404684003');
+  });
+});
+
+// ── Top and bottom of set ───────────────────────────────────────────────
+
+describe('canonicalise — top and bottom of set', () => {
+  it('should preserve top-of-set operator', () => {
+    assert.strictEqual(canonicalise('!!> (<< 404684003)'), '!!>(<<404684003)');
+  });
+
+  it('should preserve bottom-of-set operator', () => {
+    assert.strictEqual(canonicalise('!!< 404684003'), '!!<404684003');
+  });
+
+  it('should distinguish bottom-of-set from descendant-of', () => {
+    assert.strictEqual(compareExpressions('!!< 404684003', '< 404684003'), 'different');
+  });
+
+  it('should distinguish top-of-set from bottom-of-set', () => {
+    assert.strictEqual(compareExpressions('!!> 404684003', '!!< 404684003'), 'different');
+  });
 });
 
 // ── compareExpressions (§9.5) ────────────────────────────────────────────

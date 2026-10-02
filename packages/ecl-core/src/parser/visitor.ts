@@ -171,6 +171,8 @@ export class ECLASTVisitor extends AbstractParseTreeVisitor<any> implements ECLV
     else if (ctx.ancestororselfof()) op = '>>';
     else if (ctx.parentof()) op = '>!';
     else if (ctx.parentorselfof()) op = '>>!';
+    else if (ctx.top()) op = '!!>';
+    else if (ctx.bottom()) op = '!!<';
 
     return {
       type: NodeType.ConstraintOperator,

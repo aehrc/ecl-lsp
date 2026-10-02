@@ -74,8 +74,11 @@ function printSubExpression(node: SubExpressionNode, src: string, outerOperator?
     case NodeType.ExpressionConstraint: {
       const innerExpr = node.focus.expression;
       // §5.5 redundant parenthesis removal — 3-way check
-      if (innerExpr.type !== NodeType.CompoundExpression) {
-        // Rule 1: inner is non-compound → parens always redundant
+      if ((node.operator || node.memberOf) && !isBareFocus(innerExpr)) {
+        // An operator or ^ applied to a constrained/refined inner expression needs the parens
+        result += '(' + printExpression(node.focus, src) + ')';
+      } else if (innerExpr.type !== NodeType.CompoundExpression) {
+        // Rule 1: inner is non-compound → parens redundant
         result += printExpression(node.focus, src, outerOperator);
       } else if (outerOperator && innerExpr.operator.operator === outerOperator) {
         // Rule 2: same operator as outer → redundant (handled by normaliser flattening)
@@ -104,6 +107,18 @@ function printSubExpression(node: SubExpressionNode, src: string, outerOperator?
   }
 
   return result;
+}
+
+/** True when the expression is just a concept reference or wildcard, with nothing applied to it. */
+function isBareFocus(expr: ExpressionNode['expression']): boolean {
+  return (
+    expr.type === NodeType.SubExpressionConstraint &&
+    !expr.operator &&
+    !expr.memberOf &&
+    !expr.filters?.length &&
+    !expr.historySupplement &&
+    (expr.focus.type !== NodeType.ExpressionConstraint || isBareFocus(expr.focus.expression))
+  );
 }
 
 function printCompoundExpression(node: CompoundExpressionNode, src: string): string {

@@ -925,6 +925,32 @@ describe('ECL Parser', () => {
         assert.fail('Expected SubExpressionConstraint');
       }
     });
+
+    test('top-of-set operator !!> parses with correct operator', () => {
+      const result = parseECL('!!> (<< 404684003)');
+      assert.equal(result.errors.length, 0, 'Should have no errors');
+      assert.ok(result.ast);
+      const expr = result.ast.expression;
+      if (expr.type === NodeType.SubExpressionConstraint) {
+        assert.ok(expr.operator);
+        assert.equal(expr.operator.operator, '!!>');
+      } else {
+        assert.fail('Expected SubExpressionConstraint');
+      }
+    });
+
+    test('bottom-of-set operator !!< parses with correct operator', () => {
+      const result = parseECL('!!< (<< 404684003)');
+      assert.equal(result.errors.length, 0, 'Should have no errors');
+      assert.ok(result.ast);
+      const expr = result.ast.expression;
+      if (expr.type === NodeType.SubExpressionConstraint) {
+        assert.ok(expr.operator);
+        assert.equal(expr.operator.operator, '!!<');
+      } else {
+        assert.fail('Expected SubExpressionConstraint');
+      }
+    });
   });
 
   describe('Filter constraints and history supplement AST', () => {

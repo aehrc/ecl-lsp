@@ -72,9 +72,9 @@ function printSubExpression(
     result += node.operator.operator + ' ';
   }
 
-  // Member-of (^)
+  // Member-of (^), with any member field selection
   if (node.memberOf) {
-    result += '^ ';
+    result += node.memberFields ? `^ [${node.memberFields.join(', ')}] ` : '^ ';
   }
 
   // Focus concept, wildcard, or parenthesized sub-expression
@@ -84,6 +84,9 @@ function printSubExpression(
       break;
     case NodeType.Wildcard:
       result += '*';
+      break;
+    case NodeType.AlternateIdentifier:
+      result += node.focus.term ? node.focus.identifier + normalizeTerm(node.focus.term) : node.focus.identifier;
       break;
     case NodeType.ExpressionConstraint: {
       const innerExpr = node.focus;
@@ -432,12 +435,8 @@ function printAttribute(
     name = src.slice(node.name.range.start.offset, node.name.range.end.offset);
   }
 
-  // Comparison operator — extract from source text between name end and value start.
-  // The AST doesn't model the comparison operator (=, !=, >=, <=), so we recover it
-  // from the gap between the attribute name and value ranges.
+  const compOp = node.comparison ?? '=';
   const between = src.slice(node.name.range.end.offset, node.value.range.start.offset);
-  const opMatch = /(!?=|[<>]=)/.exec(between);
-  const compOp = opMatch ? opMatch[1] : '=';
 
   // For >=/#value and <=/#value, check if there's a # prefix before the raw value
   const hasHashPrefix = between.includes('#');

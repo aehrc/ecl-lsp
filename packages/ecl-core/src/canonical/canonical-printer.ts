@@ -29,14 +29,19 @@ export function printCanonical(
   if (ast.type === NodeType.SubExpressionConstraint) {
     return printSubExpression(ast, sourceText, outerOperator);
   }
-  return printExpression(ast, sourceText, outerOperator);
+  return printExpression(ast, sourceText, outerOperator, outerOperator === undefined);
 }
 
-function printExpression(node: ExpressionNode, src: string, outerOperator?: string): string {
+/**
+ * `topLevel` is true where a full expression constraint is legal without parentheses: the whole
+ * expression, or directly inside a pair of parentheses. Refined and dotted expressions are only
+ * legal unparenthesised there.
+ */
+function printExpression(node: ExpressionNode, src: string, outerOperator?: string, topLevel = false): string {
   const inner = node.expression;
   switch (inner.type) {
     case NodeType.SubExpressionConstraint:
-      return printSubExpression(inner, src, outerOperator);
+      return printSubExpression(inner, src, outerOperator, topLevel);
     case NodeType.CompoundExpression:
       return printCompoundExpression(inner, src);
     case NodeType.RefinedExpression:
@@ -50,7 +55,7 @@ function printExpression(node: ExpressionNode, src: string, outerOperator?: stri
   }
 }
 
-function printSubExpression(node: SubExpressionNode, src: string, outerOperator?: string): string {
+function printSubExpression(node: SubExpressionNode, src: string, outerOperator?: string, topLevel = false): string {
   let result = '';
 
   // Constraint operator — compact form (no space before concept)
@@ -58,9 +63,9 @@ function printSubExpression(node: SubExpressionNode, src: string, outerOperator?
     result += node.operator.operator;
   }
 
-  // Member-of (^)
+  // Member-of (^), with any member field selection
   if (node.memberOf) {
-    result += '^';
+    result += node.memberFields ? `^[${node.memberFields.join(',')}]` : '^';
   }
 
   // Focus
@@ -71,11 +76,14 @@ function printSubExpression(node: SubExpressionNode, src: string, outerOperator?
     case NodeType.Wildcard:
       result += '*';
       break;
+    case NodeType.AlternateIdentifier:
+      result += node.focus.identifier;
+      break;
     case NodeType.ExpressionConstraint: {
       const innerExpr = node.focus.expression;
-      result += parensRedundant(node, innerExpr, outerOperator)
-        ? printExpression(node.focus, src, outerOperator)
-        : '(' + printExpression(node.focus, src) + ')';
+      result += parensRedundant(node, innerExpr, outerOperator, topLevel)
+        ? printExpression(node.focus, src, outerOperator, topLevel)
+        : '(' + printExpression(node.focus, src, undefined, true) + ')';
       break;
     }
   }
@@ -102,6 +110,7 @@ function parensRedundant(
   node: SubExpressionNode,
   inner: ExpressionNode['expression'],
   outerOperator: string | undefined,
+  topLevel: boolean,
 ): boolean {
   // An operator or ^ applied to a constrained/refined inner expression needs the parens
   if ((node.operator || node.memberOf) && !isBareFocus(inner)) return false;
@@ -109,11 +118,19 @@ function parensRedundant(
   if ((node.filters?.length || node.historySupplement) && inner.type !== NodeType.SubExpressionConstraint) {
     return false;
   }
-  // Rule 1: inner is non-compound → parens redundant
-  if (inner.type !== NodeType.CompoundExpression) return true;
-  // Rule 2: same operator as outer → redundant (normally flattened by the normaliser already).
+  // Rule 1: a plain sub-expression never needs them
+  if (inner.type === NodeType.SubExpressionConstraint) return true;
+  // The whole expression (or a group that is itself directly parenthesised) needs no extra parens
+  const plain = !node.operator && !node.memberOf && !node.filters?.length && !node.historySupplement;
+  if (topLevel && plain) return true;
+  // Refined and dotted expressions are only legal unparenthesised at the top level
+  if (inner.type !== NodeType.CompoundExpression) return false;
+  // Rule 2: same associative operator as outer → redundant (normally flattened by the normaliser).
+  // MINUS is not associative: A MINUS (B MINUS C) differs from (A MINUS B) MINUS C.
   // Rule 3: different operator or no outer context → keep parens
-  return outerOperator !== undefined && inner.operator.operator === outerOperator;
+  return (
+    inner.operator.operator !== 'MINUS' && outerOperator !== undefined && inner.operator.operator === outerOperator
+  );
 }
 
 /** True when the expression is just a concept reference or wildcard, with nothing applied to it. */
@@ -188,10 +205,8 @@ function printAttribute(node: AttributeNode, src: string): string {
     name = src.slice(node.name.range.start.offset, node.name.range.end.offset).trim();
   }
 
-  // Comparison operator — recovered from source gap
+  const compOp = node.comparison ?? '=';
   const between = src.slice(node.name.range.end.offset, node.value.range.start.offset);
-  const opMatch = /(!?=|[<>]=)/.exec(between);
-  const compOp = opMatch ? opMatch[1] : '=';
 
   // # prefix for numeric comparisons
   const hasHashPrefix = between.includes('#');

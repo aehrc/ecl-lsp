@@ -19,6 +19,7 @@ import {
   type AttributeValueNode,
   type ConceptReferenceNode,
   type WildcardNode,
+  type AlternateIdentifierNode,
   type DottedAttributeNode,
   type FilterConstraintNode,
 } from '../parser/ast';
@@ -58,13 +59,16 @@ function normaliseExpression(node: ExpressionNode, src: string): ExpressionNode 
 }
 
 function normaliseSubExpression(node: SubExpressionNode, src: string): SubExpressionNode {
-  let focus: ConceptReferenceNode | WildcardNode | ExpressionNode;
+  let focus: ConceptReferenceNode | WildcardNode | AlternateIdentifierNode | ExpressionNode;
   switch (node.focus.type) {
     case NodeType.ConceptReference:
       focus = stripTerm(node.focus);
       break;
     case NodeType.Wildcard:
       focus = { ...node.focus };
+      break;
+    case NodeType.AlternateIdentifier:
+      focus = { ...node.focus, term: undefined };
       break;
     case NodeType.ExpressionConstraint:
       focus = normaliseExpression(node.focus, src);

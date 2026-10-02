@@ -87,7 +87,7 @@ The `alignTerms` option is accepted but is a no-op — term pipe alignment was r
 
 - Cardinality constraints on attributes and attribute groups are modelled; refinement AND/OR operators and grouping are preserved in `RefinementNode.content` (`RefinementNode.attributes` remains a flattened convenience view)
 - Filter constraint internals (term values, language codes) not modelled in AST — only concept-bearing parts extracted
-- Attribute comparison operators (`=`, `!=`, `>=`, `<=`) are still recovered from source text, not the AST
+- Code that reprints from the AST (formatter, canonical form) is covered by a round-trip test over a grammar corpus (`packages/ecl-core/src/test/roundtrip-corpus.ts`); add new constructs there
 - Eclipse client requires Maven/Tycho (not part of npm workflow)
 
 ## Resources

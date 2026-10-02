@@ -22,6 +22,7 @@ import {
   AttributeNameNode,
   AttributeValueNode,
   WildcardNode,
+  AlternateIdentifierNode,
   FilterConstraintNode,
   HistorySupplementNode,
 } from './ast';
@@ -102,6 +103,7 @@ export class ECLASTVisitor extends AbstractParseTreeVisitor<any> implements ECLV
         range: this.getRange(ctx),
         operator,
         memberOf: memberOfCtx ? true : undefined,
+        memberFields: memberOfCtx ? this.memberFields(memberOfCtx) : undefined,
         focus: innerExpr,
       };
 
@@ -126,6 +128,7 @@ export class ECLASTVisitor extends AbstractParseTreeVisitor<any> implements ECLV
       range: this.getRange(ctx),
       operator,
       memberOf: memberOfCtx ? true : undefined,
+      memberFields: memberOfCtx ? this.memberFields(memberOfCtx) : undefined,
       focus,
     };
 
@@ -133,19 +136,41 @@ export class ECLASTVisitor extends AbstractParseTreeVisitor<any> implements ECLV
     return node;
   }
 
-  visitEclfocusconcept(ctx: ECL.EclfocusconceptContext): ConceptReferenceNode | WildcardNode {
+  visitEclfocusconcept(ctx: ECL.EclfocusconceptContext): ConceptReferenceNode | WildcardNode | AlternateIdentifierNode {
     const conceptRef = ctx.eclconceptreference();
     if (conceptRef) {
       return this.visit(conceptRef);
     }
 
-    const wildcard = ctx.wildcard();
-    if (wildcard) {
-      return { type: NodeType.Wildcard, range: this.getRange(ctx) };
+    const altId = ctx.altidentifier();
+    if (altId) {
+      return this.alternateIdentifier(altId);
     }
 
-    // altidentifier — treat as wildcard for now
     return { type: NodeType.Wildcard, range: this.getRange(ctx) };
+  }
+
+  private alternateIdentifier(ctx: ECL.AltidentifierContext): AlternateIdentifierNode {
+    const scheme = ctx.altidentifierschemealias()?.text ?? '';
+    const quoted = ctx.altidentifiercodewithinquotes();
+    const code = quoted ? quoted.text : (ctx.altidentifiercodewithoutquotes()?.text ?? '');
+    return {
+      type: NodeType.AlternateIdentifier,
+      range: this.getRange(ctx),
+      identifier: quoted ? `"${scheme}#${code}"` : `${scheme}#${code}`,
+      term: ctx.term()?.text,
+    };
+  }
+
+  /** Field names from `^ [a, b]`, `['*']` for `^ [*]`, undefined for a plain `^`. */
+  private memberFields(ctx: ECL.MemberofContext): string[] | undefined {
+    if (ctx.wildcard()) {
+      return ['*'];
+    }
+    return ctx
+      .refsetfieldnameset()
+      ?.refsetfieldname()
+      .map((f) => f.text);
   }
 
   visitEclconceptreference(ctx: ECL.EclconceptreferenceContext): ConceptReferenceNode {
@@ -459,6 +484,11 @@ export class ECLASTVisitor extends AbstractParseTreeVisitor<any> implements ECLV
     }
 
     const cardinalityCtx = ctx.cardinality();
+    const comparisonCtx =
+      exprCompOp ??
+      ctx.numericcomparisonoperator() ??
+      ctx.stringcomparisonoperator() ??
+      ctx.booleancomparisonoperator();
 
     return {
       type: NodeType.Attribute,
@@ -466,6 +496,7 @@ export class ECLASTVisitor extends AbstractParseTreeVisitor<any> implements ECLV
       name: attrName,
       value,
       reversed,
+      comparison: comparisonCtx ? (comparisonCtx.text as AttributeNode['comparison']) : undefined,
       cardinality: cardinalityCtx ? '[' + cardinalityCtx.text + ']' : undefined,
     };
   }

@@ -8,6 +8,7 @@ import { FormattingOptions, defaultFormattingOptions } from '../formatter/option
 import { canonicalise } from '../canonical/comparator';
 import { parseECL } from '../parser';
 import { signatureOf } from '../formatter/semantic-guard';
+import { roundTripCorpus, surfaceForm } from './roundtrip-corpus';
 
 describe('ECL Formatter', () => {
   // Task 8.2: Test formatting simple constraint expressions
@@ -2205,4 +2206,14 @@ describe('formatDocument — attribute name operators', () => {
   test('semantic signature distinguishes a constrained attribute name from a bare one', () => {
     assert.notStrictEqual(signatureOf('763158003 : << 127489000 = *'), signatureOf('763158003 : 127489000 = *'));
   });
+});
+
+describe('formatDocument — round trip over the grammar corpus', () => {
+  for (const ecl of roundTripCorpus) {
+    test(`preserves meaning: ${ecl}`, () => {
+      assert.strictEqual(parseECL(ecl).errors.length, 0, 'corpus entry must be valid ECL');
+      const formatted = formatDocument(ecl, defaultFormattingOptions);
+      assert.strictEqual(surfaceForm(formatted), surfaceForm(ecl), `reformatted as: ${formatted}`);
+    });
+  }
 });

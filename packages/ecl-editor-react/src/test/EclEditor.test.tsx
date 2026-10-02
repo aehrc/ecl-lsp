@@ -47,13 +47,13 @@ describe('EclEditor', () => {
 
   it('should pass value prop to editor', () => {
     render(<EclEditor value="<< 404684003" />);
-    const textarea = screen.getByTestId('monaco-textarea');
+    const textarea = screen.getByTestId<HTMLTextAreaElement>('monaco-textarea');
     expect(textarea.value).toBe('<< 404684003');
   });
 
   it('should pass defaultValue prop to editor', () => {
     render(<EclEditor defaultValue="< 19829001" />);
-    const textarea = screen.getByTestId('monaco-textarea');
+    const textarea = screen.getByTestId<HTMLTextAreaElement>('monaco-textarea');
     expect(textarea.value).toBe('< 19829001');
   });
 
@@ -61,7 +61,7 @@ describe('EclEditor', () => {
     const handleChange = vi.fn();
     render(<EclEditor value="" onChange={handleChange} />);
 
-    const textarea = screen.getByTestId('monaco-textarea');
+    const textarea = screen.getByTestId<HTMLTextAreaElement>('monaco-textarea');
     fireEvent.change(textarea, { target: { value: '< 73211009' } });
 
     expect(handleChange).toHaveBeenCalledWith('< 73211009');
@@ -75,13 +75,13 @@ describe('EclEditor', () => {
 
   it('should apply readOnly option', () => {
     render(<EclEditor readOnly />);
-    const textarea = screen.getByTestId('monaco-textarea');
+    const textarea = screen.getByTestId<HTMLTextAreaElement>('monaco-textarea');
     expect(textarea.readOnly).toBe(true);
   });
 
   it('should not be readOnly by default', () => {
     render(<EclEditor />);
-    const textarea = screen.getByTestId('monaco-textarea');
+    const textarea = screen.getByTestId<HTMLTextAreaElement>('monaco-textarea');
     expect(textarea.readOnly).toBe(false);
   });
 
@@ -122,31 +122,31 @@ describe('EclEditor', () => {
 
   it('should pass minimap option', () => {
     render(<EclEditor minimap={true} />);
-    const textarea = screen.getByTestId('monaco-textarea');
+    const textarea = screen.getByTestId<HTMLTextAreaElement>('monaco-textarea');
     expect(textarea).toHaveAttribute('data-minimap', 'on');
   });
 
   it('should disable minimap by default', () => {
     render(<EclEditor />);
-    const textarea = screen.getByTestId('monaco-textarea');
+    const textarea = screen.getByTestId<HTMLTextAreaElement>('monaco-textarea');
     expect(textarea).toHaveAttribute('data-minimap', 'off');
   });
 
   it('should pass lineNumbers option', () => {
     render(<EclEditor lineNumbers={false} />);
-    const textarea = screen.getByTestId('monaco-textarea');
+    const textarea = screen.getByTestId<HTMLTextAreaElement>('monaco-textarea');
     expect(textarea).toHaveAttribute('data-linenumbers', 'off');
   });
 
   it('should enable lineNumbers by default', () => {
     render(<EclEditor />);
-    const textarea = screen.getByTestId('monaco-textarea');
+    const textarea = screen.getByTestId<HTMLTextAreaElement>('monaco-textarea');
     expect(textarea).toHaveAttribute('data-linenumbers', 'on');
   });
 
   it('controlled value should take precedence over defaultValue', () => {
     render(<EclEditor value="< 404684003" defaultValue="< 19829001" />);
-    const textarea = screen.getByTestId('monaco-textarea');
+    const textarea = screen.getByTestId<HTMLTextAreaElement>('monaco-textarea');
     // The mock editor uses value ?? defaultValue, so value wins
     expect(textarea.value).toBe('< 404684003');
   });

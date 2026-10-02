@@ -5,18 +5,26 @@ import type * as Monaco from 'monaco-editor';
 import { getCompletionItemsWithSearch, groupIntoExpressions } from '@aehrc/ecl-core';
 import type { CoreCompletionItem, CoreCompletionItemKind, ITerminologyService } from '@aehrc/ecl-core';
 
-const KIND_MAP: Record<CoreCompletionItemKind, number> = {
-  keyword: 14, // Monaco.languages.CompletionItemKind.Keyword
-  operator: 12, // Monaco.languages.CompletionItemKind.Operator
-  snippet: 27, // Monaco.languages.CompletionItemKind.Snippet
-  value: 12, // Monaco.languages.CompletionItemKind.Value → Operator (closest)
-  concept: 6, // Monaco.languages.CompletionItemKind.Variable
-  property: 9, // Monaco.languages.CompletionItemKind.Property
-  text: 18, // Monaco.languages.CompletionItemKind.Text
-  function: 1, // Monaco.languages.CompletionItemKind.Function
+type MonacoApi = typeof import('monaco-editor');
+
+/**
+ * Core kind → Monaco CompletionItemKind member name. The numeric values are read from the
+ * monaco instance at runtime because Monaco renumbers this enum between releases
+ * (e.g. Tool = 27 was inserted before Snippet).
+ */
+const KIND_MAP: Record<CoreCompletionItemKind, keyof typeof Monaco.languages.CompletionItemKind> = {
+  keyword: 'Keyword',
+  operator: 'Operator',
+  snippet: 'Snippet',
+  value: 'Value',
+  concept: 'Variable',
+  property: 'Property',
+  text: 'Text',
+  function: 'Function',
 };
 
 function mapCompletionItem(
+  monaco: MonacoApi,
   item: CoreCompletionItem,
   defaultRange: Monaco.IRange,
   model: Monaco.editor.ITextModel,
@@ -44,12 +52,10 @@ function mapCompletionItem(
 
   const result: Monaco.languages.CompletionItem = {
     label: item.label,
-    kind: KIND_MAP[item.kind],
+    kind: monaco.languages.CompletionItemKind[KIND_MAP[item.kind]],
     insertText,
     insertTextRules:
-      item.insertTextFormat === 'snippet'
-        ? 4 // Monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet
-        : undefined,
+      item.insertTextFormat === 'snippet' ? monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet : undefined,
     detail: item.detail,
     documentation: item.documentation,
     sortText: item.sortText,
@@ -77,6 +83,7 @@ function isInsideExpression(text: string, lineNumber: number): boolean {
 const SEARCH_DEBOUNCE_MS = 200;
 
 export function createCompletionProvider(
+  monaco: MonacoApi,
   getTerminologyService: () => ITerminologyService | null,
 ): Monaco.languages.CompletionItemProvider {
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -146,7 +153,7 @@ export function createCompletionProvider(
 
         return {
           incomplete: true,
-          suggestions: merged.map((item) => mapCompletionItem(item, range, model)),
+          suggestions: merged.map((item) => mapCompletionItem(monaco, item, range, model)),
         };
       } catch {
         return { incomplete: true, suggestions: [] };

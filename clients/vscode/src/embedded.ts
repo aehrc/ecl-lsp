@@ -387,6 +387,7 @@ export class EmbeddedEclManager implements vscode.Disposable {
 
   private convertCompletionItem(item: LspCompletionItem, fragment: EclFragment): vscode.CompletionItem {
     const label = typeof item.label === 'string' ? item.label : item.label.label;
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-enum-assignment -- LSP kind = VS Code kind + 1 (see above)
     const kind: vscode.CompletionItemKind | undefined = item.kind == null ? undefined : item.kind - 1;
     const ci = new vscode.CompletionItem(label, kind);
 

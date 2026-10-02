@@ -97,7 +97,7 @@ export function registerEclLanguage(
 
   // Register all providers
   disposables.push(
-    monaco.languages.registerCompletionItemProvider(ECL_LANGUAGE_ID, createCompletionProvider(getService)),
+    monaco.languages.registerCompletionItemProvider(ECL_LANGUAGE_ID, createCompletionProvider(monaco, getService)),
     monaco.languages.registerHoverProvider(ECL_LANGUAGE_ID, createHoverProvider(getService)),
     monaco.languages.registerDocumentFormattingEditProvider(
       ECL_LANGUAGE_ID,

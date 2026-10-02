@@ -11,6 +11,7 @@ import { createDocumentFormattingProvider, createDocumentRangeFormattingProvider
 import { createCodeActionProvider } from '../monaco/code-action-provider';
 import { createSemanticTokensProvider, eclSemanticTokensLegend } from '../monaco/semantic-tokens-provider';
 import { registerEclLanguage } from '../monaco/register';
+import { MonacoDiagnosticsAdapter } from '../monaco/diagnostics-adapter';
 
 // --- Mock terminology service ---
 
@@ -37,9 +38,89 @@ function createMockService(concepts: Map<string, ConceptInfo | null> = new Map()
 
 // --- Completion Provider Tests ---
 
+/**
+ * Minimal monaco enum surface for the completion provider. Monaco renumbered
+ * CompletionItemKind between releases (Tool = 27 was inserted before Snippet),
+ * so the provider must read kinds from the instance it is given.
+ */
+function createMockMonacoEnums(snippetKind: 27 | 28) {
+  return {
+    languages: {
+      CompletionItemKind: {
+        Function: 1,
+        Variable: 4,
+        Property: 9,
+        Operator: 11,
+        Value: 13,
+        Keyword: 17,
+        Text: 18,
+        Snippet: snippetKind,
+      },
+      CompletionItemInsertTextRule: { InsertAsSnippet: 4 },
+    },
+  } as any;
+}
+
+const mockMonaco = createMockMonacoEnums(28);
+
+describe('Monaco Completion Provider — kinds come from the monaco instance', () => {
+  for (const snippetKind of [27, 28] as const) {
+    it(`uses the instance's Snippet kind (${snippetKind}) and InsertAsSnippet rule for snippets`, async () => {
+      const provider = createCompletionProvider(createMockMonacoEnums(snippetKind), () => null);
+      const result = await provider.provideCompletionItems(
+        createMockModel('') as any,
+        new MockPosition(1, 1) as any,
+        null as any,
+        null as any,
+      );
+
+      const snippet = result.suggestions.find((s) => s.label === 'Descendant of');
+      expect(snippet).toBeDefined();
+      expect(snippet?.kind).toBe(snippetKind);
+      expect(snippet?.insertTextRules).toBe(4);
+    });
+  }
+
+  it("uses the instance's Keyword kind for logical operators", async () => {
+    const provider = createCompletionProvider(mockMonaco, () => null);
+    const result = await provider.provideCompletionItems(
+      createMockModel('< 404684003 ') as any,
+      new MockPosition(1, 13) as any,
+      null as any,
+      null as any,
+    );
+
+    const and = result.suggestions.find((s) => s.label === 'AND');
+    expect(and).toBeDefined();
+    expect(and?.kind).toBe(17);
+  });
+});
+
+// --- Diagnostics Adapter Tests ---
+
+describe('Monaco Diagnostics Adapter', () => {
+  it("uses the instance's MarkerSeverity for syntax errors", () => {
+    const setModelMarkers = vi.fn();
+    const monaco = {
+      // Distinctive values prove the severity is read from the instance, not hard-coded
+      MarkerSeverity: { Hint: 101, Info: 102, Warning: 104, Error: 108 },
+      editor: { setModelMarkers },
+    } as any;
+    const model = { ...createMockModel('< 404684003 AND'), onDidChangeContent: () => ({ dispose() {} }) };
+
+    const adapter = new MonacoDiagnosticsAdapter(monaco, model as any, { semanticDebounceMs: 60_000 } as any);
+    adapter.dispose();
+
+    expect(setModelMarkers).toHaveBeenCalled();
+    const markers = setModelMarkers.mock.calls[0][2];
+    expect(markers.length).toBeGreaterThan(0);
+    expect(markers[0].severity).toBe(monaco.MarkerSeverity.Error);
+  });
+});
+
 describe('Monaco Completion Provider', () => {
   it('should declare correct trigger characters', () => {
-    const provider = createCompletionProvider(() => null);
+    const provider = createCompletionProvider(mockMonaco, () => null);
     expect(provider.triggerCharacters).toContain('^');
     expect(provider.triggerCharacters).toContain(':');
     expect(provider.triggerCharacters).toContain('=');
@@ -48,7 +129,7 @@ describe('Monaco Completion Provider', () => {
   });
 
   it('should return completion items for empty document', async () => {
-    const provider = createCompletionProvider(() => null);
+    const provider = createCompletionProvider(mockMonaco, () => null);
     const model = createMockModel('');
     const position = new MockPosition(1, 1);
 
@@ -62,7 +143,7 @@ describe('Monaco Completion Provider', () => {
   });
 
   it('should return completion items inside an expression', async () => {
-    const provider = createCompletionProvider(() => null);
+    const provider = createCompletionProvider(mockMonaco, () => null);
     const model = createMockModel('< 404684003 ');
     const position = new MockPosition(1, 13);
 
@@ -73,7 +154,7 @@ describe('Monaco Completion Provider', () => {
   });
 
   it('should map core completion item kinds to Monaco numeric kinds', async () => {
-    const provider = createCompletionProvider(() => null);
+    const provider = createCompletionProvider(mockMonaco, () => null);
     const model = createMockModel('');
     const position = new MockPosition(1, 1);
 
@@ -85,21 +166,21 @@ describe('Monaco Completion Provider', () => {
   });
 
   it('should set insertTextRules for snippet items', async () => {
-    const provider = createCompletionProvider(() => null);
+    const provider = createCompletionProvider(mockMonaco, () => null);
     const model = createMockModel('');
     const position = new MockPosition(1, 1);
 
     const result = await provider.provideCompletionItems(model as any, position as any, null as any, null as any);
 
-    // Snippet items (kind=27) should have insertTextRules=4 (InsertAsSnippet)
-    const snippets = result.suggestions.filter((s: any) => s.kind === 27);
+    // Snippet items should have insertTextRules=4 (InsertAsSnippet)
+    const snippets = result.suggestions.filter((s: any) => s.kind === mockMonaco.languages.CompletionItemKind.Snippet);
     for (const snippet of snippets) {
       expect((snippet as any).insertTextRules).toBe(4);
     }
   });
 
   it('should provide a range on each suggestion', async () => {
-    const provider = createCompletionProvider(() => null);
+    const provider = createCompletionProvider(mockMonaco, () => null);
     const model = createMockModel('< ');
     const position = new MockPosition(1, 3);
 
@@ -122,7 +203,7 @@ describe('Monaco Completion Provider', () => {
         hasMore: false,
       });
 
-      const provider = createCompletionProvider(() => service);
+      const provider = createCompletionProvider(mockMonaco, () => service);
       const model = createMockModel('< diabetes');
       const position = new MockPosition(1, 11);
 
@@ -158,7 +239,7 @@ describe('Monaco Completion Provider', () => {
   });
 
   it('should mark result as incomplete for incremental loading', async () => {
-    const provider = createCompletionProvider(() => null);
+    const provider = createCompletionProvider(mockMonaco, () => null);
     const model = createMockModel('< ');
     const position = new MockPosition(1, 3);
 
@@ -187,7 +268,7 @@ describe('Monaco Completion Provider — search debounce', () => {
       };
     };
 
-    const provider = createCompletionProvider(() => service);
+    const provider = createCompletionProvider(mockMonaco, () => service);
     const model = createMockModel('< diabetes');
     const position = new MockPosition(1, 11);
 
@@ -207,7 +288,7 @@ describe('Monaco Completion Provider — search debounce', () => {
       return { results: [], hasMore: false };
     };
 
-    const provider = createCompletionProvider(() => service);
+    const provider = createCompletionProvider(mockMonaco, () => service);
     const model = createMockModel('< dia');
     const position = new MockPosition(1, 6);
 
@@ -233,7 +314,7 @@ describe('Monaco Completion Provider — search debounce', () => {
       return { results: [], hasMore: false };
     };
 
-    const provider = createCompletionProvider(() => service);
+    const provider = createCompletionProvider(mockMonaco, () => service);
     const model = createMockModel('< diabetes');
     const position = new MockPosition(1, 11);
 

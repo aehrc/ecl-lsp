@@ -626,7 +626,6 @@ async function selectSnomedEdition(client: LanguageClient): Promise<void> {
     // Manual entry fallback
     const uri = await window.showInputBox({
       prompt: 'Enter a SNOMED CT version URI',
-      // eslint-disable-next-line sonarjs/no-clear-text-protocols -- SNOMED CT standard URI scheme uses http://snomed.info/sct
       placeHolder: 'http://snomed.info/sct/32506021000036107/version/20260131',
       value: workspace.getConfiguration('ecl.terminology').get('snomedVersion', ''),
     });

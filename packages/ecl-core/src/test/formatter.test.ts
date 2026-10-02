@@ -2193,3 +2193,16 @@ describe('Formatter semantic guard', () => {
     assert.ok(!result.includes('> ='), `>= must not be split: ${result}`);
   });
 });
+
+describe('formatDocument — attribute name operators', () => {
+  test('keeps << on an attribute name when formatting with options', () => {
+    assert.strictEqual(
+      formatDocument('<< 763158003 : << 127489000 = << 387207008', defaultFormattingOptions),
+      '<< 763158003: << 127489000 = << 387207008',
+    );
+  });
+
+  test('semantic signature distinguishes a constrained attribute name from a bare one', () => {
+    assert.notStrictEqual(signatureOf('763158003 : << 127489000 = *'), signatureOf('763158003 : 127489000 = *'));
+  });
+});

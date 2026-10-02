@@ -1196,3 +1196,23 @@ describe('ECL Parser — refinement structure', () => {
     assert.equal(refinement.attributes[0].cardinality, undefined);
   });
 });
+
+describe('ECL Parser — attribute name AST', () => {
+  test('bare attribute name keeps conceptId and term', () => {
+    const result = parseECL('763158003 : 127489000 |Has active ingredient| = *');
+    const expr = result.ast?.expression;
+    assert.ok(expr?.type === NodeType.RefinedExpression);
+    const name = expr.refinement.attributes[0].name;
+    assert.equal(name.conceptId, '127489000');
+    assert.equal(name.term, 'Has active ingredient');
+  });
+
+  test('constrained attribute name keeps its operator in the expression', () => {
+    const result = parseECL('763158003 : << 127489000 = *');
+    const expr = result.ast?.expression;
+    assert.ok(expr?.type === NodeType.RefinedExpression);
+    const name = expr.refinement.attributes[0].name;
+    assert.equal(name.conceptId, undefined);
+    assert.equal(name.expression?.operator?.operator, '<<');
+  });
+});

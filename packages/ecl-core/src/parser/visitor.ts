@@ -387,10 +387,17 @@ export class ECLASTVisitor extends AbstractParseTreeVisitor<any> implements ECLV
     const nameSubExpr = nameCtx.subexpressionconstraint();
     const nameNode = this.visit(nameSubExpr) as SubExpressionNode;
 
-    // Build attribute name from the sub-expression's focus concept
+    // A bare concept name is stored as conceptId/term. Anything applied to it (constraint operator,
+    // member-of, filters) changes which attributes match, so keep the whole expression instead.
     let attrName: AttributeNameNode;
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: visitor may return null
-    if (nameNode?.focus?.type === NodeType.ConceptReference) {
+    if (
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: visitor may return null
+      nameNode?.focus?.type === NodeType.ConceptReference &&
+      !nameNode.operator &&
+      !nameNode.memberOf &&
+      !nameNode.filters?.length &&
+      !nameNode.historySupplement
+    ) {
       const conceptRef = nameNode.focus;
       attrName = {
         type: NodeType.AttributeName,

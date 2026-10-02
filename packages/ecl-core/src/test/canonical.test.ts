@@ -286,3 +286,18 @@ describe('canonicalise — dotted expressions', () => {
     assert.strictEqual(canonicalise('404684003 . 363698007'), '404684003.363698007');
   });
 });
+
+// ── Attribute name operators ────────────────────────────────────────────
+
+describe('canonicalise — attribute name operators', () => {
+  it('should preserve << on an attribute name', () => {
+    assert.strictEqual(
+      canonicalise('<< 763158003 : << 127489000 = << 387207008'),
+      '<<763158003:<<127489000 = <<387207008',
+    );
+  });
+
+  it('should distinguish a constrained attribute name from a bare one', () => {
+    assert.strictEqual(compareExpressions('763158003 : << 127489000 = *', '763158003 : 127489000 = *'), 'different');
+  });
+});

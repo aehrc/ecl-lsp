@@ -13,6 +13,7 @@ import {
   type DottedAttributeNode,
   type ConceptReferenceNode,
   type WildcardNode,
+  type AlternateIdentifierNode,
   type RefinementNode,
   type AttributeNode,
   type AttributeNameNode,
@@ -30,6 +31,7 @@ type AnyAstNode =
   | DottedAttributeNode
   | ConceptReferenceNode
   | WildcardNode
+  | AlternateIdentifierNode
   | RefinementNode
   | AttributeNode
   | FilterConstraintNode

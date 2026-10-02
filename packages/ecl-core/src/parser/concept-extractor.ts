@@ -18,6 +18,7 @@ import {
   AttributeNameNode,
   AttributeValueNode,
   WildcardNode,
+  AlternateIdentifierNode,
   FilterConstraintNode,
   HistorySupplementNode,
   NodeType,
@@ -40,6 +41,7 @@ type EclAstNode =
   | AttributeNameNode
   | AttributeValueNode
   | WildcardNode
+  | AlternateIdentifierNode
   | FilterConstraintNode
   | HistorySupplementNode;
 
@@ -162,7 +164,8 @@ export function extractConceptIds(ast: ExpressionNode, options?: { deduplicate?:
       case NodeType.ConstraintOperator:
       case NodeType.LogicalOperator:
       case NodeType.Wildcard:
-        // Leaf nodes — no children to visit
+      case NodeType.AlternateIdentifier:
+        // Leaf nodes — no children to visit (alternate identifiers are not SNOMED CT concepts)
         break;
     }
   }

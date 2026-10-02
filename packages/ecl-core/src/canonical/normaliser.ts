@@ -19,6 +19,7 @@ import {
   type AttributeValueNode,
   type ConceptReferenceNode,
   type WildcardNode,
+  type AlternateIdentifierNode,
   type DottedAttributeNode,
   type FilterConstraintNode,
 } from '../parser/ast';
@@ -57,14 +58,26 @@ function normaliseExpression(node: ExpressionNode, src: string): ExpressionNode 
   return { ...node, expression: normalised };
 }
 
+/**
+ * `"LOINC#54486-6"` and `LOINC#54486-6` are the same code; quotes are only needed when the code
+ * has characters the unquoted grammar form (alpha, digit, `-`, `.`, `_`) cannot hold.
+ */
+function unquoteIdentifier(identifier: string): string {
+  const unquoted = /^"([A-Za-z][A-Za-z0-9-]*#[A-Za-z0-9._-]+)"$/.exec(identifier);
+  return unquoted ? unquoted[1] : identifier;
+}
+
 function normaliseSubExpression(node: SubExpressionNode, src: string): SubExpressionNode {
-  let focus: ConceptReferenceNode | WildcardNode | ExpressionNode;
+  let focus: ConceptReferenceNode | WildcardNode | AlternateIdentifierNode | ExpressionNode;
   switch (node.focus.type) {
     case NodeType.ConceptReference:
       focus = stripTerm(node.focus);
       break;
     case NodeType.Wildcard:
       focus = { ...node.focus };
+      break;
+    case NodeType.AlternateIdentifier:
+      focus = { ...node.focus, identifier: unquoteIdentifier(node.focus.identifier), term: undefined };
       break;
     case NodeType.ExpressionConstraint:
       focus = normaliseExpression(node.focus, src);

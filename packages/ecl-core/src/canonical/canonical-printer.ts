@@ -73,21 +73,9 @@ function printSubExpression(node: SubExpressionNode, src: string, outerOperator?
       break;
     case NodeType.ExpressionConstraint: {
       const innerExpr = node.focus.expression;
-      // §5.5 redundant parenthesis removal — 3-way check
-      if ((node.operator || node.memberOf) && !isBareFocus(innerExpr)) {
-        // An operator or ^ applied to a constrained/refined inner expression needs the parens
-        result += '(' + printExpression(node.focus, src) + ')';
-      } else if (innerExpr.type !== NodeType.CompoundExpression) {
-        // Rule 1: inner is non-compound → parens redundant
-        result += printExpression(node.focus, src, outerOperator);
-      } else if (outerOperator && innerExpr.operator.operator === outerOperator) {
-        // Rule 2: same operator as outer → redundant (handled by normaliser flattening)
-        // If we get here, the normaliser didn't flatten — emit without parens anyway
-        result += printExpression(node.focus, src, outerOperator);
-      } else {
-        // Rule 3: different operator or no outer context → keep parens
-        result += '(' + printExpression(node.focus, src) + ')';
-      }
+      result += parensRedundant(node, innerExpr, outerOperator)
+        ? printExpression(node.focus, src, outerOperator)
+        : '(' + printExpression(node.focus, src) + ')';
       break;
     }
   }
@@ -107,6 +95,25 @@ function printSubExpression(node: SubExpressionNode, src: string, outerOperator?
   }
 
   return result;
+}
+
+/** §5.5 redundant parenthesis removal: can the parens around `inner` (the focus of `node`) be dropped? */
+function parensRedundant(
+  node: SubExpressionNode,
+  inner: ExpressionNode['expression'],
+  outerOperator: string | undefined,
+): boolean {
+  // An operator or ^ applied to a constrained/refined inner expression needs the parens
+  if ((node.operator || node.memberOf) && !isBareFocus(inner)) return false;
+  // A filter or history supplement applied to a compound/refined/dotted group needs the parens
+  if ((node.filters?.length || node.historySupplement) && inner.type !== NodeType.SubExpressionConstraint) {
+    return false;
+  }
+  // Rule 1: inner is non-compound → parens redundant
+  if (inner.type !== NodeType.CompoundExpression) return true;
+  // Rule 2: same operator as outer → redundant (normally flattened by the normaliser already).
+  // Rule 3: different operator or no outer context → keep parens
+  return outerOperator !== undefined && inner.operator.operator === outerOperator;
 }
 
 /** True when the expression is just a concept reference or wildcard, with nothing applied to it. */

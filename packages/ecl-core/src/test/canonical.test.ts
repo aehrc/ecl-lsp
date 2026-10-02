@@ -315,6 +315,14 @@ describe('canonicalise — round trip over the grammar corpus', () => {
     });
   }
 
+  it('treats quoted and unquoted forms of the same alternate identifier as equivalent', () => {
+    assert.strictEqual(compareExpressions('"LOINC#54486-6"', 'LOINC#54486-6'), 'structurally_equivalent');
+  });
+
+  it('keeps quotes an alternate identifier code needs', () => {
+    assert.strictEqual(canonicalise('"ICD-10#A00 B"'), '"ICD-10#A00 B"');
+  });
+
   for (const [a, b] of distinctPairs) {
     it(`distinguishes ${a}  vs  ${b}`, () => {
       assert.strictEqual(compareExpressions(a, b), 'different');

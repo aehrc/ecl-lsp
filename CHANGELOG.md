@@ -5,6 +5,16 @@ All notable changes to the ECL Language Server will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.1] - 2026-10-03
+
+### Fixed
+
+- **Concept search results often never appeared in the Monaco editors** (`ecl-editor-core`, and so `ecl-editor` and `ecl-editor-react`) ([#137](https://github.com/aehrc/ecl-lsp/pull/137)): typing a concept name such as `< medicinal prod` and pausing frequently left the suggestion list closed, and backspacing only sometimes brought results back. Two causes in the completion provider: search results arrived in the background and were held for the _next_ completion request, which Monaco never makes when a background search finishes — and it had usually closed the list already, because no operator matched the typed word; and held results carried the replace range for the text they were searched with, so Monaco discarded them as soon as the user typed further. The provider now waits for the typing pause and returns operators, snippets and concept results together on the same request, with ranges for the current text; Monaco shows "Loading…" while it waits. Only the most recent request searches, and requests with nothing to search for still return immediately. Embedding applications pick this up by upgrading `@aehrc/ecl-editor` or `@aehrc/ecl-editor-react`; no code changes are needed.
+
+### Added
+
+- **`extractConceptSearchQuery`** (`ecl-core`): now exported, so callers can tell whether completion at a position would run a concept search.
+
 ## [1.6.0] - 2026-10-02
 
 A minor rather than a patch, for two reasons: the VS Code extension now requires VS Code 1.91 or later (previously 1.75) — users on 1.75–1.90 are not offered this version and stay on 1.5.0 — and `@aehrc/ecl-core`'s AST gains an `AlternateIdentifier` node type and new `memberFields` and `comparison` properties.

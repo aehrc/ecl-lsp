@@ -2,7 +2,7 @@
 // ABN 41 687 119 230. SPDX-License-Identifier: Apache-2.0
 
 import type * as Monaco from 'monaco-editor';
-import { getCompletionItemsWithSearch, groupIntoExpressions } from '@aehrc/ecl-core';
+import { extractConceptSearchQuery, getCompletionItemsWithSearch, groupIntoExpressions } from '@aehrc/ecl-core';
 import type { CoreCompletionItem, CoreCompletionItemKind, ITerminologyService } from '@aehrc/ecl-core';
 
 type MonacoApi = typeof import('monaco-editor');
@@ -82,19 +82,24 @@ function isInsideExpression(text: string, lineNumber: number): boolean {
 
 const SEARCH_DEBOUNCE_MS = 200;
 
+const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
 export function createCompletionProvider(
   monaco: MonacoApi,
   getTerminologyService: () => ITerminologyService | null,
 ): Monaco.languages.CompletionItemProvider {
-  let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-  let latestSearchItems: CoreCompletionItem[] = [];
+  // Each request supersedes the ones before it; only the latest runs a concept search.
+  let latestRequest = 0;
 
   return {
     triggerCharacters: ['^', ':', '=', '{', '<', '>', '!', ' '],
     provideCompletionItems: async (
       model: Monaco.editor.ITextModel,
       position: Monaco.Position,
+      _context?: Monaco.languages.CompletionContext,
+      token?: Monaco.CancellationToken,
     ): Promise<Monaco.languages.CompletionList> => {
+      const request = ++latestRequest;
       try {
         const text = model.getValue();
         const line0 = position.lineNumber - 1; // 0-based
@@ -111,37 +116,27 @@ export function createCompletionProvider(
         const cursorColumn = position.column - 1; // 0-based
         const inExpression = isInsideExpression(text, line0);
 
-        // Return static completions (operators/snippets) immediately without waiting for
-        // concept search, so the dropdown is never empty while the debounce is pending.
-        const staticItems: CoreCompletionItem[] = await getCompletionItemsWithSearch(
+        // A concept search goes to the network, so wait for typing to pause and search only for
+        // the latest request. The results must come back on this request: Monaco does not ask
+        // again when a background search finishes, and results computed for older text carry a
+        // replace range Monaco rejects once the cursor has moved past it. Monaco shows
+        // "Loading…" while it waits, and cancels the request if the user keeps typing.
+        let service = getTerminologyService();
+        if (service && inExpression && extractConceptSearchQuery(currentLine.substring(0, cursorColumn))) {
+          await delay(SEARCH_DEBOUNCE_MS);
+          if (request !== latestRequest || token?.isCancellationRequested) {
+            service = null; // superseded: skip the search, Monaco discards this result anyway
+          }
+        }
+
+        const items: CoreCompletionItem[] = await getCompletionItemsWithSearch(
           inExpression,
           textBeforeCursor,
           currentLine,
           cursorColumn,
           line0,
-          null,
+          service,
         );
-
-        const service = getTerminologyService();
-        if (service) {
-          // Cancel previous pending search and schedule a new one after the debounce window.
-          if (debounceTimer !== null) clearTimeout(debounceTimer);
-          debounceTimer = setTimeout(() => {
-            debounceTimer = null;
-            getCompletionItemsWithSearch(inExpression, textBeforeCursor, currentLine, cursorColumn, line0, service)
-              .then((items: CoreCompletionItem[]) => {
-                latestSearchItems = items;
-              })
-              .catch(() => {
-                /* silently degrade */
-              });
-          }, SEARCH_DEBOUNCE_MS);
-        }
-
-        // Merge static items with results from the most recent completed search.
-        // Monaco's `incomplete: true` causes a re-query when latestSearchItems updates.
-        const seen = new Set(staticItems.map((i) => i.label));
-        const merged = [...staticItems, ...latestSearchItems.filter((i) => !seen.has(i.label))];
 
         const word = model.getWordUntilPosition(position);
         const range: Monaco.IRange = {
@@ -153,7 +148,7 @@ export function createCompletionProvider(
 
         return {
           incomplete: true,
-          suggestions: merged.map((item) => mapCompletionItem(monaco, item, range, model)),
+          suggestions: items.map((item) => mapCompletionItem(monaco, item, range, model)),
         };
       } catch {
         return { incomplete: true, suggestions: [] };

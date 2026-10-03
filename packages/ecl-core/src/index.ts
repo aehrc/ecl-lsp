@@ -87,7 +87,7 @@ export { buildReplacementText } from './refactoring/replace-inactive-concept';
 export type { ReplacementResult } from './refactoring/replace-inactive-concept';
 
 // Completion
-export { getCompletionItems, getCompletionItemsWithSearch } from './completion/provider';
+export { getCompletionItems, getCompletionItemsWithSearch, extractConceptSearchQuery } from './completion/provider';
 export { detectCursorContext, detectFilterContext } from './completion/context-detector';
 export type { CursorContext, FilterSubContext, FilterType } from './completion/context-detector';
 export { eclSnippetCompletions } from './completion/snippets';

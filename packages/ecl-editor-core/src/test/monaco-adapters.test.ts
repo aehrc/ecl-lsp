@@ -194,50 +194,6 @@ describe('Monaco Completion Provider', () => {
     }
   });
 
-  it('should return concept search results after debounce window', async () => {
-    vi.useFakeTimers();
-    try {
-      const service = createMockService();
-      service.searchConcepts = async () => ({
-        results: [{ id: '73211009', fsn: 'Diabetes mellitus (disorder)', pt: 'Diabetes mellitus', active: true }],
-        hasMore: false,
-      });
-
-      const provider = createCompletionProvider(mockMonaco, () => service);
-      const model = createMockModel('< diabetes');
-      const position = new MockPosition(1, 11);
-
-      // First call — static items only; search not yet fired
-      const resultBefore = await provider.provideCompletionItems(
-        model as any,
-        position as any,
-        null as any,
-        null as any,
-      );
-      const conceptBefore = resultBefore.suggestions.find(
-        (s: any) => s.label?.toString().includes('73211009') || s.insertText?.includes('73211009'),
-      );
-      expect(conceptBefore).toBeUndefined();
-
-      // Advance past debounce window and flush the search promise
-      await vi.advanceTimersByTimeAsync(250);
-
-      // Second call — should now include search results from latestSearchItems
-      const resultAfter = await provider.provideCompletionItems(
-        model as any,
-        position as any,
-        null as any,
-        null as any,
-      );
-      const conceptAfter = resultAfter.suggestions.find(
-        (s: any) => s.label?.toString().includes('73211009') || s.insertText?.includes('73211009'),
-      );
-      expect(conceptAfter).toBeDefined();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
   it('should mark result as incomplete for incremental loading', async () => {
     const provider = createCompletionProvider(mockMonaco, () => null);
     const model = createMockModel('< ');
@@ -249,80 +205,137 @@ describe('Monaco Completion Provider', () => {
   });
 });
 
-// --- Completion Provider Debounce Tests ---
+// --- Completion Provider Concept Search Tests ---
 
-describe('Monaco Completion Provider — search debounce', () => {
+const DIABETES = { id: '73211009', fsn: 'Diabetes mellitus (disorder)', pt: 'Diabetes mellitus', active: true };
+
+function isConcept(s: any): boolean {
+  return s.label?.toString().includes('73211009');
+}
+
+describe('Monaco Completion Provider — concept search', () => {
   afterEach(() => {
     vi.useRealTimers();
   });
 
-  it('should return static completions immediately without waiting for search', async () => {
+  it('resolves a single request with concept results once the search completes', async () => {
+    // Monaco does not re-ask when a background search finishes, so results cached for a later
+    // request never appear if the user stops typing. The request itself must deliver them.
     vi.useFakeTimers();
-    let searchCallCount = 0;
     const service = createMockService();
-    service.searchConcepts = async () => {
-      searchCallCount++;
-      return {
-        results: [{ id: '73211009', fsn: 'Diabetes mellitus (disorder)', pt: 'Diabetes mellitus', active: true }],
-        hasMore: false,
-      };
-    };
-
+    service.searchConcepts = async () => ({ results: [DIABETES], hasMore: false });
     const provider = createCompletionProvider(mockMonaco, () => service);
-    const model = createMockModel('< diabetes');
-    const position = new MockPosition(1, 11);
 
-    // Call without advancing timers — search not yet fired
-    const result = await provider.provideCompletionItems(model as any, position as any, null as any, null as any);
+    const pending = provider.provideCompletionItems(
+      createMockModel('< diabetes') as any,
+      new MockPosition(1, 11) as any,
+      null as any,
+      null as any,
+    );
+    await vi.advanceTimersByTimeAsync(250);
+    const result = await pending;
 
-    expect(result.suggestions.length).toBeGreaterThan(0); // static items present
-    expect(searchCallCount).toBe(0); // search not fired yet
+    expect(result?.suggestions.some(isConcept)).toBe(true);
+    expect(result?.suggestions.some((s: any) => s.label === 'Descendant of')).toBe(true); // static items too
   });
 
-  it('should fire exactly one search after rapid successive calls within debounce window', async () => {
+  it('gives concept items a range ending at the current cursor', async () => {
+    // Results computed for older text carried that text's range; once the user typed past it,
+    // Monaco discarded them as invalid.
     vi.useFakeTimers();
-    let searchCallCount = 0;
     const service = createMockService();
-    service.searchConcepts = async () => {
-      searchCallCount++;
-      return { results: [], hasMore: false };
-    };
-
+    service.searchConcepts = async () => ({ results: [DIABETES], hasMore: false });
     const provider = createCompletionProvider(mockMonaco, () => service);
-    const model = createMockModel('< dia');
-    const position = new MockPosition(1, 6);
 
-    // Fire 5 rapid calls within debounce window
-    for (let i = 0; i < 5; i++) {
-      await provider.provideCompletionItems(model as any, position as any, null as any, null as any);
-    }
-
-    expect(searchCallCount).toBe(0); // none fired yet
-
-    // Advance past debounce window
+    const first = provider.provideCompletionItems(
+      createMockModel('< diab') as any,
+      new MockPosition(1, 7) as any,
+      null as any,
+      null as any,
+    );
     await vi.advanceTimersByTimeAsync(250);
+    await first;
 
-    expect(searchCallCount).toBe(1); // exactly one search fired
+    const second = provider.provideCompletionItems(
+      createMockModel('< diabetes') as any,
+      new MockPosition(1, 11) as any,
+      null as any,
+      null as any,
+    );
+    await vi.advanceTimersByTimeAsync(250);
+    const concept = (await second)?.suggestions.find(isConcept) as any;
+
+    expect(concept.range.startColumn).toBe(3);
+    expect(concept.range.endColumn).toBe(11);
   });
 
-  it('should fire a search after a single call once debounce window expires', async () => {
+  it('searches once, for the latest text, when requests arrive in quick succession', async () => {
     vi.useFakeTimers();
-    let searchCallCount = 0;
+    const queries: string[] = [];
+    const service = createMockService();
+    service.searchConcepts = async (query: string) => {
+      queries.push(query);
+      return { results: [DIABETES], hasMore: false };
+    };
+    const provider = createCompletionProvider(mockMonaco, () => service);
+
+    const pending = ['< d', '< di', '< dia', '< diab'].map((text) =>
+      provider.provideCompletionItems(
+        createMockModel(text) as any,
+        new MockPosition(1, text.length + 1) as any,
+        null as any,
+        null as any,
+      ),
+    );
+    await vi.advanceTimersByTimeAsync(250);
+    const results = await Promise.all(pending);
+
+    expect(queries).toEqual(['diab']);
+    expect(results.at(-1)?.suggestions.some(isConcept)).toBe(true);
+  });
+
+  it('does not search for a request Monaco has cancelled', async () => {
+    vi.useFakeTimers();
+    let searches = 0;
     const service = createMockService();
     service.searchConcepts = async () => {
-      searchCallCount++;
+      searches++;
+      return { results: [DIABETES], hasMore: false };
+    };
+    const provider = createCompletionProvider(mockMonaco, () => service);
+
+    const pending = provider.provideCompletionItems(
+      createMockModel('< diabetes') as any,
+      new MockPosition(1, 11) as any,
+      null as any,
+      { isCancellationRequested: true } as any,
+    );
+    await vi.advanceTimersByTimeAsync(250);
+    await pending;
+
+    expect(searches).toBe(0);
+  });
+
+  it('returns immediately when no concept search applies', async () => {
+    vi.useFakeTimers();
+    let searches = 0;
+    const service = createMockService();
+    service.searchConcepts = async () => {
+      searches++;
       return { results: [], hasMore: false };
     };
-
     const provider = createCompletionProvider(mockMonaco, () => service);
-    const model = createMockModel('< diabetes');
-    const position = new MockPosition(1, 11);
 
-    await provider.provideCompletionItems(model as any, position as any, null as any, null as any);
-    expect(searchCallCount).toBe(0);
+    // Resolves without advancing timers: no debounce when there is nothing to search for
+    const result = await provider.provideCompletionItems(
+      createMockModel('< ') as any,
+      new MockPosition(1, 3) as any,
+      null as any,
+      null as any,
+    );
 
-    await vi.advanceTimersByTimeAsync(250);
-    expect(searchCallCount).toBe(1);
+    expect(result?.suggestions.length).toBeGreaterThan(0);
+    expect(searches).toBe(0);
   });
 });
 

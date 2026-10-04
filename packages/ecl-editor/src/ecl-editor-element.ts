@@ -79,11 +79,13 @@ export class EclEditorElement extends HTMLElement {
       const isMac = /Macintosh|iPhone|iPad/.test(navigator.userAgent);
       const mod = isMac ? '\u2318' : 'Ctrl';
       const alt = isMac ? '\u2325' : 'Alt';
+      // Monaco binds Trigger Suggest to Ctrl+Space on every platform (⌘Space is Spotlight on macOS)
+      const ctrl = isMac ? '\u2303' : 'Ctrl';
       this.hintsBar = document.createElement('div');
       this.hintsBar.style.cssText =
         'height:18px;line-height:18px;font-size:11px;font-family:system-ui,sans-serif;' +
         'padding:0 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
-      this.hintsBar.textContent = `${mod}+Space autocomplete \u00B7 Shift+${alt}+F format \u00B7 Shift+${alt}+T toggle terms \u00B7 ${mod}+. quick fix \u00B7 Hover for info`;
+      this.hintsBar.textContent = `${ctrl}+Space autocomplete \u00B7 Shift+${alt}+F format \u00B7 Shift+${alt}+T toggle terms \u00B7 ${mod}+. quick fix \u00B7 Hover for info`;
 
       // Drag handle for vertical resizing (works cross-browser)
       this.resizeHandle = document.createElement('div');

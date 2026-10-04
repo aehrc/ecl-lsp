@@ -231,6 +231,29 @@ describe('EclEditorElement', () => {
     });
   });
 
+  describe('shortcut hints bar', () => {
+    const hintsFor = (userAgent: string): string => {
+      vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue(userAgent);
+      const el = document.createElement(TAG_NAME) as EclEditorElement;
+      document.body.appendChild(el);
+      vi.restoreAllMocks();
+      return el.querySelectorAll('div')[1].textContent ?? '';
+    };
+
+    it('should advertise Control+Space for autocomplete on macOS, not Command+Space (Spotlight)', () => {
+      const hints = hintsFor('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15');
+      expect(hints).toContain('⌃+Space autocomplete');
+      expect(hints).not.toContain('⌘+Space');
+      expect(hints).toContain('⌘+. quick fix');
+    });
+
+    it('should advertise Ctrl+Space for autocomplete on other platforms', () => {
+      const hints = hintsFor('Mozilla/5.0 (Windows NT 10.0; Win64; x64)');
+      expect(hints).toContain('Ctrl+Space autocomplete');
+      expect(hints).toContain('Ctrl+. quick fix');
+    });
+  });
+
   describe('disconnectedCallback', () => {
     it('should not throw when disconnecting before Monaco init', () => {
       const el = document.createElement(TAG_NAME) as EclEditorElement;

@@ -184,6 +184,8 @@ export function EclEditor({
   const isMac = typeof navigator !== 'undefined' && /Macintosh|iPhone|iPad/.test(navigator.userAgent);
   const mod = isMac ? '\u2318' : 'Ctrl';
   const alt = isMac ? '\u2325' : 'Alt';
+  // Monaco binds Trigger Suggest to Ctrl+Space on every platform (⌘Space is Spotlight on macOS)
+  const ctrl = isMac ? '\u2303' : 'Ctrl';
   const isDark = theme.includes('dark');
 
   return (
@@ -214,7 +216,7 @@ export function EclEditor({
           borderTop: isDark ? '1px solid #333' : '1px solid #eee',
         }}
       >
-        {mod}+Space autocomplete &middot; Shift+{alt}+F format &middot; Shift+{alt}+T toggle terms &middot; {mod}+.
+        {ctrl}+Space autocomplete &middot; Shift+{alt}+F format &middot; Shift+{alt}+T toggle terms &middot; {mod}+.
         quick fix &middot; Hover for info
       </div>
     </div>

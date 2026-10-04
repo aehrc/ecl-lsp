@@ -185,12 +185,16 @@ document.querySelector('ecl-editor').addEventListener('ecl-change', (e) => {
 
 ## Keyboard Shortcuts
 
-| Shortcut               | Action               |
-| ---------------------- | -------------------- |
-| Cmd+Space / Ctrl+Space | Autocomplete         |
-| Shift+Alt+F            | Format document      |
-| Shift+Alt+T            | Toggle display terms |
-| Cmd+. / Ctrl+.         | Quick fix            |
+| Shortcut       | Action               |
+| -------------- | -------------------- |
+| Ctrl+Space     | Autocomplete         |
+| Shift+Alt+F    | Format document      |
+| Shift+Alt+T    | Toggle display terms |
+| Cmd+. / Ctrl+. | Quick fix            |
+
+Autocomplete is Ctrl+Space on macOS too, not Cmd+Space (Spotlight). Current Monaco also binds
+Cmd+I / Ctrl+I and, on macOS, Option+Esc — useful when macOS has Ctrl+Space assigned to
+switching input sources.
 
 ## Methods
 

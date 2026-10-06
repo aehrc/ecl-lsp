@@ -5,6 +5,13 @@ All notable changes to the ECL Language Server will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.2] - 2026-10-06
+
+### Fixed
+
+- **Wrong autocomplete shortcut advertised on macOS** (`ecl-editor`, `ecl-editor-react`) ([#139](https://github.com/aehrc/ecl-lsp/pull/139)): the shortcut hints bar under the editor read "⌘+Space autocomplete", but ⌘Space opens Spotlight and Monaco does not bind it, so autocomplete looked broken to anyone who tried it. Monaco's Trigger Suggest is ⌃Space on macOS (with ⌥Esc and ⌘I as alternatives) and Ctrl+Space elsewhere; the hints bar now shows ⌃+Space on macOS and Ctrl+Space on other platforms, and the READMEs list the alternatives for Macs that use ⌃Space to switch input sources. The quick-fix hint (⌘+. / Ctrl+.) was already correct.
+- **Critical `proxy-addr` advisory in the Slack bot** ([#140](https://github.com/aehrc/ecl-lsp/pull/140)): `proxy-addr` 2.0.7, reached through `@slack/bolt` → `express`, allowed IP spoofing via IPv4-mapped IPv6 trust subnets ([GHSA-jqcg-44mw-7w3h](https://github.com/advisories/GHSA-jqcg-44mw-7w3h)). Updated to 2.0.8 in the published Docker image. Development-only advisories in `http-cache-semantics`, `source-map-js` and `postcss-selector-parser` are cleared by in-range updates. One high-severity development advisory remains — `braces` via `@vscode/vsce`, which has no patched release; `vsce` only packages the VS Code extension and never ships.
+
 ## [1.6.1] - 2026-10-03
 
 ### Fixed

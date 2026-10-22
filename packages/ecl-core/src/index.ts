@@ -42,6 +42,10 @@ export type {
   ITerminologyService,
   ConceptInfo,
   EvaluationResponse,
+  EvaluationConcept,
+  ExpandComposeOptions,
+  ValueSetClause,
+  ValueSetCompose,
   HistoricalAssociation,
   HistoricalAssociationType,
 } from './terminology/types';
@@ -96,6 +100,18 @@ export { getFhirFilterCompletions, clearFilterCache } from './completion/filter-
 // Semantic Tokens
 export { computeSemanticTokens, eclTokenTypes, eclTokenModifiers } from './semantic-tokens';
 export type { SemanticToken } from './semantic-tokens';
+
+// Derive ECL from a concept list or refset (issue #147)
+export { deriveEcl } from './derive/derive-ecl';
+export type {
+  DeriveInput,
+  DeriveOptions,
+  DeriveResult,
+  DeriveCandidate,
+  DeriveInputReport,
+  CandidateConstruction,
+  SetDifference,
+} from './derive/derive-ecl';
 
 // Canonical comparison
 export { canonicalise, compareExpressions, CanonicaliseError } from './canonical/comparator';

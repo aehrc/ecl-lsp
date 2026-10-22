@@ -8,6 +8,9 @@ import {
   SearchResponse,
   ConceptSearchResult,
   EvaluationResponse,
+  ExpandComposeOptions,
+  ValueSetClause,
+  ValueSetCompose,
   HistoricalAssociation,
   HistoricalAssociationType,
 } from './types';
@@ -1008,6 +1011,45 @@ export class FhirTerminologyService implements ITerminologyService {
       throw new EvaluationIssueError((await this.readOperationOutcome(response)).issue);
     }
 
+    return this.parseEvaluationResponse((await response.json()) as FhirValueSetResponse);
+  }
+
+  /**
+   * `POST ValueSet/$expand` with an inline `compose` mixing ECL filters and enumerated
+   * concepts. The difference between an expression and a list of 100,000 codes is one
+   * request of about 2 MB that Ontoserver answers in seconds (measured for issue #147).
+   *
+   * @throws {TerminologyTransportError} when the server could not be reached.
+   * @throws {TerminologyHttpError} when the server answered with an error status.
+   */
+  async expandCompose(compose: ValueSetCompose, options: ExpandComposeOptions = {}): Promise<EvaluationResponse> {
+    const { count = 0, offset = 0, activeOnly = true, timeoutMs = 60_000 } = options;
+    const toInclude = (clause: ValueSetClause): Record<string, unknown> => ({
+      system: 'http://snomed.info/sct',
+      ...(this.snomedVersion ? { version: this.snomedVersion } : {}),
+      ...('ecl' in clause
+        ? { filter: [{ property: 'constraint', op: '=', value: clause.ecl }] }
+        : { concept: clause.concepts.map((code) => ({ code })) }),
+    });
+    const body = {
+      resourceType: 'ValueSet',
+      compose: {
+        include: compose.include.map(toInclude),
+        ...(compose.exclude?.length ? { exclude: compose.exclude.map(toInclude) } : {}),
+      },
+    };
+
+    const url = `${this.baseUrl}/ValueSet/$expand?count=${count}&offset=${offset}&activeOnly=${activeOnly}`;
+    const operation = 'POST ValueSet/$expand of an inline compose';
+    const response = await this.request(url, timeoutMs, operation, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/fhir+json', Accept: 'application/fhir+json' },
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) {
+      const { detail } = await FhirTerminologyService.readErrorBody(response);
+      throw toHttpError({ status: response.status, statusText: response.statusText, url, operation, detail });
+    }
     return this.parseEvaluationResponse((await response.json()) as FhirValueSetResponse);
   }
 

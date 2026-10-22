@@ -88,4 +88,37 @@ export interface ITerminologyService {
 
   /** Historical associations for an inactive concept, if the source supports them. */
   getHistoricalAssociations?(conceptId: string): Promise<HistoricalAssociation[]>;
+
+  /**
+   * Expand a set built from ECL expressions and enumerated concepts, computed by
+   * the source rather than by downloading each part: the union of `include`
+   * minus the union of `exclude`. Lets callers compare an expression with a
+   * concept list of any size (FHIR: `POST ValueSet/$expand` with an inline
+   * `compose`). Optional; features that need it say so when it is missing.
+   *
+   * `total` is exact. Inactive concepts are left out unless `activeOnly` is false.
+   * Enumerated codes the source does not know are dropped silently.
+   * @throws `TerminologyTransportError` / `TerminologyHttpError` on failure.
+   */
+  expandCompose?(compose: ValueSetCompose, options?: ExpandComposeOptions): Promise<EvaluationResponse>;
+}
+
+/** One part of a {@link ValueSetCompose}: an ECL expression or an enumerated list of concept ids. */
+export type ValueSetClause = { ecl: string } | { concepts: string[] };
+
+/** A set expressed as `(include₁ ∪ include₂ …) − (exclude₁ ∪ exclude₂ …)`. */
+export interface ValueSetCompose {
+  include: ValueSetClause[];
+  exclude?: ValueSetClause[];
+}
+
+export interface ExpandComposeOptions {
+  /** Maximum concepts to return (0 for the total only). Default 0. */
+  count?: number;
+  /** Index of the first concept to return, for paging. Default 0. */
+  offset?: number;
+  /** Leave out inactive concepts. Default true. */
+  activeOnly?: boolean;
+  /** Request timeout in milliseconds; large enumerations need more than an ECL lookup. */
+  timeoutMs?: number;
 }

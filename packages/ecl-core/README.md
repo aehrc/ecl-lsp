@@ -108,6 +108,32 @@ const results = await fhir.evaluateEcl('< 404684003');
 // { concepts: [...], total }
 ```
 
+### Deriving ECL from a Concept List
+
+The opposite of `$expand`: given a code list or a reference set, propose ECL
+that selects it, ranked, each with exact counts and samples of what it adds and
+misses. The server does every set operation (`expandCompose`, a POSTed inline
+ValueSet), so lists of 100,000 codes work. No language model is involved.
+
+```typescript
+import { deriveEcl, FhirTerminologyService } from '@aehrc/ecl-core';
+
+const result = await deriveEcl({ conceptIds: ['46635009', '44054006' /* … */] }, new FhirTerminologyService());
+// or: deriveEcl({ refsetId: '929360061000036106' }, terminology)
+
+result.input; // { members, inactive, unknown, malformed, duplicates } — what was left out, and why
+result.candidates[0];
+// { expression: '<< 73211009 | Diabetes |', ecl: '<< 73211009',
+//   covered: 121, additions: { count: 0, sample: [] }, misses: { count: 0, sample: [] },
+//   exact: true, clauses: 1, construction: { kind: 'hierarchy', roots: ['73211009'], … } }
+```
+
+Candidates come from the IS-A hierarchy: an exact cover of the set's roots with
+`MINUS` exclusions, cheaper covers by ancestors outside the set (with their
+additions reported), and always the enumeration or `^ refset` itself. They are
+ranked by clauses + additions + misses. Sets that cut across the hierarchy
+(many roots, e.g. AMT products) get only the exact enumeration and a note.
+
 ### Canonical Comparison
 
 ```typescript

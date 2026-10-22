@@ -534,3 +534,70 @@ describe('evaluateEcl — error reporting', () => {
     assert.strictEqual(service.getResolvedVersion(), 'http://snomed.info/sct/32506021000036107/version/20260131');
   });
 });
+
+describe('expandCompose — inline compose (issue #147)', () => {
+  let stub: ReturnType<typeof createStubServer>;
+  let baseUrl: string;
+
+  beforeEach(async () => {
+    stub = createStubServer();
+    baseUrl = await stub.start();
+  });
+
+  afterEach(async () => {
+    await stub.stop();
+  });
+
+  it('POSTs ECL and enumerated clauses as include and exclude', async () => {
+    const service = new FhirTerminologyService({ baseUrl, timeout: 2000 });
+
+    const result = await service.expandCompose(
+      { include: [{ ecl: '<< 73211009' }], exclude: [{ concepts: ['46635009', '44054006'] }] },
+      { count: 5, offset: 10 },
+    );
+
+    assert.strictEqual(result.total, 2);
+    assert.strictEqual(stub.requests.length, 1);
+    const request = stub.requests[0];
+    assert.strictEqual(request.method, 'POST');
+    assert.match(request.url, /^\/ValueSet\/\$expand\?count=5&offset=10&activeOnly=true$/);
+    assert.deepStrictEqual(JSON.parse(request.body ?? '{}'), {
+      resourceType: 'ValueSet',
+      compose: {
+        include: [
+          {
+            system: 'http://snomed.info/sct',
+            filter: [{ property: 'constraint', op: '=', value: '<< 73211009' }],
+          },
+        ],
+        exclude: [{ system: 'http://snomed.info/sct', concept: [{ code: '46635009' }, { code: '44054006' }] }],
+      },
+    });
+  });
+
+  it('defaults to a count-only, active-only request and pins the configured version', async () => {
+    const version = 'http://snomed.info/sct/32506021000036107/version/20260930';
+    const service = new FhirTerminologyService({ baseUrl, timeout: 2000, snomedVersion: version });
+
+    await service.expandCompose({ include: [{ concepts: ['73211009'] }] });
+
+    const request = stub.requests[0];
+    assert.match(request.url, /\?count=0&offset=0&activeOnly=true$/);
+    const body = JSON.parse(request.body ?? '{}') as {
+      compose: { include: { version?: string }[]; exclude?: unknown };
+    };
+    assert.strictEqual(body.compose.include[0].version, version);
+    assert.strictEqual(body.compose.exclude, undefined);
+  });
+
+  it('throws a typed HTTP error carrying the server diagnostics', async () => {
+    stub.setHandler(() => ({ status: 422, body: outcome('invalid', 'Invalid concept: 1234') }));
+    const service = new FhirTerminologyService({ baseUrl, timeout: 2000 });
+
+    await assert.rejects(service.expandCompose({ include: [{ concepts: ['1234'] }] }), (error: Error) => {
+      assert.strictEqual(error.name, 'TerminologyHttpError');
+      assert.match(error.message, /Invalid concept: 1234/);
+      return true;
+    });
+  });
+});

@@ -5,6 +5,7 @@ import { describe, it } from 'node:test';
 import * as assert from 'node:assert';
 import { compressExpression, formatCompressReport, type CompressResult } from '../derive/compress-expression';
 import { HierarchyMockService, sctid } from './hierarchy-mock';
+import { parseECL } from '../parser';
 
 // Fixture: X has children C1..C8; C1 has two children; Y is a sibling of X.
 const ROOT = '138875005';
@@ -126,6 +127,26 @@ describe('compressExpression', () => {
       result.candidates.map((c) => c.source),
       ['original'],
     );
+  });
+
+  it('handles display terms and comments in the input without doubling terms', async () => {
+    const mock = fixture();
+    mock.addRefset(id.R, [id.C2, id.C3, id.C4, id.C5, id.C6, id.C7, id.C8]);
+    const group = [id.C2, id.C3, id.C4, id.C5, id.C6, id.C7, id.C8].map((c) => `${c} |child 1234567|`).join(' OR ');
+    const original = `/* tablets */ (${group}) AND ^ ${id.R} |R refset|`;
+    const result = await compressExpression(original, mock);
+    for (const c of result.candidates) {
+      assert.deepStrictEqual(parseECL(c.expression).errors, [], c.expression);
+      assert.ok(!c.ecl.includes('|'), `ecl has no terms: ${c.ecl}`);
+    }
+    assert.strictEqual(result.candidates[0].ecl, `(< ${id.X}) AND ^ ${id.R}`);
+    assert.strictEqual(result.candidates[0].clauses, 2);
+  });
+
+  it('leaves a group alone when an operator applies to it', async () => {
+    const mock = fixture();
+    const result = await compressExpression(`<< (${id.C2} OR ${id.C3}) AND << ${id.X}`, mock, { omitTerms: true });
+    assert.strictEqual(result.group, null);
   });
 
   it('reports syntax errors and does nothing else', async () => {

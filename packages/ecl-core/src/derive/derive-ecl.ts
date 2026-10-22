@@ -86,6 +86,8 @@ export interface DeriveOptions {
    * MPUUs. Default: `<<` the most specific concept above every member.
    */
   refinementFocus?: string;
+  /** Count members by top-level hierarchy (about 20 requests). Default true. */
+  hierarchySummary?: boolean;
 }
 
 export interface SetDifference {
@@ -178,6 +180,7 @@ const DEFAULTS: Required<DeriveOptions> = {
   omitTerms: false,
   refinements: 'auto',
   refinementFocus: '',
+  hierarchySummary: true,
 };
 
 const SNOMED_ROOT = '138875005';
@@ -213,6 +216,18 @@ function compareText(a: string, b: string): number {
 /** `x` alone, or `(x OR y …)` — safe as an operand anywhere. */
 function orGroup(terms: string[]): string {
   return terms.length === 1 ? terms[0] : `(${terms.join(' OR ')})`;
+}
+
+/**
+ * `ecl` without display terms and comments, so candidates built from it can be
+ * given terms afresh and their concept references counted. Quoted strings
+ * (filter values) are kept as they are.
+ */
+export function stripTermsAndComments(ecl: string): string {
+  return ecl
+    .replace(/"(?:[^"\\]|\\.)*"|\/\*[\s\S]*?\*\/|\|[^|]*\|/g, (m) => (m.startsWith('"') ? m : ' '))
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 export function countClauses(ecl: string): number {
@@ -309,7 +324,7 @@ export async function deriveEcl(
     return result;
   }
 
-  result.hierarchies = await hierarchyDistribution(members, q);
+  if (opts.hierarchySummary) result.hierarchies = await hierarchyDistribution(members, q);
 
   const rootQuery = await q.codes(
     { include: [members.clause], exclude: [{ ecl: `< ${members.ecl}` }] },
@@ -322,7 +337,7 @@ export async function deriveEcl(
     [];
   built.push(...(await hierarchyCandidates(roots, result.roots, members, q, opts, notes)));
   if (opts.refinements === 'always' || (opts.refinements === 'auto' && result.roots > REFINEMENT_ROOTS)) {
-    const foci = opts.refinementFocus ? [opts.refinementFocus] : refsetFoci(input);
+    const foci = opts.refinementFocus ? [asFocus(opts.refinementFocus)] : refsetFoci(input);
     built.push(...(await refinementCandidates(members, foci, q, terminology, opts, notes)));
   }
   // The input itself goes last, so a derived candidate that rebuilds it keeps its construction.
@@ -361,7 +376,7 @@ function inputItself(
   members: MemberSet,
 ): { ecl: string; construction: CandidateConstruction; known: Omit<Scored, 'ecl' | 'construction'> } {
   const known = exactScore(members.size);
-  if ('ecl' in input) return { ecl: input.ecl.trim(), construction: { kind: 'expression' }, known };
+  if ('ecl' in input) return { ecl: stripTermsAndComments(input.ecl), construction: { kind: 'expression' }, known };
   if ('refsetId' in input) {
     return { ecl: `^ ${input.refsetId}`, construction: { kind: 'refset', refsetId: input.refsetId }, known };
   }
@@ -388,7 +403,7 @@ async function resolveInput(
 ): Promise<{ report: DeriveInputReport; members: MemberSet | null }> {
   if ('refsetId' in input) return resolveRefset(input.refsetId.trim(), q, terminology, notes);
   if ('ecl' in input) {
-    const ecl = `(${input.ecl.trim()})`;
+    const ecl = `(${stripTermsAndComments(input.ecl)})`;
     const size = await q.countEcl(ecl);
     const report: DeriveInputReport = {
       given: size,
@@ -743,7 +758,11 @@ async function refinementCandidates(
   }
 
   const sample = (await q.codes({ include: [members.clause] }, REFINEMENT_SAMPLE)).codes;
-  const attributes = sharedAttributes(await Promise.all(sample.map((m) => getRelationships(m))));
+  const sampled: (DefiningRelationship[] | null)[] = [];
+  for (let i = 0; i < sample.length; i += MAX_IN_FLIGHT) {
+    sampled.push(...(await Promise.all(sample.slice(i, i + MAX_IN_FLIGHT).map((m) => getRelationships(m)))));
+  }
+  const attributes = sharedAttributes(sampled);
   if (attributes.length === 0) {
     notes.push('No attribute is shared by most members, so no refinement candidates were built.');
     return [];
@@ -791,6 +810,7 @@ async function valueOptions(
   const derived = await deriveEcl({ ecl: `${members.ecl} . ${attribute}` }, terminology, {
     ...opts,
     refinements: 'never',
+    hierarchySummary: false,
     omitTerms: true,
     maxCandidates: 20,
   });
@@ -859,6 +879,12 @@ function refinementSets(usable: string[], values: Map<string, string[]>): { attr
   return sets;
 }
 
+/** A focus usable before `:`: a single clause or `^ id` as is, anything else bracketed. */
+function asFocus(ecl: string): string {
+  const trimmed = stripTermsAndComments(ecl);
+  return isSingleClause(trimmed) || /^\^\s*\d{6,18}$/.test(trimmed) ? trimmed : `(${trimmed})`;
+}
+
 function attributeText(r: { attribute: string; value: string }): string {
   return `${r.attribute} = ${r.value}`;
 }
@@ -873,7 +899,7 @@ function isSingleClause(ecl: string): boolean {
  * subtree holds the whole set.
  */
 async function commonAncestorFocus(members: MemberSet, member: string, q: SetQueries): Promise<string | null> {
-  const ancestors = (await q.codes({ include: [{ ecl: `>> ${member}` }] }, 500)).codes;
+  const ancestors = (await q.codes({ include: [{ ecl: `>> ${member}` }] }, 500)).codes.filter((a) => a !== SNOMED_ROOT);
   const sized = await Promise.all(ancestors.map(async (a) => ({ a, size: await q.countEcl(`<< ${a}`) })));
   sized.sort((x, y) => x.size - y.size || byId(x.a, y.a));
   for (const { a } of sized) {

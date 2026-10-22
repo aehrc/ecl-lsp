@@ -585,6 +585,8 @@ async function deriveFromConceptList(client: LanguageClient): Promise<void> {
 // ── Suggest shorter forms of an expression (issue #149) ──────────────────
 
 interface CompressCandidateSummary extends DeriveCandidateSummary {
+  /** One line, without terms: what goes into a non-ECL file. */
+  ecl: string;
   source: 'original' | 'simplified' | 'derived';
 }
 
@@ -611,7 +613,7 @@ async function compressCurrentExpression(client: LanguageClient): Promise<void> 
       try {
         return await client.sendRequest<{
           report: string;
-          range?: { startLine: number; endLine: number };
+          range?: { start: { line: number; character: number }; end: { line: number; character: number } };
           candidates: CompressCandidateSummary[];
         }>('ecl/compressExpression', params);
       } catch (error: unknown) {
@@ -630,15 +632,20 @@ async function compressCurrentExpression(client: LanguageClient): Promise<void> 
   evaluationOutput.appendLine('');
   evaluationOutput.show(true);
 
+  const shorter = response.candidates.filter((c) => c.source !== 'original');
+  if (shorter.length === 0) {
+    window.showInformationMessage('No shorter form found; see the ECL Evaluation output');
+    return;
+  }
+  // In a non-ECL file the expression may sit in a string, so it goes in as one line without terms.
+  const inEclFile = editor.document.languageId === 'ecl';
   const picked = await window.showQuickPick(
-    response.candidates
-      .filter((c) => c.source !== 'original')
-      .map((c) => ({
-        label: c.expression.replaceAll(/\s+/g, ' '),
-        description: c.exact ? 'same result' : `+${c.additions} added, -${c.misses} missed`,
-        detail: `${c.clauses} clauses; ${c.source}`,
-        expression: c.expression,
-      })),
+    shorter.map((c) => ({
+      label: c.expression.replaceAll(/\s+/g, ' '),
+      description: c.exact ? 'same result' : `+${c.additions} added, -${c.misses} missed`,
+      detail: `${c.clauses} clauses; ${c.source}`,
+      expression: inEclFile ? c.expression : c.ecl,
+    })),
     { placeHolder: 'Replace the expression with (details in the ECL Evaluation output)' },
   );
   if (!picked) return;
@@ -646,12 +653,15 @@ async function compressCurrentExpression(client: LanguageClient): Promise<void> 
   let target: vscode.Range | undefined;
   if (selected) target = editor.selection;
   else if (response.range) {
-    target = new Range(
-      new Position(response.range.startLine, 0),
-      editor.document.lineAt(response.range.endLine).range.end,
-    );
+    const { start, end } = response.range;
+    target = new Range(new Position(start.line, start.character), new Position(end.line, end.character));
   }
-  if (!target) return;
+  if (!target) {
+    // Comments sit among the expression's lines: open the choice beside it rather than delete them.
+    const doc = await workspace.openTextDocument({ language: 'ecl', content: `${picked.expression}\n` });
+    await window.showTextDocument(doc, vscode.ViewColumn.Beside);
+    return;
+  }
   const range = target;
   await editor.edit((edit) => {
     edit.replace(range, picked.expression);

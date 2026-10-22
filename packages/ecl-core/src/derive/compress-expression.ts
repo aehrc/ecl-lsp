@@ -24,6 +24,7 @@ import { NodeType, type SubExpressionNode, type ExpressionNode } from '../parser
 import { simplifyExpression } from '../refactoring/simplify-expression';
 import type { ITerminologyService } from '../terminology/types';
 import {
+  stripTermsAndComments,
   countClauses,
   decorate,
   deriveEcl,
@@ -78,7 +79,9 @@ export async function compressExpression(
   terminology: ITerminologyService,
   options: DeriveOptions = {},
 ): Promise<CompressResult> {
-  const original = ecl.trim();
+  // Terms and comments are dropped: candidates get fresh terms, and offsets and
+  // clause counts must not see digits inside them.
+  const original = stripTermsAndComments(ecl);
   const parsed = parseECL(original);
   const result: CompressResult = { members: 0, group: null, candidates: [], notes: [], errors: [] };
   if (!parsed.ast || parsed.errors.length > 0) {
@@ -94,9 +97,29 @@ export async function compressExpression(
   const built: Omit<CompressCandidate, 'expression'>[] = [
     { ecl: original, ...noDifference(original), source: 'original' },
   ];
+  const sampleSize = options.sampleSize ?? 10;
+  const scoreAgainstOriginal = async (candidate: string) => {
+    const [additions, misses] = await Promise.all([
+      sample(expand, { include: [{ ecl: candidate }], exclude: [{ ecl: original }] }, sampleSize),
+      sample(expand, { include: [{ ecl: original }], exclude: [{ ecl: candidate }] }, sampleSize),
+    ]);
+    return {
+      additions,
+      misses,
+      exact: additions.count === 0 && misses.count === 0,
+      clauses: countClauses(candidate),
+    };
+  };
+
+  // Simplify means to keep the result, but servers can read some ECL
+  // differently from ecl-core's parser, so it is counted like any other.
   const simplified = await simplifyExpression(original, terminology);
   if (simplified.changed) {
-    built.push({ ecl: simplified.expression, ...noDifference(simplified.expression), source: 'simplified' });
+    built.push({
+      ecl: simplified.expression,
+      ...(await scoreAgainstOriginal(simplified.expression)),
+      source: 'simplified',
+    });
   }
 
   const group = findGroup(parsed.ast, original);
@@ -104,25 +127,12 @@ export async function compressExpression(
   if (group) {
     const derived = await deriveEcl({ ecl: group.text }, terminology, { ...options, omitTerms: true });
     result.notes.push(...derived.notes);
-    const sampleSize = options.sampleSize ?? 10;
     for (const c of derived.candidates) {
       if (c.construction.kind === 'expression') continue;
       const full = original.slice(0, group.start) + c.ecl + original.slice(group.end);
       // A reordering of a form already listed is not a new candidate.
       if (built.some((b) => sameForm(b.ecl, full))) continue;
-      const [additions, misses] = await Promise.all([
-        sample(expand, { include: [{ ecl: full }], exclude: [{ ecl: original }] }, sampleSize),
-        sample(expand, { include: [{ ecl: original }], exclude: [{ ecl: full }] }, sampleSize),
-      ]);
-      built.push({
-        ecl: full,
-        additions,
-        misses,
-        exact: additions.count === 0 && misses.count === 0,
-        clauses: countClauses(full),
-        source: 'derived',
-        construction: c.construction,
-      });
+      built.push({ ecl: full, ...(await scoreAgainstOriginal(full)), source: 'derived', construction: c.construction });
     }
   } else {
     result.notes.push('No OR group to compress: the expression is not a disjunction and has none in parentheses.');
@@ -203,7 +213,9 @@ function orInside(
   sub: SubExpressionNode,
   text: string,
 ): { text: string; start: number; end: number; operands: number } | null {
-  if (sub.focus.type !== NodeType.ExpressionConstraint) return null;
+  // `<< (A OR B)` or `^ (A OR B)`: the operator applies to the group, so a
+  // candidate for the group's own members would be judged on the wrong set.
+  if (sub.operator || sub.memberOf || sub.focus.type !== NodeType.ExpressionConstraint) return null;
   const inner = sub.focus.expression;
   if (inner.type !== NodeType.CompoundExpression || inner.operator.operator !== 'OR') return null;
   const { start, end } = sub.focus.range;

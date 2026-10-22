@@ -491,6 +491,19 @@ describe('deriveEcl — attribute refinements (#149 Part 3)', () => {
     assert.ok(refinements.every((c) => c.ecl.startsWith(`^ ${P.REFSET} :`)));
   });
 
+  it('brackets a compound refinementFocus', async () => {
+    const mock = products3();
+    const set = [...mock.evaluate(`< ${P.PRODUCT} : ${P.FORM} = << ${P.TAB}`)];
+    const result = await deriveEcl({ conceptIds: set }, mock, {
+      omitTerms: true,
+      refinements: 'always',
+      refinementFocus: `<< ${P.G1} OR << ${P.G2} OR << ${P.G3}`,
+    });
+    const refinement = result.candidates.find((c) => c.construction.kind === 'refinement');
+    assert.ok(refinement);
+    assert.ok(refinement.ecl.startsWith(`(<< ${P.G1} OR << ${P.G2} OR << ${P.G3}) :`), refinement.ecl);
+  });
+
   it('says so when the service cannot read relationships', async () => {
     const mock = products3().withoutRelationships();
     const set = [...mock.evaluate(`< ${P.PRODUCT} : ${P.FORM} = << ${P.TAB}`)];

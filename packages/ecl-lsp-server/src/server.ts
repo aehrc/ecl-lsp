@@ -1305,20 +1305,22 @@ connection.onRequest('ecl/deriveEcl', async (params: { text?: string; conceptIds
 /**
  * Shorter forms of an expression, with exact differences (issue #149). Give
  * `expression`, or `uri` and `line` for the expression at that line of an
- * ECL document; `range` then gives its lines, for replacing it.
+ * ECL document. `range` then spans the expression from its first to its last
+ * character, for replacing it; it is left out when comments sit among the
+ * expression's lines, since replacing would delete them.
  */
 connection.onRequest('ecl/compressExpression', async (params: { expression?: string; uri?: string; line?: number }) => {
   let expression = params.expression;
-  let range: { startLine: number; endLine: number } | undefined;
+  let range: CoreRange | undefined;
   if (!expression && params.uri && params.line !== undefined) {
     const document = documents.get(params.uri);
     const line = params.line;
     const match = document
       ? groupIntoExpressions(document.getText()).find((e) => line >= e.startLine && line <= e.endLine)
       : undefined;
-    if (match) {
+    if (match && document) {
       expression = match.text.trim();
-      range = { startLine: match.startLine, endLine: match.endLine };
+      range = replaceableRange(document, match.startLine, match.endLine);
     }
   }
   if (!expression?.trim()) throw new Error('No ECL expression found');
@@ -1330,6 +1332,7 @@ connection.onRequest('ecl/compressExpression', async (params: { expression?: str
       range,
       candidates: result.candidates.map((c) => ({
         expression: c.expression,
+        ecl: c.ecl,
         exact: c.exact,
         additions: c.additions.count,
         misses: c.misses.count,
@@ -1342,6 +1345,23 @@ connection.onRequest('ecl/compressExpression', async (params: { expression?: str
     throw error;
   }
 });
+
+/** The expression's exact extent on lines `startLine..endLine`, or undefined when comments are among them. */
+function replaceableRange(document: TextDocument, startLine: number, endLine: number): CoreRange | undefined {
+  const lines = document
+    .getText()
+    .split('\n')
+    .slice(startLine, endLine + 1);
+  if (lines.some((l) => l.includes('/*') || l.includes('*/'))) return undefined;
+  const filled = lines.map((l, i) => ({ l, line: startLine + i })).filter(({ l }) => l.trim().length > 0);
+  const first = filled.at(0);
+  const last = filled.at(-1);
+  if (!first || !last) return undefined;
+  return {
+    start: { line: first.line, character: first.l.length - first.l.trimStart().length },
+    end: { line: last.line, character: last.l.trimEnd().length },
+  };
+}
 
 connection.onRequest('ecl/getSnomedEditions', async () => {
   try {

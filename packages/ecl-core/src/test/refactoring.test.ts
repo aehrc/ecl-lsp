@@ -610,6 +610,32 @@ describe('Unified simplify', () => {
     });
   });
 
+  // -- Output guards --
+
+  describe('Output guards', () => {
+    it('should keep parens around a factored focus nested in a compound', async () => {
+      const mock = new SubsumptionMockService();
+      const ctx = makeCtx(
+        '((< 404684003 : 363698007 = < 39057004) OR (< 404684003 : 116676008 = < 72651009)) AND < 19829001',
+      );
+      const action = getUnifiedSimplifyAction(ctx);
+      assert.ok(action);
+      const resolved = await resolveWithParity(action, mock);
+      const text = getEditText(resolved);
+      assert.ok(text);
+      assert.deepStrictEqual(parseECL(text).errors, [], `Result must parse, got: ${text}`);
+    });
+
+    it('should offer no edit when only spacing would change', async () => {
+      const mock = new SubsumptionMockService();
+      const ctx = makeCtx('< 404684003  AND < 19829001');
+      const action = getUnifiedSimplifyAction(ctx);
+      assert.ok(action);
+      const resolved = await resolveWithParity(action, mock);
+      assert.strictEqual(getEditText(resolved), null);
+    });
+  });
+
   // -- Re-check cascade --
 
   describe('Re-check cascade', () => {
@@ -727,6 +753,50 @@ describe('simplifyExpression', () => {
     const result = await simplifyExpression('< 404684003 AND < 19829001', failing);
     assert.strictEqual(result.changed, false);
     assert.strictEqual(result.subsumption, 'partial');
+  });
+
+  it('keeps the parentheses around a factored focus nested in a compound', async () => {
+    const input = '((< 404684003 : 363698007 = < 39057004) OR (< 404684003 : 116676008 = < 72651009)) AND < 19829001';
+    const result = await simplifyExpression(input);
+    assert.strictEqual(
+      result.expression,
+      '(< 404684003 : 363698007 = < 39057004 OR 116676008 = < 72651009) AND < 19829001',
+    );
+    assert.deepStrictEqual(parseECL(result.expression).errors, []);
+    assert.deepStrictEqual(
+      result.steps.map((s) => s.technique),
+      ['factorFocus'],
+    );
+  });
+
+  it('keeps the parentheses around a merged focus nested in a compound', async () => {
+    const input = '((< 404684003 : 363698007 = < 39057004) AND (< 404684003 : 116676008 = < 72651009)) OR < 19829001';
+    const result = await simplifyExpression(input);
+    assert.strictEqual(
+      result.expression,
+      '(< 404684003 : 363698007 = < 39057004, 116676008 = < 72651009) OR < 19829001',
+    );
+    assert.deepStrictEqual(parseECL(result.expression).errors, []);
+  });
+
+  it('leaves spacing and comments alone when no step applies', async () => {
+    for (const input of [
+      '< 404684003  AND < 19829001',
+      '/* c */ < 404684003 AND < 19829001',
+      '< 404684003 AND < 19829001 /* c */',
+    ]) {
+      const result = await simplifyExpression(input);
+      assert.strictEqual(result.expression, input);
+      assert.strictEqual(result.changed, false);
+    }
+  });
+
+  it('reports subsumption not-applicable when no compound reaches it', async () => {
+    const mock = new SubsumptionMockService();
+    for (const input of ['< 404684003', '< 404684003 MINUS < 19829001', '< 404684003 OR < 404684003']) {
+      const result = await simplifyExpression(input, mock);
+      assert.strictEqual(result.subsumption, 'not-applicable', input);
+    }
   });
 
   it('refuses input with syntax errors, as the code action does', async () => {

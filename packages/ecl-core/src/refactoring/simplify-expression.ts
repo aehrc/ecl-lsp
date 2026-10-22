@@ -259,6 +259,7 @@ async function fhirSubsumption(
 ): Promise<string[] | null> {
   const n = operandTexts.length;
   if (n < 2) return null;
+  if (trace) trace.subsumptionRan = true;
 
   const removeSet = new Set<number>();
 
@@ -338,6 +339,7 @@ export interface SimplifyStep {
 /** Mutable collector threaded through the engine by {@link simplifyExpression}. */
 interface SimplifyTrace {
   steps: SimplifyStep[];
+  subsumptionRan: boolean;
   subsumptionIncomplete: boolean;
 }
 
@@ -413,12 +415,12 @@ async function simplifyOperand(
   const simplified = await simplifyText(inner, terminologyService, trace);
   if (simplified === inner) return text;
 
-  // Re-wrap if the simplified result is still a compound
+  // Re-wrap unless the result is a single sub-expression: a compound, or a
+  // refinement left by factoring/merging a focus, cannot stand bare as an operand
   const innerParse = parseECL(simplified);
-  if (innerParse.ast?.expression.type === NodeType.CompoundExpression) {
+  if (innerParse.ast?.expression.type !== NodeType.SubExpressionConstraint) {
     return `(${simplified})`;
   }
-  // If simplified to a single operand, no parens needed
   return simplified;
 }
 
@@ -464,7 +466,7 @@ function applySyncTechniques(
 async function simplifyText(
   text: string,
   terminologyService: ITerminologyService | null,
-  trace: SimplifyTrace | null = null,
+  trace: SimplifyTrace | null,
 ): Promise<string> {
   const decomposed = decomposeCompound(text);
   if (!decomposed) return text;
@@ -580,17 +582,19 @@ export function getUnifiedSimplifyAction(ctx: RefactoringContext): CoreCodeActio
 export interface SimplifyResult {
   /** The simplified expression, or the input unchanged when nothing applied. */
   expression: string;
-  /** True when `expression` differs from the input. */
+  /** True when at least one step applied (`expression` then differs from the input). */
   changed: boolean;
   /** The steps applied, innermost compounds first, in the order they fired. */
   steps: SimplifyStep[];
   /**
    * Whether technique 4 (subsumption through the terminology server) ran:
    * - `'not-run'`: no terminology service was given, so only the syntactic techniques ran
-   * - `'complete'`: every evaluation it needed succeeded
+   * - `'not-applicable'`: a service was given, but no AND/OR compound with 2+ operands was
+   *   left for it to check (a single concept, MINUS only, or the syntactic steps collapsed it)
+   * - `'complete'`: it ran and every evaluation succeeded
    * - `'partial'`: some evaluations failed; those operand pairs were left as they were
    */
-  subsumption: 'not-run' | 'complete' | 'partial';
+  subsumption: 'not-run' | 'not-applicable' | 'complete' | 'partial';
   /**
    * Syntax error messages when the input does not parse. The input is then
    * returned unchanged with no steps, as the editor code action refuses it too.
@@ -611,7 +615,6 @@ export async function simplifyExpression(
   ecl: string,
   terminologyService?: ITerminologyService | null,
 ): Promise<SimplifyResult> {
-  const subsumptionIfRun = terminologyService ? 'complete' : 'not-run';
   const parsed = parseECL(ecl);
   if (parsed.errors.length > 0) {
     return {
@@ -623,15 +626,39 @@ export async function simplifyExpression(
     };
   }
 
-  const trace: SimplifyTrace = { steps: [], subsumptionIncomplete: false };
-  const expression = await simplifyText(ecl, terminologyService ?? null, trace);
+  const { expression, trace } = await runSimplify(ecl, terminologyService ?? null);
   return {
     expression,
-    changed: expression !== ecl,
+    changed: trace.steps.length > 0,
     steps: trace.steps,
-    subsumption: trace.subsumptionIncomplete ? 'partial' : subsumptionIfRun,
+    subsumption: subsumptionStatus(trace, terminologyService != null),
     errors: [],
   };
+}
+
+function subsumptionStatus(trace: SimplifyTrace, hasService: boolean): SimplifyResult['subsumption'] {
+  if (!hasService) return 'not-run';
+  if (trace.subsumptionIncomplete) return 'partial';
+  return trace.subsumptionRan ? 'complete' : 'not-applicable';
+}
+
+/**
+ * Run the engine and guard its output. The input comes back unchanged (with
+ * no steps) when no technique applied, so whitespace and comments the engine
+ * would rebuild are not touched for nothing, and when the result would not
+ * parse, so a bug in a technique can never hand back invalid ECL.
+ */
+async function runSimplify(
+  text: string,
+  terminologyService: ITerminologyService | null,
+): Promise<{ expression: string; trace: SimplifyTrace }> {
+  const trace: SimplifyTrace = { steps: [], subsumptionRan: false, subsumptionIncomplete: false };
+  const simplified = await simplifyText(text, terminologyService, trace);
+  if (trace.steps.length === 0 || parseECL(simplified).errors.length > 0) {
+    trace.steps = [];
+    return { expression: text, trace };
+  }
+  return { expression: simplified, trace };
 }
 
 /**
@@ -645,7 +672,7 @@ export async function resolveUnifiedSimplify(
   const data = codeAction.data as UnifiedSimplifyData | undefined;
   if (data?.action !== 'unifiedSimplify') return codeAction;
 
-  const simplified = await simplifyText(data.expressionText, terminologyService);
+  const { expression: simplified } = await runSimplify(data.expressionText, terminologyService);
 
   if (simplified === data.expressionText) return codeAction;
 

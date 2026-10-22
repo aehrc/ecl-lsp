@@ -118,6 +118,10 @@
       {
         "command": "ecl.selectSnomedEdition",
         "title": "ECL: Select SNOMED CT Edition"
+      },
+      {
+        "command": "ecl.deriveFromConceptList",
+        "title": "ECL: Derive ECL from Concept List"
       }
     ],
     "menus": {

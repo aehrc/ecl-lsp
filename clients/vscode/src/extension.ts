@@ -209,6 +209,10 @@ export function activate(context: ExtensionContext) {
     if (client) void selectSnomedEdition(client);
   });
 
+  registerCommand('ecl.deriveFromConceptList', () => {
+    if (client) void deriveFromConceptList(client);
+  });
+
   registerCommand('ecl.evaluateEmbeddedExpression', (uri: vscode.Uri, fragmentIndex: number) => {
     const fragments = embeddedManager.getFragments(uri);
     const fragment = fragments.find((f) => f.index === fragmentIndex);
@@ -513,6 +517,65 @@ async function evaluateExpression(client: LanguageClient, startLine?: number, ex
       }
     },
   );
+}
+
+// ── Derive ECL from a concept list (issue #147) ──────────────────────────
+
+interface DeriveCandidateSummary {
+  expression: string;
+  exact: boolean;
+  additions: number;
+  misses: number;
+  clauses: number;
+}
+
+/**
+ * Propose ECL for the selected code list (or the whole document when nothing is
+ * selected): the ranked candidates go to the ECL output channel, and the one
+ * picked opens in a new ECL editor.
+ */
+async function deriveFromConceptList(client: LanguageClient): Promise<void> {
+  const editor = window.activeTextEditor;
+  if (!editor) {
+    window.showErrorMessage('Open or select a list of SNOMED CT concept ids first');
+    return;
+  }
+  const text = editor.selection.isEmpty ? editor.document.getText() : editor.document.getText(editor.selection);
+
+  const response = await window.withProgress(
+    { location: vscode.ProgressLocation.Notification, title: 'Deriving ECL from concept list...', cancellable: false },
+    async () => {
+      try {
+        return await client.sendRequest<{ report: string; candidates: DeriveCandidateSummary[] }>('ecl/deriveEcl', {
+          text,
+        });
+      } catch (error: unknown) {
+        window.showErrorMessage(`Derive ECL failed: ${error instanceof Error ? error.message : String(error)}`);
+        return null;
+      }
+    },
+  );
+  if (!response) return;
+
+  evaluationOutput.appendLine(`=== Derived ECL (${new Date().toLocaleString()}) ===`);
+  evaluationOutput.appendLine('');
+  evaluationOutput.appendLine(response.report);
+  evaluationOutput.appendLine('');
+  evaluationOutput.show(true);
+
+  const picked = await window.showQuickPick(
+    response.candidates.map((c) => ({
+      label: c.expression.replaceAll(/\s+/g, ' '),
+      description: c.exact ? 'exact' : `+${c.additions} added, -${c.misses} missed`,
+      detail: `${c.clauses} clause${c.clauses === 1 ? '' : 's'}`,
+      expression: c.expression,
+    })),
+    { placeHolder: 'Open a candidate in a new ECL editor (details in the ECL Evaluation output)' },
+  );
+  if (picked) {
+    const doc = await workspace.openTextDocument({ language: 'ecl', content: `${picked.expression}\n` });
+    await window.showTextDocument(doc);
+  }
 }
 
 // ── SNOMED CT Edition Picker ──────────────────────────────────────────────

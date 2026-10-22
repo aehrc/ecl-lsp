@@ -463,6 +463,16 @@ describe('LSP Protocol Integration', () => {
       }
     });
 
+    it('ecl/deriveEcl should reject text with no concept ids', async () => {
+      try {
+        await conn.sendRequest('ecl/deriveEcl', { text: 'code,display\nnot a code' });
+        assert.fail('should throw when no ids are found');
+      } catch (error: unknown) {
+        const msg = error instanceof Error ? error.message : String(error);
+        assert.ok(msg.includes('No SNOMED CT concept ids'), `unexpected error: ${msg}`);
+      }
+    });
+
     it('ecl/searchConcept should accept request without crashing', async () => {
       try {
         await Promise.race([

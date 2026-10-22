@@ -61,6 +61,9 @@ import {
   isTerminologyError,
   isTerminologyHttpError,
   isTerminologyTransportError,
+  deriveEcl,
+  formatDeriveReport,
+  parseConceptIdList,
 } from '@aehrc/ecl-core';
 import type {
   ITerminologyService,
@@ -1264,6 +1267,35 @@ connection.onRequest('ecl/searchConcept', async (params: { query: string }) => {
     return result;
   } catch (error) {
     connection.console.error(`Search failed: ${String(error)}`);
+    throw error;
+  }
+});
+
+/**
+ * Derive candidate ECL from a concept list or refset (issue #147). `text` is a
+ * pasted code list in any common shape; `conceptIds` or `refsetId` give the set
+ * directly. Returns a plain-text report plus the candidates for a picker.
+ */
+connection.onRequest('ecl/deriveEcl', async (params: { text?: string; conceptIds?: string[]; refsetId?: string }) => {
+  const conceptIds = params.conceptIds ?? parseConceptIdList(params.text ?? '');
+  if (!params.refsetId && conceptIds.length === 0) {
+    throw new Error('No SNOMED CT concept ids found');
+  }
+  const input = params.refsetId ? { refsetId: params.refsetId } : { conceptIds };
+  try {
+    const result = await deriveEcl(input, terminologyService);
+    return {
+      report: formatDeriveReport(result),
+      candidates: result.candidates.map((c) => ({
+        expression: c.expression,
+        exact: c.exact,
+        additions: c.additions.count,
+        misses: c.misses.count,
+        clauses: c.clauses,
+      })),
+    };
+  } catch (error) {
+    connection.console.error(`Derive ECL failed: ${String(error)}`);
     throw error;
   }
 });

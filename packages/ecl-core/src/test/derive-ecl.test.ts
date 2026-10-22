@@ -221,6 +221,20 @@ describe('deriveEcl', () => {
     });
   });
 
+  describe('expression input', () => {
+    it('derives from the set an expression selects, and offers the expression itself', async () => {
+      const mock = fixture();
+      const ecl = `${id.A} OR << ${id.A1} OR ${id.A2} OR ${id.A3} OR ${id.A4} OR << ${id.A5}`;
+      const result = await deriveEcl({ ecl }, mock, { omitTerms: true });
+      assert.strictEqual(result.input.members, 9);
+      assert.strictEqual(result.candidates[0].ecl, `<< ${id.A}`);
+      const itself = result.candidates.find((c) => c.construction.kind === 'expression');
+      assert.ok(itself);
+      assert.strictEqual(itself.ecl, ecl);
+      assert.strictEqual(itself.exact, true);
+    });
+  });
+
   describe('reference set input', () => {
     it('offers the refset itself and recovers its definition', async () => {
       const mock = fixture();

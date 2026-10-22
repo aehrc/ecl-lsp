@@ -148,6 +148,19 @@ additions reported), and always the enumeration or `^ refset` itself. They are
 ranked by clauses + additions + misses. Sets that cut across the hierarchy
 (many roots, e.g. AMT products) get only the exact enumeration and a note.
 
+`deriveEcl({ ecl }, terminology)` takes the set an expression selects. To make
+an expression shorter, use `compressExpression`. It compresses the expression's
+OR group, keeps what surrounds the group (`AND ^ refset`, a refinement) as
+written, and counts what the whole expression then adds and misses. The
+original and its exact simplification are always among the candidates.
+
+```typescript
+import { compressExpression } from '@aehrc/ecl-core';
+
+const { candidates } = await compressExpression('(<< 372594008 OR << 372767007 OR …) AND ^ 929360081000036101', fhir);
+// candidates[i]: { expression, ecl, additions, misses, exact, clauses, source: 'derived' | 'simplified' | 'original' }
+```
+
 ### Canonical Comparison
 
 ```typescript

@@ -42,7 +42,12 @@ import { isValidConceptId } from '../terminology/verhoeff';
 // ── Public types ─────────────────────────────────────────────────────────
 
 /** The set to derive ECL for: an enumerated list of concept ids, or a reference set's members. */
-export type DeriveInput = { conceptIds: string[] } | { refsetId: string };
+/**
+ * The set to derive ECL for: an enumerated list of concept ids, a reference
+ * set's members, or the concepts an ECL expression selects (to find a shorter
+ * form of it, issue #149).
+ */
+export type DeriveInput = { conceptIds: string[] } | { refsetId: string } | { ecl: string };
 
 export interface DeriveOptions {
   /** Above this many roots, hierarchy candidates are skipped as not compact. Default 200. */
@@ -73,6 +78,7 @@ export interface SetDifference {
 export type CandidateConstruction =
   | { kind: 'enumeration'; members: number }
   | { kind: 'refset'; refsetId: string }
+  | { kind: 'expression' }
   | {
       kind: 'hierarchy';
       /** Members with no ancestor in the set, each included as `<< root`. */
@@ -171,7 +177,7 @@ function orGroup(terms: string[]): string {
   return terms.length === 1 ? terms[0] : `(${terms.join(' OR ')})`;
 }
 
-function countClauses(ecl: string): number {
+export function countClauses(ecl: string): number {
   return ecl.match(/\b\d{6,18}\b/g)?.length ?? 0;
 }
 
@@ -277,7 +283,9 @@ export async function deriveEcl(
   const built: { ecl: string; construction: CandidateConstruction; known?: Omit<Scored, 'ecl' | 'construction'> }[] =
     [];
 
-  if ('refsetId' in input) {
+  if ('ecl' in input) {
+    built.push({ ecl: input.ecl.trim(), construction: { kind: 'expression' }, known: exactScore(members.size) });
+  } else if ('refsetId' in input) {
     built.push({
       ecl: `^ ${input.refsetId}`,
       construction: { kind: 'refset', refsetId: input.refsetId },
@@ -329,6 +337,19 @@ async function resolveInput(
   notes: string[],
 ): Promise<{ report: DeriveInputReport; members: MemberSet | null }> {
   if ('refsetId' in input) return resolveRefset(input.refsetId.trim(), q, terminology, notes);
+  if ('ecl' in input) {
+    const ecl = `(${input.ecl.trim()})`;
+    const size = await q.countEcl(ecl);
+    const report: DeriveInputReport = {
+      given: size,
+      members: size,
+      inactive: [],
+      unknown: [],
+      malformed: [],
+      duplicates: 0,
+    };
+    return { report, members: size ? { clause: { ecl }, ecl, size } : null };
+  }
   const trimmed = input.conceptIds.map((id) => id.trim()).filter((id) => id.length > 0);
   const distinct = [...new Set(trimmed)].sort(byId);
   const malformed = distinct.filter((id) => !isValidConceptId(id));
@@ -659,9 +680,11 @@ interface Scored {
   clauses: number;
 }
 
-/** The enumeration or the refset: on a tie, a derived definition says more. */
+/** The enumeration, refset or expression given: on a tie, a derived definition says more. */
 function isInputItself(s: Scored): boolean {
-  return s.construction.kind === 'enumeration' || s.construction.kind === 'refset';
+  return (
+    s.construction.kind === 'enumeration' || s.construction.kind === 'refset' || s.construction.kind === 'expression'
+  );
 }
 
 /** The score of a candidate that is the input itself; `clauses` is set from its ECL by the caller. */
@@ -697,7 +720,10 @@ async function compare(
 
 // ── Presentation ─────────────────────────────────────────────────────────
 
-async function displayTerms(candidates: Scored[], terminology: ITerminologyService): Promise<Map<string, string>> {
+export async function displayTerms(
+  candidates: { ecl: string; clauses: number }[],
+  terminology: ITerminologyService,
+): Promise<Map<string, string>> {
   const ids = new Set<string>();
   for (const c of candidates) {
     if (c.clauses > MAX_DECORATED_CLAUSES) continue;
@@ -711,7 +737,7 @@ async function displayTerms(candidates: Scored[], terminology: ITerminologyServi
 }
 
 /** Add display terms and format, unless the candidate is too long to be worth it. */
-function decorate(ecl: string, terms: Map<string, string>): string {
+export function decorate(ecl: string, terms: Map<string, string>): string {
   if (countClauses(ecl) > MAX_DECORATED_CLAUSES) return ecl;
   const withTerms = ecl.replace(/\b\d{6,18}\b/g, (id) => {
     const term = terms.get(id);

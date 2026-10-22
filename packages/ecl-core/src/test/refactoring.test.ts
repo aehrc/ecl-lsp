@@ -799,6 +799,29 @@ describe('simplifyExpression', () => {
     }
   });
 
+  it('brackets a conjunction when factoring it into an OR', async () => {
+    // Unbracketed, `a, b OR c` reads as `a, (b OR c)` on Ontoserver: a different set.
+    const result = await simplifyExpression(
+      '(< 404684003 : 363698007 = << 39057004, 116676008 = << 49755003) OR (< 404684003 : 246075003 = << 409822003)',
+    );
+    assert.strictEqual(
+      result.expression,
+      '< 404684003 : (363698007 = << 39057004, 116676008 = << 49755003) OR 246075003 = << 409822003',
+    );
+    assert.deepStrictEqual(parseECL(result.expression).errors, []);
+  });
+
+  it('brackets a disjunction when merging it into a conjunction', async () => {
+    const result = await simplifyExpression(
+      '(< 404684003 : 363698007 = << 39057004) AND (< 404684003 : 363698007 = << 39057004 OR 116676008 = << 49755003)',
+    );
+    assert.strictEqual(
+      result.expression,
+      '< 404684003 : 363698007 = << 39057004, (363698007 = << 39057004 OR 116676008 = << 49755003)',
+    );
+    assert.deepStrictEqual(parseECL(result.expression).errors, []);
+  });
+
   it('refuses input with syntax errors, as the code action does', async () => {
     const result = await simplifyExpression('< 404684003 AND AND < 404684003');
     assert.strictEqual(result.expression, '< 404684003 AND AND < 404684003');

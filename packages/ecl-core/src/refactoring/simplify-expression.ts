@@ -225,6 +225,11 @@ function getFocusKey(text: string): { focusKey: string; focusText: string; refin
   return { focusKey, focusText, refinementText };
 }
 
+function bracketIfCompound(refinement: string): string {
+  const outsideTerms = refinement.replaceAll(/\|[^|]*\|/g, '');
+  return /,|\b(AND|OR)\b/i.test(outsideTerms) ? `(${refinement})` : refinement;
+}
+
 function factorOrMergeFocus(operandTexts: string[], compoundOp: 'AND' | 'OR'): string | null {
   if (operandTexts.length < 2) return null;
 
@@ -243,7 +248,10 @@ function factorOrMergeFocus(operandTexts: string[], compoundOp: 'AND' | 'OR'): s
   // OR: factor keeps OR between refinements
   // AND: merge uses comma (equivalent to AND in refinement context, reads as continuation)
   const joinSep = compoundOp === 'OR' ? ' OR ' : ', ';
-  const joinedRefinements = validParts.map((p) => p.refinementText).join(joinSep);
+  // Bracket any refinement that is itself a conjunction or disjunction. ECL has
+  // no precedence between `,`/AND and OR in a refinement, and servers disagree
+  // on `a, b OR c`: Ontoserver reads it as `a, (b OR c)`.
+  const joinedRefinements = validParts.map((p) => bracketIfCompound(p.refinementText)).join(joinSep);
 
   return `${commonFocusText} : ${joinedRefinements}`;
 }

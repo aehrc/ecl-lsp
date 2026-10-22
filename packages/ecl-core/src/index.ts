@@ -102,7 +102,7 @@ export { computeSemanticTokens, eclTokenTypes, eclTokenModifiers } from './seman
 export type { SemanticToken } from './semantic-tokens';
 
 // Derive ECL from a concept list or refset (issue #147)
-export { deriveEcl } from './derive/derive-ecl';
+export { deriveEcl, parseConceptIdList, formatDeriveReport } from './derive/derive-ecl';
 export type {
   DeriveInput,
   DeriveOptions,

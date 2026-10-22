@@ -151,6 +151,10 @@ const SNOMED_ROOT = '138875005';
 const PAGE_SIZE = 50_000;
 /** Above this many concept references, candidates are not formatted or given terms. */
 const MAX_DECORATED_CLAUSES = 200;
+/** Concurrent set queries; see {@link SetQueries}. */
+const MAX_IN_FLIGHT = 8;
+/** Most subtree tops (for exclusions) or ancestors (for covers) whose size is counted. */
+const MAX_SIZED = 500;
 
 /** Numeric order for SCTIDs, so output does not depend on input or server order. */
 function byId(a: string, b: string): number {
@@ -180,8 +184,26 @@ interface MemberSet {
   size: number;
 }
 
+/**
+ * Set queries against the server. At most {@link MAX_IN_FLIGHT} run at once:
+ * many carry the whole member list, and the service may not queue them itself.
+ */
 class SetQueries {
-  constructor(private readonly expand: ExpandCompose) {}
+  private inFlight = 0;
+  private readonly waiting: (() => void)[] = [];
+
+  constructor(private readonly expandCompose: ExpandCompose) {}
+
+  private async expand(...args: Parameters<ExpandCompose>): ReturnType<ExpandCompose> {
+    if (this.inFlight >= MAX_IN_FLIGHT) await new Promise<void>((resolve) => this.waiting.push(resolve));
+    this.inFlight++;
+    try {
+      return await this.expandCompose(...args);
+    } finally {
+      this.inFlight--;
+      this.waiting.shift()?.();
+    }
+  }
 
   async count(compose: ValueSetCompose): Promise<number> {
     return (await this.expand(compose, { count: 0 })).total;
@@ -234,10 +256,12 @@ export async function deriveEcl(
   const q = new SetQueries(terminology.expandCompose.bind(terminology));
   const notes: string[] = [];
 
-  const { report, members } = await resolveInput(input, q);
+  const { report, members } = await resolveInput(input, q, terminology, notes);
   const result: DeriveResult = { input: report, hierarchies: [], roots: 0, candidates: [], notes };
   if (!members) {
-    notes.push('The input has no active concepts the server knows, so there is nothing to derive.');
+    if (notes.length === 0) {
+      notes.push('The input has no active concepts the server knows, so there is nothing to derive.');
+    }
     return result;
   }
 
@@ -267,22 +291,7 @@ export async function deriveEcl(
     });
   }
 
-  if (result.roots > opts.maxRoots) {
-    notes.push(
-      `The set has ${result.roots} roots (members with no ancestor in the set), more than maxRoots ` +
-        `(${opts.maxRoots}), so it does not follow the IS-A hierarchy closely and no hierarchy ` +
-        'candidates were built. Attribute refinements (issue #149 Part 3) may fit it better.',
-    );
-  } else {
-    built.push(...(await hierarchyCover(roots, members, q, opts, notes)));
-    if (roots.length > opts.maxAncestorRoots) {
-      notes.push(
-        `Ancestor covers were skipped: ${roots.length} roots is more than maxAncestorRoots (${opts.maxAncestorRoots}).`,
-      );
-    } else {
-      built.push(...(await ancestorCovers(roots, members, q, opts)));
-    }
-  }
+  built.push(...(await hierarchyCandidates(roots, result.roots, members, q, opts, notes)));
 
   // Score each distinct candidate against the set, on the server.
   const seen = new Set<string>();
@@ -316,24 +325,10 @@ export async function deriveEcl(
 async function resolveInput(
   input: DeriveInput,
   q: SetQueries,
+  terminology: ITerminologyService,
+  notes: string[],
 ): Promise<{ report: DeriveInputReport; members: MemberSet | null }> {
-  if ('refsetId' in input) {
-    const refsetId = input.refsetId.trim();
-    const report: DeriveInputReport = {
-      given: 1,
-      members: 0,
-      inactive: [],
-      unknown: [],
-      malformed: isValidConceptId(refsetId) ? [] : [refsetId],
-      duplicates: 0,
-    };
-    if (report.malformed.length > 0) return { report, members: null };
-    const ecl = `(^ ${refsetId})`;
-    report.members = await q.countEcl(ecl);
-    if (report.members === 0) report.unknown.push(refsetId);
-    return { report, members: report.members ? { clause: { ecl }, ecl, size: report.members } : null };
-  }
-
+  if ('refsetId' in input) return resolveRefset(input.refsetId.trim(), q, terminology, notes);
   const trimmed = input.conceptIds.map((id) => id.trim()).filter((id) => id.length > 0);
   const distinct = [...new Set(trimmed)].sort(byId);
   const malformed = distinct.filter((id) => !isValidConceptId(id));
@@ -361,6 +356,32 @@ async function resolveInput(
   return { report, members: { clause: { concepts: active }, ecl: orGroup(active), size: active.length } };
 }
 
+async function resolveRefset(
+  refsetId: string,
+  q: SetQueries,
+  terminology: ITerminologyService,
+  notes: string[],
+): Promise<{ report: DeriveInputReport; members: MemberSet | null }> {
+  const report: DeriveInputReport = {
+    given: 1,
+    members: 0,
+    inactive: [],
+    unknown: [],
+    malformed: isValidConceptId(refsetId) ? [] : [refsetId],
+    duplicates: 0,
+  };
+  if (report.malformed.length > 0) return { report, members: null };
+  const ecl = `(^ ${refsetId})`;
+  report.members = await q.countEcl(ecl);
+  if (report.members === 0) {
+    const info = await terminology.getConceptInfo(refsetId);
+    if (info === null) report.unknown.push(refsetId);
+    else if (info.active) notes.push(`${refsetId} |${info.pt}| has no active members, or is not a reference set.`);
+    else report.inactive.push(refsetId);
+  }
+  return { report, members: report.members ? { clause: { ecl }, ecl, size: report.members } : null };
+}
+
 async function hierarchyDistribution(
   members: MemberSet,
   q: SetQueries,
@@ -374,6 +395,35 @@ async function hierarchyDistribution(
     })),
   );
   return counts.filter((c) => c.count > 0).sort((a, b) => b.count - a.count || byId(a.conceptId, b.conceptId));
+}
+
+// ── Hierarchy candidates ─────────────────────────────────────────────────
+
+async function hierarchyCandidates(
+  roots: string[],
+  rootTotal: number,
+  members: MemberSet,
+  q: SetQueries,
+  opts: Required<DeriveOptions>,
+  notes: string[],
+): Promise<{ ecl: string; construction: CandidateConstruction }[]> {
+  if (rootTotal > opts.maxRoots) {
+    notes.push(
+      `The set has ${rootTotal} roots (members with no ancestor in the set), more than maxRoots ` +
+        `(${opts.maxRoots}), so it does not follow the IS-A hierarchy closely and no hierarchy ` +
+        'candidates were built. Attribute refinements (issue #149 Part 3) may fit it better.',
+    );
+    return [];
+  }
+  const candidates = await hierarchyCover(roots, members, q, opts, notes);
+  if (roots.length > opts.maxAncestorRoots) {
+    notes.push(
+      `Ancestor covers were skipped: ${roots.length} roots is more than maxAncestorRoots (${opts.maxAncestorRoots}).`,
+    );
+  } else {
+    candidates.push(...(await ancestorCovers(roots, members, q, opts, notes)));
+  }
+  return candidates;
 }
 
 // ── Candidate 1: exact hierarchy cover ───────────────────────────────────
@@ -395,10 +445,13 @@ async function hierarchyCover(
   // Maximal subtrees under the roots that hold no member: X = (<< R) MINUS (>> S),
   // and its top elements X MINUS < X. Each can go as one `MINUS << x`.
   const clean = `(${rootsOperand} MINUS (>> ${members.ecl}))`;
-  const cleanTops = await q.codes(
-    { include: [{ ecl: `${clean} MINUS < ${clean}` }] },
-    Math.max(opts.maxExclusions * 4, 100),
-  );
+  const cleanTops = await q.codes({ include: [{ ecl: `${clean} MINUS < ${clean}` }] }, MAX_SIZED);
+  if (cleanTops.total > cleanTops.codes.length) {
+    notes.push(
+      `${cleanTops.total} subtrees could be excluded; the largest were chosen from the first ` +
+        `${cleanTops.codes.length} the server returned.`,
+    );
+  }
   const sized = await Promise.all(cleanTops.codes.map(async (x) => ({ x, size: await q.countEcl(`<< ${x}`) })));
   sized.sort((a, b) => b.size - a.size || byId(a.x, b.x));
   const exclusions = sized
@@ -453,17 +506,11 @@ async function ancestorCovers(
   members: MemberSet,
   q: SetQueries,
   opts: Required<DeriveOptions>,
+  notes: string[],
 ): Promise<{ ecl: string; construction: CandidateConstruction }[]> {
   // With one root, its proper ancestors still give single-clause candidates (`< parent`).
   if (roots.length === 0) return [];
 
-  const ancestors = await mostSpecificAncestors(roots, q, opts.maxAncestorCandidates);
-  const ancestorFoci: Focus[] = await Promise.all(
-    ancestors.map(async ({ a, covers, size }) => {
-      const covered = members.size - (await q.count({ include: [members.clause], exclude: [{ ecl: `< ${a}` }] }));
-      return { conceptId: a, operator: '<' as const, member: false, covers, covered, additions: size - covered };
-    }),
-  );
   const rootFoci: Focus[] = await Promise.all(
     roots.map(async (r, i) => {
       const size = await q.countEcl(`<< ${r}`);
@@ -476,6 +523,13 @@ async function ancestorCovers(
         covered,
         additions: size - covered,
       };
+    }),
+  );
+  const ancestors = await rankAncestors(roots, rootFoci, q, opts.maxAncestorCandidates, notes);
+  const ancestorFoci: Focus[] = await Promise.all(
+    ancestors.map(async ({ a, covers, size }) => {
+      const covered = members.size - (await q.count({ include: [members.clause], exclude: [{ ecl: `< ${a}` }] }));
+      return { conceptId: a, operator: '<' as const, member: false, covers, covered, additions: size - covered };
     }),
   );
 
@@ -503,14 +557,20 @@ async function ancestorCovers(
 }
 
 /**
- * Proper ancestors of the roots that sit above two or more of them, ranked by
- * roots covered. For each set of roots covered only the most specific ancestor
- * (fewest descendants) is kept: it covers the same members with fewer additions.
+ * Proper ancestors of the roots worth an exact count, best first. Each one's
+ * size is counted (a cheap query), and the members it covers are estimated from
+ * the roots below it, so they can be ranked by cost per root covered: a parent
+ * shared by two roots with few other children beats a broad grouper above them
+ * all. The cheapest ancestor above every root is always kept, for the best
+ * single-clause candidate. For each set of roots covered only the smallest
+ * ancestor is kept, since it covers those roots with the fewest additions.
  */
-async function mostSpecificAncestors(
+async function rankAncestors(
   roots: string[],
+  rootFoci: Focus[],
   q: SetQueries,
   max: number,
+  notes: string[],
 ): Promise<{ a: string; covers: Set<number>; size: number }[]> {
   const coversByAncestor = new Map<string, Set<number>>();
   const ancestorLists = await Promise.all(roots.map((r) => q.codes({ include: [{ ecl: `> ${r}` }] }, 2000)));
@@ -523,22 +583,43 @@ async function mostSpecificAncestors(
     }
   });
 
-  const ranked = [...coversByAncestor.entries()]
-    .filter(([, covers]) => roots.length === 1 || covers.size >= 2)
-    .sort(([a, ca], [b, cb]) => cb.size - ca.size || byId(a, b))
-    .slice(0, max * 4);
-  const sizes = await Promise.all(ranked.map(([a]) => q.countEcl(`< ${a}`)));
+  let shared = [...coversByAncestor.entries()].filter(([, covers]) => roots.length === 1 || covers.size >= 2);
+  if (shared.length > MAX_SIZED) {
+    notes.push(`${shared.length} ancestors are shared by the roots; only the ${MAX_SIZED} most specific were sized.`);
+    // Fewest roots covered first: the specific parents are the ones a cheap cover needs.
+    shared.sort(([a, ca], [b, cb]) => ca.size - cb.size || byId(a, b));
+    shared = shared.slice(0, MAX_SIZED);
+  }
+  const sizes = await Promise.all(shared.map(([a]) => q.countEcl(`< ${a}`)));
+
   const bestPerRootSet = new Map<string, { a: string; covers: Set<number>; size: number }>();
-  ranked.forEach(([a, covers], i) => {
+  shared.forEach(([a, covers], i) => {
     const key = [...covers].sort((x, y) => x - y).join(',');
     const prev = bestPerRootSet.get(key);
     if (!prev || sizes[i] < prev.size || (sizes[i] === prev.size && byId(a, prev.a) < 0)) {
       bestPerRootSet.set(key, { a, covers, size: sizes[i] });
     }
   });
-  return [...bestPerRootSet.values()]
-    .sort((x, y) => y.covers.size - x.covers.size || x.size - y.size || byId(x.a, y.a))
-    .slice(0, max);
+  const candidates = [...bestPerRootSet.values()];
+
+  const estimatedCost = (c: { covers: Set<number>; size: number }) => {
+    let covered = 0;
+    for (const i of c.covers) covered += rootFoci[i].covered;
+    return (1 + Math.max(0, c.size - covered)) / c.covers.size;
+  };
+  const ranked = candidates
+    .map((c) => ({ c, cost: estimatedCost(c) }))
+    .sort((x, y) => x.cost - y.cost || y.c.covers.size - x.c.covers.size || byId(x.c.a, y.c.a))
+    .map(({ c }) => c);
+  const chosen = ranked.slice(0, max);
+
+  const widest = Math.max(0, ...candidates.map((c) => c.covers.size));
+  const cheapestWidest = candidates
+    .filter((c) => c.covers.size === widest)
+    .sort((x, y) => x.size - y.size || byId(x.a, y.a))
+    .at(0);
+  if (cheapestWidest && !chosen.includes(cheapestWidest)) chosen.push(cheapestWidest);
+  return chosen;
 }
 
 /** Greedy weighted set cover over the roots: repeatedly take the cheapest clause per newly covered root. */
@@ -637,4 +718,63 @@ function decorate(ecl: string, terms: Map<string, string>): string {
     return term ? `${id} |${term.replace(/\|/g, '')}|` : id;
   });
   return formatDocument(withTerms, defaultFormattingOptions).trim();
+}
+
+// ── Text helpers for clients ─────────────────────────────────────────────
+
+/**
+ * The concept ids in a pasted code list, in order: one per line, comma or tab
+ * separated, or `id |term|` / `id,term` rows. Any run of 6-18 digits counts, so
+ * a header row or terms are skipped; numbers inside terms are rare but possible,
+ * and `deriveEcl` reports any that are not concepts.
+ */
+export function parseConceptIdList(text: string): string[] {
+  const ids: string[] = [];
+  for (const line of text.split(/\r?\n/)) {
+    // Only the first id-like token on a line, so `code,term with 123456 in it` stays one concept.
+    const first = /(?<![\d.])\d{6,18}(?![\d.])/.exec(line.replace(/\|[^|]*\|/g, ''));
+    if (first) ids.push(first[0]);
+  }
+  return ids;
+}
+
+/** A plain-text report of a {@link DeriveResult}, for an output channel or a chat message. */
+export function formatDeriveReport(result: DeriveResult): string {
+  const lines: string[] = [];
+  const { input } = result;
+  const duplicates = input.duplicates ? ` (${plural(input.duplicates, 'duplicate')} ignored)` : '';
+  lines.push(`Members: ${input.members} of ${input.given} distinct ids${duplicates}`);
+  const leftOut: [string, string[]][] = [
+    ['Inactive (left out)', input.inactive],
+    ['Unknown to the server (left out)', input.unknown],
+    ['Not concept ids (left out)', input.malformed],
+  ];
+  for (const [label, ids] of leftOut) {
+    const more = ids.length > 20 ? ', …' : '';
+    if (ids.length) lines.push(`${label}: ${ids.slice(0, 20).join(', ')}${more}`);
+  }
+  if (result.hierarchies.length) {
+    const counts = result.hierarchies.map((h) => `${h.display} ${h.count}`);
+    lines.push(`Hierarchies: ${counts.join(', ')}`);
+  }
+  lines.push(`Roots (members with no ancestor in the set): ${result.roots}`);
+  for (const note of result.notes) lines.push(`Note: ${note}`);
+
+  result.candidates.forEach((c, i) => {
+    const status = c.exact ? 'exact' : `+${c.additions.count} added, -${c.misses.count} missed`;
+    lines.push('', `${i + 1}. ${status}; ${plural(c.clauses, 'clause')}; ${c.construction.kind}`);
+    lines.push(...c.expression.split('\n').map((l) => `   ${l}`));
+    const sample = (label: string, d: SetDifference) => {
+      if (d.count === 0) return;
+      const shown = d.sample.map((s) => `${s.code} |${s.display}|`).join(', ');
+      lines.push(`   ${label} (${d.count}): ${shown}${d.count > d.sample.length ? ', …' : ''}`);
+    };
+    sample('Adds', c.additions);
+    sample('Misses', c.misses);
+  });
+  return lines.join('\n');
+}
+
+function plural(n: number, noun: string): string {
+  return `${n} ${noun}${n === 1 ? '' : 's'}`;
 }

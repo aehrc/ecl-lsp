@@ -3,7 +3,7 @@
 
 import { describe, it } from 'node:test';
 import * as assert from 'node:assert';
-import { deriveEcl, type DeriveResult } from '../derive/derive-ecl';
+import { deriveEcl, formatDeriveReport, parseConceptIdList, type DeriveResult } from '../derive/derive-ecl';
 import { HierarchyMockService, sctid } from './hierarchy-mock';
 import { MockTerminologyService } from '../terminology/mock-service';
 
@@ -233,6 +233,21 @@ describe('deriveEcl', () => {
     });
   });
 
+  describe('reference set input: why it is empty', () => {
+    it('reports an unknown refset id as unknown', async () => {
+      const result = await deriveEcl({ refsetId: sctid(7777) }, fixture());
+      assert.deepStrictEqual(result.input.unknown, [sctid(7777)]);
+    });
+
+    it('notes a known concept with no active members instead of calling it unknown', async () => {
+      const mock = fixture();
+      mock.addRefset(id.B, [id.RETIRED]);
+      const result = await deriveEcl({ refsetId: id.B }, mock);
+      assert.deepStrictEqual(result.input.unknown, []);
+      assert.match(result.notes.join('\n'), /has no active members, or is not a reference set/);
+    });
+  });
+
   describe('determinism and bounds', () => {
     it('gives the same result whatever the input order', async () => {
       const mock = fixture();
@@ -280,6 +295,95 @@ describe('deriveEcl', () => {
     });
   });
 
+  describe('choosing among many ancestors and subtrees', () => {
+    it('finds specific shared parents under a long chain of broad ancestors', async () => {
+      // 10 parents with two member children each, under a chain of 130 generic
+      // ancestors; the lowest generic also holds 15 non-members. `< P0 OR … OR < P9`
+      // is exact at half the length of the roots. The generics each cover every
+      // root, so ranking ancestors by roots covered alone fills the shortlist with
+      // them and never sizes the parents.
+      const mock = new HierarchyMockService().add(ROOT, 'root');
+      let above = ROOT;
+      for (let i = 0; i < 130; i++) {
+        const g = sctid(3000 + i);
+        mock.add(g, `G${i}`, [above]);
+        above = g;
+      }
+      for (let k = 0; k < 15; k++) mock.add(sctid(3500 + k), 'noise', [above]);
+      const set: string[] = [];
+      const parents: string[] = [];
+      for (let k = 0; k < 10; k++) {
+        const p = sctid(4000 + k);
+        parents.push(p);
+        mock.add(p, `P${k}`, [above]);
+        for (let j = 0; j < 2; j++) {
+          const r = sctid(4100 + k * 2 + j);
+          mock.add(r, 'r', [p]);
+          set.push(r);
+        }
+      }
+      const result = await deriveEcl({ conceptIds: set }, mock, { omitTerms: true });
+      assert.strictEqual(result.candidates[0].ecl, parents.map((p) => `< ${p}`).join(' OR '));
+      assert.strictEqual(result.candidates[0].exact, true);
+    });
+
+    it('excludes the largest clean subtrees, not the first ones returned', async () => {
+      // 120 single-leaf subtrees come back first (lower ids); 3 subtrees of 11 come last.
+      const mock = new HierarchyMockService().add(ROOT, 'root');
+      const a = sctid(5000);
+      mock.add(a, 'A', [ROOT]);
+      for (let i = 0; i < 120; i++) mock.add(sctid(5100 + i), `leaf${i}`, [a]);
+      const big: string[] = [];
+      let n = 6000;
+      for (let b = 0; b < 3; b++) {
+        const id = sctid(5900 + b);
+        big.push(id);
+        mock.add(id, `big${b}`, [a]);
+        for (let k = 0; k < 10; k++) mock.add(sctid(n++), 'x', [id]);
+      }
+      const m = sctid(5050);
+      const mc = sctid(5051);
+      mock.add(m, 'M', [a]).add(mc, 'Mc', [m]);
+      const result = await deriveEcl({ conceptIds: [a, m, mc] }, mock, {
+        omitTerms: true,
+        maxExclusions: 2,
+        maxResidualLiterals: 200,
+      });
+      const cover = result.candidates.find((c) => c.construction.kind === 'hierarchy' && c.exact);
+      assert.ok(cover);
+      assert.deepStrictEqual(cover.construction.kind === 'hierarchy' && cover.construction.exclusions, big.slice(0, 2));
+    });
+  });
+
+  describe('property: honest counts on polyhierarchies with inactive concepts', () => {
+    it('holds for 10 random DAGs x 10 subsets', async () => {
+      let seed = 7;
+      const random = () => {
+        seed = (seed * 1103515245 + 12345) % 2147483648;
+        return seed / 2147483648;
+      };
+      for (let g = 0; g < 10; g++) {
+        const mock = new HierarchyMockService().add(ROOT, 'root');
+        const ids = [ROOT];
+        for (let i = 0; i < 40; i++) {
+          const c = sctid(20000 + g * 100 + i);
+          const k = 1 + (random() < 0.4 ? 1 : 0) + (random() < 0.15 ? 1 : 0);
+          const parentsOf = [...new Set(Array.from({ length: k }, () => ids[Math.floor(random() * ids.length)]))];
+          mock.add(c, `c${i}`, parentsOf, random() > 0.05);
+          ids.push(c);
+        }
+        for (let r = 0; r < 10; r++) {
+          const set = ids.filter(() => random() < 0.3);
+          if (set.length === 0) continue;
+          const result = await deriveEcl({ conceptIds: set }, mock, { omitTerms: true, maxCandidates: 50 });
+          const active = set.filter((x) => mock.concepts.get(x)?.active);
+          assertCountsHonest(mock, active, result);
+          if (active.length > 0) assert.ok(result.candidates.some((c) => c.exact));
+        }
+      }
+    });
+  });
+
   describe('presentation', () => {
     it('formats candidates with display terms', async () => {
       const mock = fixture();
@@ -288,5 +392,38 @@ describe('deriveEcl', () => {
       assert.strictEqual(result.candidates[0].expression, `<< ${id.A} | A | MINUS << ${id.A1} | A1 |`);
       assert.strictEqual(result.candidates[0].ecl, `<< ${id.A} MINUS << ${id.A1}`);
     });
+  });
+});
+
+describe('parseConceptIdList', () => {
+  it('reads one id per line, CSV rows, terms and headers', () => {
+    const text = [
+      'code,display',
+      '73211009,Diabetes mellitus',
+      '46635009 |Type 1 diabetes mellitus|',
+      '  44054006\tType 2 diabetes mellitus',
+      '',
+      '190372001, Maturity onset type 1 (age 20000000)',
+      '1.2.840.10008',
+    ].join('\n');
+    assert.deepStrictEqual(parseConceptIdList(text), ['73211009', '46635009', '44054006', '190372001']);
+  });
+
+  it('ignores digits inside a term before the id', () => {
+    assert.deepStrictEqual(parseConceptIdList('|Phase 1000000 trial| 73211009'), ['73211009']);
+  });
+});
+
+describe('formatDeriveReport', () => {
+  it('reports the input, the notes and each candidate with its differences', async () => {
+    const mock = fixture();
+    const set = membersOf(mock, `<< ${id.A1} OR ${id.A2} OR ${id.A3} OR ${id.A4}`);
+    const result = await deriveEcl({ conceptIds: [...set, '1234', set[0]] }, mock, { maxCandidates: 2 });
+    const report = formatDeriveReport(result);
+    assert.match(report, /^Members: 6 of 7 distinct ids \(1 duplicate ignored\)$/m);
+    assert.match(report, /^Not concept ids \(left out\): 1234$/m);
+    assert.match(report, /^1\. \+2 added, -0 missed; 1 clause; ancestor-cover$/m);
+    assert.match(report, new RegExp(`^   Adds \\(2\\): ${id.A5} \\|A5\\|, ${id.A5a} \\|A5a\\|$`, 'm'));
+    assert.match(report, /^2\. exact; /m);
   });
 });

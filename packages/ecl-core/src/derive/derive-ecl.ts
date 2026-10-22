@@ -13,7 +13,8 @@
 // downloaded to compare and the input can be large. The work is bounded by the
 // options below, never by the size of the set.
 //
-// Candidates, all built from the IS-A hierarchy:
+// Candidates, from the IS-A hierarchy and then, for sets that cut across it,
+// from attribute refinements (section "Candidate 3" below):
 //
 //   1. Exact hierarchy cover. Take the set's roots R (members with no ancestor
 //      in the set) as `<< r`, remove the over-inclusion with `MINUS << x` over
@@ -77,8 +78,9 @@ export interface DeriveOptions {
   omitTerms?: boolean;
   /**
    * Attribute refinement candidates (`focus : attribute = value`):
-   * `'auto'` builds them when the set has more than 20 roots, i.e. it cuts
-   * across the IS-A hierarchy. Default `'auto'`. Needs `getDefiningRelationships`.
+   * `'auto'` builds them when the set cuts across the IS-A hierarchy: more than
+   * 20 roots, or more than 3 with no exact IS-A candidate of 3 clauses or fewer.
+   * Default `'auto'`. Needs `getDefiningRelationships`.
    */
   refinements?: 'auto' | 'always' | 'never';
   /**
@@ -190,12 +192,14 @@ const PAGE_SIZE = 50_000;
 const MAX_DECORATED_CLAUSES = 200;
 /** Concurrent set queries; see {@link SetQueries}. */
 const MAX_IN_FLIGHT = 8;
-/** With `refinements: 'auto'`, refinement candidates are built above this many roots. */
+/** With `refinements: 'auto'`, refinement candidates are always built above this many roots. */
 const REFINEMENT_ROOTS = 20;
 /** Members whose relationships are read to find the attributes the set shares. */
 const REFINEMENT_SAMPLE = 20;
 /** Up to this many distinct values, the values themselves are a value option. */
 const MAX_LITERAL_VALUES = 5;
+/** Value roots whose share of members is counted, per attribute. */
+const MAX_SHARED_VALUE_ROOTS = 20;
 /** Value expressions tried per attribute. */
 const VALUE_CANDIDATES = 3;
 /** Most attributes tried, those most often present in the sample first. */
@@ -333,28 +337,28 @@ export async function deriveEcl(
   result.roots = rootQuery.total;
   const roots = rootQuery.codes;
 
-  const built: { ecl: string; construction: CandidateConstruction; known?: Omit<Scored, 'ecl' | 'construction'> }[] =
-    [];
-  built.push(...(await hierarchyCandidates(roots, result.roots, members, q, opts, notes)));
-  if (opts.refinements === 'always' || (opts.refinements === 'auto' && result.roots > REFINEMENT_ROOTS)) {
-    const foci = opts.refinementFocus ? [asFocus(opts.refinementFocus)] : refsetFoci(input);
-    built.push(...(await refinementCandidates(members, foci, q, terminology, opts, notes)));
-  }
-  // The input itself goes last, so a derived candidate that rebuilds it keeps its construction.
-  built.push(inputItself(input, members));
-
   // Score each distinct candidate against the set, on the server.
   const seen = new Set<string>();
   const scored: Scored[] = [];
-  for (const b of built) {
-    const key = formKey(b.ecl);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    const score = b.known
-      ? { ...b.known, clauses: countClauses(b.ecl) }
-      : await compare(b.ecl, members, q, opts.sampleSize);
-    scored.push({ ecl: b.ecl, construction: b.construction, ...score });
+  const score = async (candidates: Built[]) => {
+    for (const b of candidates) {
+      const key = formKey(b.ecl);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const s = b.known
+        ? { ...b.known, clauses: countClauses(b.ecl) }
+        : await compare(b.ecl, members, q, opts.sampleSize);
+      scored.push({ ecl: b.ecl, construction: b.construction, ...s });
+    }
+  };
+
+  await score(await hierarchyCandidates(roots, result.roots, members, q, opts, notes));
+  if (wantRefinements(opts.refinements, result.roots, scored)) {
+    const foci = opts.refinementFocus ? [asFocus(opts.refinementFocus)] : refsetFoci(input);
+    await score(await refinementCandidates(members, foci, q, terminology, opts, notes));
   }
+  // The input itself goes last, so a derived candidate that rebuilds it keeps its construction.
+  await score([inputItself(input, members)]);
 
   scored.sort(
     (a, b) =>
@@ -369,6 +373,18 @@ export async function deriveEcl(
   const terms = opts.omitTerms ? new Map<string, string>() : await displayTerms(top, terminology);
   result.candidates = top.map((s) => ({ expression: decorate(s.ecl, terms), ...s }));
   return result;
+}
+
+/**
+ * `'auto'`: refinements are worth their requests when the set has more than
+ * {@link REFINEMENT_ROOTS} roots, or more than 3 and no IS-A candidate is an
+ * exact cover in 3 clauses or fewer.
+ */
+function wantRefinements(mode: DeriveOptions['refinements'], roots: number, scored: Scored[]): boolean {
+  if (mode === 'always') return true;
+  if (mode === 'never') return false;
+  if (roots > REFINEMENT_ROOTS) return true;
+  return roots > 3 && !scored.some((c) => c.exact && c.clauses <= 3);
 }
 
 function inputItself(
@@ -828,10 +844,36 @@ async function valueOptions(
     (c): c is DeriveCandidate => c !== undefined,
   );
   const options = chosen.map((c) => (isSingleClause(c.ecl) ? c.ecl : `(${c.ecl})`));
+  // A value most members share: with several values per member (the
+  // ingredients of combination products), `= any of them` over-includes,
+  // while `= << paracetamol` is the definition.
+  options.push(...(await sharedValues(members, attribute, q)));
   // A handful of values is also worth offering as they are.
   const literal = await q.codes({ include: [{ ecl: `${members.ecl} . ${attribute}` }] }, MAX_LITERAL_VALUES + 1);
   if (literal.total > 0 && literal.total <= MAX_LITERAL_VALUES) options.push(orGroup(literal.codes));
   return options;
+}
+
+/**
+ * `<< v` for the value roots that at least half the members carry, most
+ * carried first (at most 2). Roots are the values with no ancestor among the
+ * values; only the first {@link MAX_SHARED_VALUE_ROOTS} are tried.
+ */
+async function sharedValues(members: MemberSet, attribute: string, q: SetQueries): Promise<string[]> {
+  const values = `(${members.ecl} . ${attribute})`;
+  const roots = (await q.codes({ include: [{ ecl: `${values} MINUS < ${values}` }] }, MAX_SHARED_VALUE_ROOTS)).codes;
+  const carried = await Promise.all(
+    roots.map(async (r) => ({
+      r,
+      n:
+        members.size - (await q.count({ include: [members.clause], exclude: [{ ecl: `* : ${attribute} = << ${r}` }] })),
+    })),
+  );
+  return carried
+    .filter(({ n }) => n * 2 >= members.size)
+    .sort((x, y) => y.n - x.n || byId(x.r, y.r))
+    .slice(0, 2)
+    .map(({ r }) => `<< ${r}`);
 }
 
 /**
@@ -912,6 +954,13 @@ async function commonAncestorFocus(members: MemberSet, member: string, q: SetQue
 }
 
 // ── Scoring ──────────────────────────────────────────────────────────────
+
+/** A candidate before scoring; `known` when its score needs no server (the input itself). */
+interface Built {
+  ecl: string;
+  construction: CandidateConstruction;
+  known?: Omit<Scored, 'ecl' | 'construction'>;
+}
 
 interface Scored {
   ecl: string;

@@ -147,7 +147,8 @@ Candidates come from the IS-A hierarchy: an exact cover of the set's roots with
 additions reported), and always the enumeration or `^ refset` itself. They are
 ranked by clauses + additions + misses.
 
-Sets that cut across the hierarchy (more than 20 roots, e.g. AMT products) also
+Sets that cut across the hierarchy (many roots and no short exact IS-A cover,
+e.g. AMT products) also
 get attribute refinement candidates, `focus : attribute = values`. The
 attributes come from the relationships of a sample of members
 (`getDefiningRelationships`). Their values are compressed with the IS-A

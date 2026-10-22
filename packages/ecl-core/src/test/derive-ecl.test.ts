@@ -504,6 +504,31 @@ describe('deriveEcl — attribute refinements (#149 Part 3)', () => {
     assert.ok(refinement.ecl.startsWith(`(<< ${P.G1} OR << ${P.G2} OR << ${P.G3}) :`), refinement.ecl);
   });
 
+  it('offers the value most members share when members carry several values', async () => {
+    // Combination products: every member has paracetamol, some also caffeine or codeine.
+    // `= any ingredient members have` would add the caffeine-only products.
+    const mock = products3();
+    const ING = sctid(2050);
+    const PARA = sctid(2051);
+    const CAFF = sctid(2052);
+    const COD = sctid(2053);
+    mock
+      .add(ING, 'Has ingredient', [ROOT])
+      .add(PARA, 'Paracetamol', [ROOT])
+      .add(CAFF, 'Caffeine', [ROOT])
+      .add(COD, 'Codeine', [ROOT]);
+    products.forEach((p, i) => {
+      if (i < 12) mock.relate(p.id, ING, PARA);
+      if (i % 3 === 0) mock.relate(p.id, ING, CAFF);
+      if (i % 4 === 1) mock.relate(p.id, ING, COD);
+    });
+    const ecl = `^ ${P.REFSET} : ${ING} = << ${PARA}`;
+    const set = [...mock.evaluate(ecl)];
+    const result = await deriveEcl({ conceptIds: set }, mock, { omitTerms: true, refinementFocus: `^ ${P.REFSET}` });
+    assert.strictEqual(result.candidates[0].ecl, ecl);
+    assert.strictEqual(result.candidates[0].exact, true);
+  });
+
   it('says so when the service cannot read relationships', async () => {
     const mock = products3().withoutRelationships();
     const set = [...mock.evaluate(`< ${P.PRODUCT} : ${P.FORM} = << ${P.TAB}`)];

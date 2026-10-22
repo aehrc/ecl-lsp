@@ -3,7 +3,7 @@
 
 import { describe, it } from 'node:test';
 import * as assert from 'node:assert';
-import { compressExpression, type CompressResult } from '../derive/compress-expression';
+import { compressExpression, formatCompressReport, type CompressResult } from '../derive/compress-expression';
 import { HierarchyMockService, sctid } from './hierarchy-mock';
 
 // Fixture: X has children C1..C8; C1 has two children; Y is a sibling of X.
@@ -141,5 +141,20 @@ describe('compressExpression', () => {
       mock,
     );
     assert.strictEqual(result.candidates[0].expression, `<< ${id.X} | X |`);
+  });
+});
+
+describe('formatCompressReport', () => {
+  it('lists each candidate with its source and differences', async () => {
+    const mock = fixture();
+    const original = [id.C2, id.C3, id.C4, id.C5, id.C6, id.C7, id.C8].join(' OR ');
+    const report = formatCompressReport(await compressExpression(original, mock, { maxCandidates: 2 }));
+    assert.match(report, /^Original selects 7 concepts\.$/m);
+    assert.match(report, /^1\. \+3 added, -0 missed; 1 clause; derived$/m);
+    assert.match(report, /^ {3}Adds \(3\): /m);
+  });
+
+  it('reports syntax errors instead of candidates', async () => {
+    assert.match(formatCompressReport(await compressExpression('<< AND', fixture())), /^Not compressed: /);
   });
 });

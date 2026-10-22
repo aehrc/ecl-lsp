@@ -122,6 +122,10 @@
       {
         "command": "ecl.deriveFromConceptList",
         "title": "ECL: Derive ECL from Concept List"
+      },
+      {
+        "command": "ecl.compressExpression",
+        "title": "ECL: Suggest Shorter Forms"
       }
     ],
     "menus": {

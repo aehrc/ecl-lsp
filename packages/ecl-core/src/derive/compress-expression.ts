@@ -214,3 +214,26 @@ function orInside(
     operands: inner.operands.length,
   };
 }
+
+/** A plain-text report of a {@link CompressResult}, for an output channel or a chat message. */
+export function formatCompressReport(result: CompressResult): string {
+  if (result.errors.length > 0) return `Not compressed: ${result.errors.join('; ')}`;
+  const lines = [`Original selects ${result.members} concepts.`];
+  if (result.group && result.group.start > 0) lines.push(`Compressed group: ${result.group.text}`);
+  for (const note of result.notes) lines.push(`Note: ${note}`);
+  result.candidates.forEach((c, i) => {
+    const status = c.exact ? 'same result' : `+${c.additions.count} added, -${c.misses.count} missed`;
+    const clauses = c.clauses === 1 ? '1 clause' : `${c.clauses} clauses`;
+    lines.push('', `${i + 1}. ${status}; ${clauses}; ${c.source}`);
+    lines.push(...c.expression.split('\n').map((l) => `   ${l}`));
+    for (const [label, d] of [
+      ['Adds', c.additions],
+      ['Misses', c.misses],
+    ] as const) {
+      if (d.count === 0) continue;
+      const shown = d.sample.map((x) => `${x.code} |${x.display}|`).join(', ');
+      lines.push(`   ${label} (${d.count}): ${shown}${d.count > d.sample.length ? ', …' : ''}`);
+    }
+  });
+  return lines.join('\n');
+}

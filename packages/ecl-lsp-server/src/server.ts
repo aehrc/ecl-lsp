@@ -63,6 +63,8 @@ import {
   isTerminologyTransportError,
   deriveEcl,
   formatDeriveReport,
+  compressExpression,
+  formatCompressReport,
   parseConceptIdList,
 } from '@aehrc/ecl-core';
 import type {
@@ -1296,6 +1298,47 @@ connection.onRequest('ecl/deriveEcl', async (params: { text?: string; conceptIds
     };
   } catch (error) {
     connection.console.error(`Derive ECL failed: ${String(error)}`);
+    throw error;
+  }
+});
+
+/**
+ * Shorter forms of an expression, with exact differences (issue #149). Give
+ * `expression`, or `uri` and `line` for the expression at that line of an
+ * ECL document; `range` then gives its lines, for replacing it.
+ */
+connection.onRequest('ecl/compressExpression', async (params: { expression?: string; uri?: string; line?: number }) => {
+  let expression = params.expression;
+  let range: { startLine: number; endLine: number } | undefined;
+  if (!expression && params.uri && params.line !== undefined) {
+    const document = documents.get(params.uri);
+    const line = params.line;
+    const match = document
+      ? groupIntoExpressions(document.getText()).find((e) => line >= e.startLine && line <= e.endLine)
+      : undefined;
+    if (match) {
+      expression = match.text.trim();
+      range = { startLine: match.startLine, endLine: match.endLine };
+    }
+  }
+  if (!expression?.trim()) throw new Error('No ECL expression found');
+  try {
+    const result = await compressExpression(expression, terminologyService);
+    if (result.errors.length > 0) throw new Error(`The expression has syntax errors: ${result.errors[0]}`);
+    return {
+      report: formatCompressReport(result),
+      range,
+      candidates: result.candidates.map((c) => ({
+        expression: c.expression,
+        exact: c.exact,
+        additions: c.additions.count,
+        misses: c.misses.count,
+        clauses: c.clauses,
+        source: c.source,
+      })),
+    };
+  } catch (error) {
+    connection.console.error(`Compress ECL failed: ${String(error)}`);
     throw error;
   }
 });

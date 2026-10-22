@@ -213,6 +213,10 @@ export function activate(context: ExtensionContext) {
     if (client) void deriveFromConceptList(client);
   });
 
+  registerCommand('ecl.compressExpression', () => {
+    if (client) void compressCurrentExpression(client);
+  });
+
   registerCommand('ecl.evaluateEmbeddedExpression', (uri: vscode.Uri, fragmentIndex: number) => {
     const fragments = embeddedManager.getFragments(uri);
     const fragment = fragments.find((f) => f.index === fragmentIndex);
@@ -576,6 +580,82 @@ async function deriveFromConceptList(client: LanguageClient): Promise<void> {
     const doc = await workspace.openTextDocument({ language: 'ecl', content: `${picked.expression}\n` });
     await window.showTextDocument(doc);
   }
+}
+
+// ── Suggest shorter forms of an expression (issue #149) ──────────────────
+
+interface CompressCandidateSummary extends DeriveCandidateSummary {
+  source: 'original' | 'simplified' | 'derived';
+}
+
+/**
+ * Shorter forms of the selected expression, or of the expression at the cursor
+ * in an ECL document, with what each adds and misses. The one picked replaces
+ * the expression.
+ */
+async function compressCurrentExpression(client: LanguageClient): Promise<void> {
+  const editor = window.activeTextEditor;
+  if (!editor) return;
+  const selected = editor.selection.isEmpty ? undefined : editor.document.getText(editor.selection);
+  if (!selected && editor.document.languageId !== 'ecl') {
+    window.showErrorMessage('Select an ECL expression, or place the cursor in one in an .ecl file');
+    return;
+  }
+  const params = selected
+    ? { expression: selected }
+    : { uri: editor.document.uri.toString(), line: editor.selection.active.line };
+
+  const response = await window.withProgress(
+    { location: vscode.ProgressLocation.Notification, title: 'Looking for shorter forms...', cancellable: false },
+    async () => {
+      try {
+        return await client.sendRequest<{
+          report: string;
+          range?: { startLine: number; endLine: number };
+          candidates: CompressCandidateSummary[];
+        }>('ecl/compressExpression', params);
+      } catch (error: unknown) {
+        window.showErrorMessage(
+          `Suggest shorter forms failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        return null;
+      }
+    },
+  );
+  if (!response) return;
+
+  evaluationOutput.appendLine(`=== Shorter forms (${new Date().toLocaleString()}) ===`);
+  evaluationOutput.appendLine('');
+  evaluationOutput.appendLine(response.report);
+  evaluationOutput.appendLine('');
+  evaluationOutput.show(true);
+
+  const picked = await window.showQuickPick(
+    response.candidates
+      .filter((c) => c.source !== 'original')
+      .map((c) => ({
+        label: c.expression.replaceAll(/\s+/g, ' '),
+        description: c.exact ? 'same result' : `+${c.additions} added, -${c.misses} missed`,
+        detail: `${c.clauses} clauses; ${c.source}`,
+        expression: c.expression,
+      })),
+    { placeHolder: 'Replace the expression with (details in the ECL Evaluation output)' },
+  );
+  if (!picked) return;
+
+  let target: vscode.Range | undefined;
+  if (selected) target = editor.selection;
+  else if (response.range) {
+    target = new Range(
+      new Position(response.range.startLine, 0),
+      editor.document.lineAt(response.range.endLine).range.end,
+    );
+  }
+  if (!target) return;
+  const range = target;
+  await editor.edit((edit) => {
+    edit.replace(range, picked.expression);
+  });
 }
 
 // ── SNOMED CT Edition Picker ──────────────────────────────────────────────

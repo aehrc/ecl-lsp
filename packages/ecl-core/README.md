@@ -145,8 +145,15 @@ result.candidates[0];
 Candidates come from the IS-A hierarchy: an exact cover of the set's roots with
 `MINUS` exclusions, cheaper covers by ancestors outside the set (with their
 additions reported), and always the enumeration or `^ refset` itself. They are
-ranked by clauses + additions + misses. Sets that cut across the hierarchy
-(many roots, e.g. AMT products) get only the exact enumeration and a note.
+ranked by clauses + additions + misses.
+
+Sets that cut across the hierarchy (more than 20 roots, e.g. AMT products) also
+get attribute refinement candidates, `focus : attribute = values`. The
+attributes come from the relationships of a sample of members
+(`getDefiningRelationships`). Their values are compressed with the IS-A
+candidates. The focus is the most specific concept above every member, or a
+refset named in an ECL input, or `refinementFocus`. Set `refinements: 'always'`
+or `'never'` to override.
 
 `deriveEcl({ ecl }, terminology)` takes the set an expression selects. To make
 an expression shorter, use `compressExpression`. It compresses the expression's

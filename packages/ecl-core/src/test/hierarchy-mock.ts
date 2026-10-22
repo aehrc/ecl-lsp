@@ -4,12 +4,21 @@
 // In-memory terminology with a real IS-A hierarchy, for tests that need set
 // semantics (derive ECL, issue #147). It evaluates the ECL subset those
 // features generate — concept references, `*`, the hierarchy operators,
-// `^ refset`, AND / OR / MINUS and parentheses — by walking the parser's AST.
+// `^ refset`, AND / OR / MINUS, parentheses, conjunctive refinements
+// (`focus : a = v, b = w`, no groups) and dot notation — by walking the
+// parser's AST. Relationships are matched as given (no inheritance).
 
 import { parseECL } from '../parser';
-import { NodeType, type ExpressionNode, type SubExpressionNode } from '../parser/ast';
+import {
+  NodeType,
+  type ExpressionNode,
+  type RefinementMemberNode,
+  type RefinementNode,
+  type SubExpressionNode,
+} from '../parser/ast';
 import type {
   ConceptInfo,
+  DefiningRelationship,
   EvaluationResponse,
   ExpandComposeOptions,
   ITerminologyService,
@@ -56,6 +65,7 @@ interface MockConcept {
   pt: string;
   parents: string[];
   active: boolean;
+  relationships: DefiningRelationship[];
 }
 
 export class HierarchyMockService implements ITerminologyService {
@@ -65,7 +75,19 @@ export class HierarchyMockService implements ITerminologyService {
   readonly composeCalls: ValueSetCompose[] = [];
 
   add(id: string, pt: string, parents: string[] = [], active = true): this {
-    this.concepts.set(id, { pt, parents, active });
+    this.concepts.set(id, { pt, parents, active, relationships: [] });
+    return this;
+  }
+
+  /** Give `id` the relationship `type = value` (ungrouped). */
+  relate(id: string, type: string, value: string): this {
+    this.concepts.get(id)?.relationships.push({ type, value, group: 0 });
+    return this;
+  }
+
+  /** Leave out `getDefiningRelationships`, as a service without it would. */
+  withoutRelationships(): this {
+    (this as { getDefiningRelationships?: unknown }).getDefiningRelationships = undefined;
     return this;
   }
 
@@ -85,6 +107,10 @@ export class HierarchyMockService implements ITerminologyService {
     const result = new Map<string, ConceptInfo | null>();
     for (const id of conceptIds) result.set(id, await this.getConceptInfo(id));
     return result;
+  }
+
+  async getDefiningRelationships(conceptId: string): Promise<DefiningRelationship[] | null> {
+    return this.concepts.get(conceptId)?.relationships ?? null;
   }
 
   async searchConcepts(): Promise<SearchResponse> {
@@ -139,7 +165,49 @@ export class HierarchyMockService implements ITerminologyService {
         return new Set([...acc].filter((id) => !next.has(id)));
       }, first);
     }
-    throw new Error(`HierarchyMockService does not evaluate ${expr.type}`);
+    if (expr.type === NodeType.RefinedExpression) {
+      const focus = this.sub(expr.expression);
+      const constraints = this.conjuncts(expr.refinement);
+      return new Set(
+        [...focus].filter((id) =>
+          constraints.every(({ types, values }) =>
+            (this.concepts.get(id)?.relationships ?? []).some((r) => types.has(r.type) && values.has(r.value)),
+          ),
+        ),
+      );
+    }
+    // Dot notation: the values of each attribute in turn.
+    let current = this.sub(expr.source);
+    for (const dotted of expr.attributes) {
+      const types = this.sub(dotted.attributeName);
+      const next = new Set<string>();
+      for (const id of current) {
+        for (const r of this.concepts.get(id)?.relationships ?? []) if (types.has(r.type)) next.add(r.value);
+      }
+      current = new Set([...next].filter((id) => this.concepts.get(id)?.active));
+    }
+    return current;
+  }
+
+  /** The attributes of a refinement that are all required (a conjunction without groups). */
+  private conjuncts(refinement: RefinementNode): { types: Set<string>; values: Set<string> }[] {
+    const walk = (member: RefinementMemberNode | null): void => {
+      if (!member) return;
+      if (member.type === NodeType.AttributeSet) {
+        if (member.operator === 'OR') throw new Error('HierarchyMockService: OR in refinements unsupported');
+        member.members.forEach(walk);
+      } else if (member.type === NodeType.AttributeGroup) {
+        throw new Error('HierarchyMockService: attribute groups unsupported');
+      }
+    };
+    walk(refinement.content);
+    return refinement.attributes.map((a) => {
+      if (a.reversed || (a.comparison && a.comparison !== '=') || !a.value.expression) {
+        throw new Error('HierarchyMockService: only `attribute = expression` is supported');
+      }
+      const types = a.name.conceptId ? new Set([a.name.conceptId]) : this.sub(a.name.expression!);
+      return { types, values: this.sub(a.value.expression) };
+    });
   }
 
   private sub(node: SubExpressionNode): Set<string> {

@@ -409,6 +409,104 @@ describe('deriveEcl', () => {
   });
 });
 
+describe('deriveEcl — attribute refinements (#149 Part 3)', () => {
+  // Products under three unrelated groupers; each has a dose form. The set is
+  // every product whose form is a tablet: it cuts across the groupers, so only
+  // a refinement says it briefly.
+  const P = {
+    PRODUCT: sctid(2001),
+    G1: sctid(2011),
+    G2: sctid(2012),
+    G3: sctid(2013),
+    FORM: sctid(2020),
+    DOSE: sctid(2021),
+    TAB: sctid(2030),
+    TAB_FILM: sctid(2031),
+    TAB_CHEW: sctid(2032),
+    CAP: sctid(2033),
+    REFSET: sctid(2040),
+  };
+  const products: { id: string; grouper: string; form: string }[] = [];
+
+  function products3(): HierarchyMockService {
+    const mock = new HierarchyMockService()
+      .add(ROOT, 'root')
+      .add(P.PRODUCT, 'Product', [ROOT])
+      .add(P.G1, 'G1', [P.PRODUCT])
+      .add(P.G2, 'G2', [P.PRODUCT])
+      .add(P.G3, 'G3', [P.PRODUCT])
+      .add(P.DOSE, 'Dose form', [ROOT])
+      .add(P.FORM, 'Has dose form', [ROOT])
+      .add(P.TAB, 'Tablet', [P.DOSE])
+      .add(P.TAB_FILM, 'Film tablet', [P.TAB])
+      .add(P.TAB_CHEW, 'Chewable tablet', [P.TAB])
+      .add(P.CAP, 'Capsule', [P.DOSE]);
+    products.length = 0;
+    const forms = [P.TAB_FILM, P.TAB_CHEW, P.CAP, P.TAB_FILM];
+    for (let i = 0; i < 24; i++) {
+      const product = { id: sctid(2100 + i), grouper: [P.G1, P.G2, P.G3][i % 3], form: forms[i % 4] };
+      products.push(product);
+      mock.add(product.id, `product${i}`, [product.grouper]).relate(product.id, P.FORM, product.form);
+    }
+    return mock.addRefset(
+      P.REFSET,
+      products.map((p) => p.id),
+    );
+  }
+
+  it('recovers `focus : attribute = << value` for a set that cuts across the hierarchy', async () => {
+    const mock = products3();
+    const set = [...mock.evaluate(`< ${P.PRODUCT} : ${P.FORM} = << ${P.TAB}`)];
+    assert.strictEqual(set.length, 18);
+    const result = await deriveEcl({ conceptIds: set }, mock, { omitTerms: true, refinements: 'always' });
+    const top = result.candidates[0];
+    assert.strictEqual(top.construction.kind, 'refinement');
+    assert.strictEqual(top.exact, true);
+    assert.deepStrictEqual(mock.evaluate(top.ecl), new Set(set));
+    assertCountsHonest(mock, set, result);
+  });
+
+  it('uses the refset an ECL input is restricted to as the focus', async () => {
+    const mock = products3();
+    const ecl = `^ ${P.REFSET} : ${P.FORM} = << ${P.TAB}`;
+    const result = await deriveEcl({ ecl }, mock, { omitTerms: true, refinements: 'always' });
+    // `< PRODUCT : …` is exact too and ties on cost; the refset focus must be offered.
+    const refsetFocused = result.candidates.find(
+      (c) => c.construction.kind === 'refinement' && c.ecl.startsWith(`^ ${P.REFSET} : ${P.FORM} = `),
+    );
+    assert.ok(refsetFocused, result.candidates.map((c) => c.ecl).join(' | '));
+    assert.strictEqual(refsetFocused.exact, true);
+  });
+
+  it('honours an explicit refinementFocus', async () => {
+    const mock = products3();
+    const set = [...mock.evaluate(`< ${P.PRODUCT} : ${P.FORM} = << ${P.TAB}`)];
+    const result = await deriveEcl({ conceptIds: set }, mock, {
+      omitTerms: true,
+      refinements: 'always',
+      refinementFocus: `^ ${P.REFSET}`,
+    });
+    const refinements = result.candidates.filter((c) => c.construction.kind === 'refinement');
+    assert.ok(refinements.length > 0);
+    assert.ok(refinements.every((c) => c.ecl.startsWith(`^ ${P.REFSET} :`)));
+  });
+
+  it('says so when the service cannot read relationships', async () => {
+    const mock = products3().withoutRelationships();
+    const set = [...mock.evaluate(`< ${P.PRODUCT} : ${P.FORM} = << ${P.TAB}`)];
+    const result = await deriveEcl({ conceptIds: set }, mock, { omitTerms: true, refinements: 'always' });
+    assert.match(result.notes.join('\n'), /getDefiningRelationships/);
+    assert.ok(result.candidates.every((c) => c.construction.kind !== 'refinement'));
+  });
+
+  it('does not try refinements for a set that follows the hierarchy (auto)', async () => {
+    const mock = products3();
+    const set = [...mock.evaluate(`<< ${P.G1}`)];
+    const result = await deriveEcl({ conceptIds: set }, mock, { omitTerms: true });
+    assert.ok(result.candidates.every((c) => c.construction.kind !== 'refinement'));
+  });
+});
+
 describe('parseConceptIdList', () => {
   it('reads one id per line, CSV rows, terms and headers', () => {
     const text = [

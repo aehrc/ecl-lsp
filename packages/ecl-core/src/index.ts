@@ -46,6 +46,7 @@ export type {
   ExpandComposeOptions,
   ValueSetClause,
   ValueSetCompose,
+  DefiningRelationship,
   HistoricalAssociation,
   HistoricalAssociationType,
 } from './terminology/types';

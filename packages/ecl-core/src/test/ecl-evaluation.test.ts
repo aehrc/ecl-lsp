@@ -601,3 +601,63 @@ describe('expandCompose — inline compose (issue #147)', () => {
     });
   });
 });
+
+describe('getDefiningRelationships — $lookup property=* (issue #149)', () => {
+  let stub: ReturnType<typeof createStubServer>;
+  let baseUrl: string;
+
+  beforeEach(async () => {
+    stub = createStubServer();
+    baseUrl = await stub.start();
+  });
+
+  afterEach(async () => {
+    await stub.stop();
+  });
+
+  const property = (code: string, extra: object[]) => ({
+    name: 'property',
+    part: [{ name: 'code', valueCode: code }, ...extra],
+  });
+  const sub = (code: string, value: string) => ({
+    name: 'subproperty',
+    part: [
+      { name: 'code', valueCode: code },
+      { name: 'value', valueCode: value },
+    ],
+  });
+
+  it('reads role groups and ungrouped attributes, and skips parents and other properties', async () => {
+    stub.setHandler(() => ({
+      status: 200,
+      body: {
+        resourceType: 'Parameters',
+        parameter: [
+          { name: 'display', valueString: 'Myocardial infarction' },
+          property('parent', [{ name: 'value', valueCode: '414545008' }]),
+          property('inactive', [{ name: 'value', valueBoolean: false }]),
+          property('609096000', [sub('363698007', '74281007'), sub('116676008', '55641003')]),
+          property('609096000', [sub('246454002', '255302009')]),
+          property('411116001', [{ name: 'value', valueCode: '421026006' }]),
+        ],
+      },
+    }));
+    const service = new FhirTerminologyService({ baseUrl, timeout: 2000 });
+
+    const relationships = await service.getDefiningRelationships('22298006');
+
+    assert.deepStrictEqual(relationships, [
+      { type: '363698007', value: '74281007', group: 1 },
+      { type: '116676008', value: '55641003', group: 1 },
+      { type: '246454002', value: '255302009', group: 2 },
+      { type: '411116001', value: '421026006', group: 0 },
+    ]);
+    assert.match(stub.requests[0].url, /\$lookup\?system=http:\/\/snomed\.info\/sct&code=22298006&property=\*$/);
+  });
+
+  it('returns null for a code the server does not know', async () => {
+    stub.setHandler(() => ({ status: 404, body: outcome('not-found', 'Unknown code 999999991008') }));
+    const service = new FhirTerminologyService({ baseUrl, timeout: 2000 });
+    assert.strictEqual(await service.getDefiningRelationships('999999991008'), null);
+  });
+});

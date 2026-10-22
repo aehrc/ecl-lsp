@@ -9,6 +9,7 @@ import {
   ConceptSearchResult,
   EvaluationResponse,
   ExpandComposeOptions,
+  DefiningRelationship,
   ValueSetClause,
   ValueSetCompose,
   HistoricalAssociation,
@@ -210,6 +211,9 @@ const IMPLICIT_VALUE_SET_UNSUPPORTED = [
  * fetch, which continue to propagate unchanged.
  */
 class EvaluationIssueError extends Error {}
+
+/** The `609096000 |Role group|` property in a SNOMED CT `$lookup` response. */
+const ROLE_GROUP = '609096000';
 
 /** A version of a SNOMED CT edition available on the server. */
 export interface SnomedVersion {
@@ -1012,6 +1016,51 @@ export class FhirTerminologyService implements ITerminologyService {
     }
 
     return this.parseEvaluationResponse((await response.json()) as FhirValueSetResponse);
+  }
+
+  /**
+   * `$lookup` with `property=*`: SNOMED CT servers list each role group as a
+   * `609096000` property whose sub-properties are `attribute = value` pairs, and
+   * ungrouped attributes as properties coded by the attribute id.
+   *
+   * @throws {TerminologyTransportError} when the server could not be reached.
+   * @throws {TerminologyHttpError} when the server answered with an error status.
+   */
+  async getDefiningRelationships(conceptId: string): Promise<DefiningRelationship[] | null> {
+    let url = `${this.baseUrl}/CodeSystem/$lookup?system=http://snomed.info/sct&code=${encodeURIComponent(conceptId)}&property=*`;
+    if (this.snomedVersion) url += `&version=${encodeURIComponent(this.snomedVersion)}`;
+    const operation = `$lookup of the relationships of concept ${conceptId}`;
+    const response = await this.request(url, this.timeout, operation);
+    if (!response.ok) {
+      const { outcome, detail } = await FhirTerminologyService.readErrorBody(response);
+      if (FhirTerminologyService.isUnknownCodeResponse(response.status, outcome)) return null;
+      throw toHttpError({ status: response.status, statusText: response.statusText, url, operation, detail });
+    }
+    const data = (await response.json()) as FhirParametersResponse;
+    return FhirTerminologyService.relationshipsOf(data.parameter ?? []);
+  }
+
+  /** The relationships in a `$lookup` response's `property` parameters; role groups are numbered from 1. */
+  private static relationshipsOf(parameters: FhirParameter[]): DefiningRelationship[] {
+    const partValue = (parts: FhirParameterPart[] | undefined, name: string) =>
+      parts?.find((p) => p.name === name)?.valueCode;
+    const relationships: DefiningRelationship[] = [];
+    let group = 0;
+    for (const property of parameters.filter((p) => p.name === 'property')) {
+      const code = partValue(property.part, 'code');
+      if (code === ROLE_GROUP) {
+        group++;
+        for (const sub of (property.part ?? []).filter((p) => p.name === 'subproperty')) {
+          const type = partValue(sub.part, 'code');
+          const value = partValue(sub.part, 'value');
+          if (type && value) relationships.push({ type, value, group });
+        }
+        continue;
+      }
+      const value = partValue(property.part, 'value');
+      if (code && value && /^\d{6,18}$/.test(code)) relationships.push({ type: code, value, group: 0 });
+    }
+    return relationships;
   }
 
   /**

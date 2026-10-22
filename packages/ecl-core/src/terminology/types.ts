@@ -101,6 +101,24 @@ export interface ITerminologyService {
    * @throws `TerminologyTransportError` / `TerminologyHttpError` on failure.
    */
   expandCompose?(compose: ValueSetCompose, options?: ExpandComposeOptions): Promise<EvaluationResponse>;
+
+  /**
+   * A concept's defining relationships other than IS-A, each with its role group
+   * (0 for ungrouped). Optional; used to propose attribute refinements.
+   *
+   * @returns an empty list for a primitive concept with no attributes; `null`
+   *   when the server says the concept is unknown.
+   * @throws `TerminologyTransportError` / `TerminologyHttpError` on failure.
+   */
+  getDefiningRelationships?(conceptId: string): Promise<DefiningRelationship[] | null>;
+}
+
+/** One `attribute = value` relationship of a concept. */
+export interface DefiningRelationship {
+  type: string;
+  value: string;
+  /** Role group number; 0 for an ungrouped attribute. */
+  group: number;
 }
 
 /** One part of a {@link ValueSetCompose}: an ECL expression or an enumerated list of concept ids. */

@@ -90,6 +90,20 @@ const actions = getRefactoringActions({ text, range, ast, errors });
 //          history supplement, description filter
 ```
 
+The Simplify action's engine is also available as a plain function. It never
+changes the set of concepts the expression selects, and it reports each step it
+applied. Without a terminology service only the syntactic techniques run
+(`subsumption: 'not-run'`).
+
+```typescript
+import { simplifyExpression } from '@aehrc/ecl-core';
+
+const result = await simplifyExpression('< 404684003 OR << 404684003', terminologyService);
+// result.expression  → '<< 404684003'
+// result.steps       → [{ technique: 'rankOperators', removed: ['< 404684003'], ... }]
+// result.subsumption → 'complete' | 'partial' | 'not-run'
+```
+
 ### Terminology
 
 ```typescript

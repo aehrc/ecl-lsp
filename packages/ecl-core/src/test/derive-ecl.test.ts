@@ -282,6 +282,22 @@ describe('deriveEcl', () => {
       assert.match(result.notes.join('\n'), /maxRoots/);
     });
 
+    it('drops a candidate the server cannot score, with a note, and keeps the rest', async () => {
+      const mock = fixture();
+      const failing = `< ${id.A}`;
+      const expand = mock.expandCompose.bind(mock);
+      mock.expandCompose = (compose, options) =>
+        // Only the comparison with the set (an include with an exclude) fails.
+        compose.exclude && compose.include.some((c) => 'ecl' in c && c.ecl === failing)
+          ? Promise.reject(new Error('timed out'))
+          : expand(compose, options);
+      const set = membersOf(mock, `<< ${id.A1} OR ${id.A2} OR ${id.A3} OR ${id.A4}`);
+      const result = await deriveEcl({ conceptIds: set }, mock, { omitTerms: true });
+      assert.ok(result.candidates.every((c) => c.ecl !== failing));
+      assert.ok(result.candidates.some((c) => c.exact));
+      assert.match(result.notes.join('\n'), new RegExp(`Could not score < ${id.A}: timed out`));
+    });
+
     it('needs a service with expandCompose', async () => {
       await assert.rejects(deriveEcl({ conceptIds: [id.A] }, new MockTerminologyService()), /expandCompose/);
     });

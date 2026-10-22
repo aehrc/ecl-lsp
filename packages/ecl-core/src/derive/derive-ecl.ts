@@ -88,8 +88,10 @@ export interface DeriveOptions {
    * MPUUs. Default: `<<` the most specific concept above every member.
    */
   refinementFocus?: string;
-  /** Count members by top-level hierarchy (about 20 requests). Default true. */
+  /** Count members by top-level hierarchy. Default true. */
   hierarchySummary?: boolean;
+  /** Timeout for each set query, in milliseconds. Default 60,000. */
+  queryTimeoutMs?: number;
 }
 
 export interface SetDifference {
@@ -183,6 +185,7 @@ const DEFAULTS: Required<DeriveOptions> = {
   refinements: 'auto',
   refinementFocus: '',
   hierarchySummary: true,
+  queryTimeoutMs: 60_000,
 };
 
 const SNOMED_ROOT = '138875005';
@@ -190,20 +193,28 @@ const SNOMED_ROOT = '138875005';
 const PAGE_SIZE = 50_000;
 /** Above this many concept references, candidates are not formatted or given terms. */
 const MAX_DECORATED_CLAUSES = 200;
+/** Candidates scored at once (2 queries each). */
+const SCORE_BATCH = 4;
 /** Concurrent set queries; see {@link SetQueries}. */
 const MAX_IN_FLIGHT = 8;
 /** With `refinements: 'auto'`, refinement candidates are always built above this many roots. */
 const REFINEMENT_ROOTS = 20;
 /** Members whose relationships are read to find the attributes the set shares. */
 const REFINEMENT_SAMPLE = 20;
+/** Most refinement candidates scored, likeliest first. */
+const MAX_REFINEMENT_CANDIDATES = 16;
+/** Share of members a value must be carried by to be offered on its own. */
+const SHARED_VALUE_SHARE = 0.5;
+/** Up to this many value roots, `<<` each of them is a value option. */
+const MAX_ROOTS_AS_VALUE = 5;
+/** Up to this many value roots, their lowest common ancestor is a value option. */
+const MAX_VALUE_ROOTS = 50;
 /** Up to this many distinct values, the values themselves are a value option. */
 const MAX_LITERAL_VALUES = 5;
-/** Value roots whose share of members is counted, per attribute. */
-const MAX_SHARED_VALUE_ROOTS = 20;
-/** Value expressions tried per attribute. */
-const VALUE_CANDIDATES = 3;
 /** Most attributes tried, those most often present in the sample first. */
 const MAX_REFINEMENT_ATTRIBUTES = 6;
+/** Subtree tops sized when no exact cover is possible anyway. */
+const LOSSY_SIZED = 64;
 /** Most subtree tops (for exclusions) or ancestors (for covers) whose size is counted. */
 const MAX_SIZED = 500;
 
@@ -316,7 +327,8 @@ export async function deriveEcl(
     throw new Error('deriveEcl needs a terminology service that supports expandCompose (POST ValueSet/$expand)');
   }
   const opts = { ...DEFAULTS, ...options };
-  const q = new SetQueries(terminology.expandCompose.bind(terminology));
+  const expandCompose = terminology.expandCompose.bind(terminology);
+  const q = new SetQueries((compose, o) => expandCompose(compose, { timeoutMs: opts.queryTimeoutMs, ...o }));
   const notes: string[] = [];
 
   const { report, members } = await resolveInput(input, q, terminology, notes);
@@ -340,22 +352,41 @@ export async function deriveEcl(
   // Score each distinct candidate against the set, on the server.
   const seen = new Set<string>();
   const scored: Scored[] = [];
-  const score = async (candidates: Built[]) => {
-    for (const b of candidates) {
+  // Scored a few at a time (the queries are throttled anyway); `enough` stops
+  // after the batch in which a good enough candidate turned up.
+  const score = async (candidates: Built[], enough?: (s: Scored) => boolean) => {
+    const fresh = candidates.filter((b) => {
       const key = formKey(b.ecl);
-      if (seen.has(key)) continue;
+      if (seen.has(key)) return false;
       seen.add(key);
-      const s = b.known
-        ? { ...b.known, clauses: countClauses(b.ecl) }
-        : await compare(b.ecl, members, q, opts.sampleSize);
-      scored.push({ ecl: b.ecl, construction: b.construction, ...s });
+      return true;
+    });
+    for (let i = 0; i < fresh.length; i += SCORE_BATCH) {
+      const settled = await Promise.allSettled(
+        fresh.slice(i, i + SCORE_BATCH).map(async (b) => {
+          const s = b.known
+            ? { ...b.known, clauses: countClauses(b.ecl) }
+            : await compare(b.ecl, members, q, opts.sampleSize);
+          return { ecl: b.ecl, construction: b.construction, ...s };
+        }),
+      );
+      // A candidate the server cannot count in time is dropped, not the whole result.
+      const batch: Scored[] = [];
+      settled.forEach((r, j) => {
+        if (r.status === 'fulfilled') batch.push(r.value);
+        else notes.push(`Could not score ${fresh[i + j].ecl.slice(0, 120)}: ${errorMessage(r.reason)}`);
+      });
+      scored.push(...batch);
+      if (enough && batch.some(enough)) return;
     }
   };
 
   await score(await hierarchyCandidates(roots, result.roots, members, q, opts, notes));
   if (wantRefinements(opts.refinements, result.roots, scored)) {
     const foci = opts.refinementFocus ? [asFocus(opts.refinementFocus)] : refsetFoci(input);
-    await score(await refinementCandidates(members, foci, q, terminology, opts, notes));
+    const refinements = await refinementCandidates(members, rootQuery, foci, q, terminology, opts, notes);
+    // An exact refinement of three clauses or fewer is as short as they get.
+    await score(refinements, (c) => c.exact && c.clauses <= 3);
   }
   // The input itself goes last, so a derived candidate that rebuilds it keeps its construction.
   await score([inputItself(input, members)]);
@@ -488,7 +519,8 @@ async function hierarchyDistribution(
   members: MemberSet,
   q: SetQueries,
 ): Promise<{ conceptId: string; display: string; count: number }[]> {
-  const tops = await q.sample({ include: [{ ecl: `<! ${SNOMED_ROOT}` }] }, 100);
+  // Only the top-level hierarchies that hold a member are counted.
+  const tops = await q.sample({ include: [{ ecl: `(>> ${members.ecl}) AND <! ${SNOMED_ROOT}` }] }, 100);
   const counts = await Promise.all(
     tops.sample.map(async (top) => ({
       conceptId: top.code,
@@ -547,7 +579,13 @@ async function hierarchyCover(
   // Maximal subtrees under the roots that hold no member: X = (<< R) MINUS (>> S),
   // and its top elements X MINUS < X. Each can go as one `MINUS << x`.
   const clean = `(${rootsOperand} MINUS (>> ${members.ecl}))`;
-  const cleanTops = await q.codes({ include: [{ ecl: `${clean} MINUS < ${clean}` }] }, MAX_SIZED);
+  const cleanTopsEcl = `${clean} MINUS < ${clean}`;
+  // Every subtree left out of the exclusions leaves at least one non-member, so
+  // with more than maxExclusions + maxResidualLiterals of them no exact cover
+  // exists: only the lossy candidate is at stake, and fewer are sized for it.
+  const cleanCount = await q.countEcl(cleanTopsEcl);
+  const exactPossible = cleanCount <= opts.maxExclusions + opts.maxResidualLiterals;
+  const cleanTops = await q.codes({ include: [{ ecl: cleanTopsEcl }] }, exactPossible ? MAX_SIZED : LOSSY_SIZED);
   if (cleanTops.total > cleanTops.codes.length) {
     notes.push(
       `${cleanTops.total} subtrees could be excluded; the largest were chosen from the first ` +
@@ -616,7 +654,9 @@ async function ancestorCovers(
   const rootFoci: Focus[] = await Promise.all(
     roots.map(async (r, i) => {
       const size = await q.countEcl(`<< ${r}`);
-      const covered = members.size - (await q.count({ include: [members.clause], exclude: [{ ecl: `<< ${r}` }] }));
+      // A leaf root covers just itself; only a subtree needs counting against the set.
+      const covered =
+        size === 1 ? 1 : members.size - (await q.count({ include: [members.clause], exclude: [{ ecl: `<< ${r}` }] }));
       return {
         conceptId: r,
         operator: '<<' as const,
@@ -685,24 +725,34 @@ async function rankAncestors(
     }
   });
 
-  let shared = [...coversByAncestor.entries()].filter(([, covers]) => roots.length === 1 || covers.size >= 2);
-  if (shared.length > MAX_SIZED) {
-    notes.push(`${shared.length} ancestors are shared by the roots; only the ${MAX_SIZED} most specific were sized.`);
-    // Fewest roots covered first: the specific parents are the ones a cheap cover needs.
-    shared.sort(([a, ca], [b, cb]) => ca.size - cb.size || byId(a, b));
-    shared = shared.slice(0, MAX_SIZED);
-  }
-  const sizes = await Promise.all(shared.map(([a]) => q.countEcl(`< ${a}`)));
-
-  const bestPerRootSet = new Map<string, { a: string; covers: Set<number>; size: number }>();
-  shared.forEach(([a, covers], i) => {
+  // Ancestors above the same roots differ only in how much else they add, and
+  // the smallest is among the most specific of them: find those with one query
+  // per group (`G MINUS > G`) rather than sizing every ancestor.
+  const groups = new Map<string, { covers: Set<number>; ancestors: string[] }>();
+  for (const [a, covers] of coversByAncestor) {
+    if (roots.length > 1 && covers.size < 2) continue;
     const key = [...covers].sort((x, y) => x - y).join(',');
-    const prev = bestPerRootSet.get(key);
-    if (!prev || sizes[i] < prev.size || (sizes[i] === prev.size && byId(a, prev.a) < 0)) {
-      bestPerRootSet.set(key, { a, covers, size: sizes[i] });
-    }
-  });
-  const candidates = [...bestPerRootSet.values()];
+    const group = groups.get(key) ?? { covers, ancestors: [] };
+    group.ancestors.push(a);
+    groups.set(key, group);
+  }
+  let grouped = [...groups.values()];
+  if (grouped.length > MAX_SIZED) {
+    notes.push(`${grouped.length} sets of roots share ancestors; only the ${MAX_SIZED} narrowest were sized.`);
+    // Fewest roots covered first: the specific parents are the ones a cheap cover needs.
+    grouped.sort((x, y) => x.covers.size - y.covers.size || byId(x.ancestors[0], y.ancestors[0]));
+    grouped = grouped.slice(0, MAX_SIZED);
+  }
+  const candidates = (
+    await Promise.all(
+      grouped.map(async ({ covers, ancestors }) => {
+        const specific = ancestors.length === 1 ? ancestors : await mostSpecific(ancestors, q);
+        const sized = await Promise.all(specific.map(async (a) => ({ a, covers, size: await q.countEcl(`< ${a}`) })));
+        sized.sort((x, y) => x.size - y.size || byId(x.a, y.a));
+        return sized.at(0);
+      }),
+    )
+  ).filter((c): c is { a: string; covers: Set<number>; size: number } => c !== undefined);
 
   const estimatedCost = (c: { covers: Set<number>; size: number }) => {
     let covered = 0;
@@ -722,6 +772,12 @@ async function rankAncestors(
     .at(0);
   if (cheapestWidest && !chosen.includes(cheapestWidest)) chosen.push(cheapestWidest);
   return chosen;
+}
+
+/** The concepts in `ids` with no descendant among them. */
+async function mostSpecific(ids: string[], q: SetQueries): Promise<string[]> {
+  const group = orGroup(ids);
+  return (await q.codes({ include: [{ ecl: `${group} MINUS > ${group}` }] }, 10)).codes;
 }
 
 /** Greedy weighted set cover over the roots: repeatedly take the cheapest clause per newly covered root. */
@@ -761,6 +817,7 @@ function isBetter(ratio: number, gain: number, conceptId: string, best: { f: Foc
 
 async function refinementCandidates(
   members: MemberSet,
+  roots: { codes: string[]; total: number },
   givenFoci: string[],
   q: SetQueries,
   terminology: ITerminologyService,
@@ -786,14 +843,16 @@ async function refinementCandidates(
 
   const foci = [...givenFoci];
   if (!opts.refinementFocus) {
-    const ancestor = await commonAncestorFocus(members, sample[0], q);
+    // The roots stand for the whole set when all of them were fetched; otherwise the sample does.
+    const basis = roots.total <= roots.codes.length ? roots.codes : sample;
+    const ancestor = await commonAncestorFocus(members, basis, basis === sample, q);
     if (ancestor) foci.push(ancestor);
   }
   if (foci.length === 0) return [];
 
   const values = new Map<string, string[]>();
   for (const attribute of attributes) {
-    const options = await valueOptions(members, attribute, q, terminology, opts);
+    const options = await valueOptions(members, attribute, sampled, q);
     if (options.length > 0) values.set(attribute, options);
   }
 
@@ -801,79 +860,97 @@ async function refinementCandidates(
     attributes.filter((a) => values.has(a)),
     values,
   );
-  return foci.flatMap((focus) =>
-    refinements.map((refinement) => ({
-      ecl: `${focus} : ${refinement.map(attributeText).join(', ')}`,
-      construction: { kind: 'refinement' as const, focus, attributes: refinement },
-    })),
-  );
+  // Most promising first (each attribute's first option is its likeliest), capped.
+  return foci
+    .flatMap((focus, f) =>
+      refinements.map((refinement, i) => ({
+        order: i * foci.length + f,
+        ecl: `${focus} : ${refinement.map(attributeText).join(', ')}`,
+        construction: { kind: 'refinement' as const, focus, attributes: refinement },
+      })),
+    )
+    .sort((a, b) => a.order - b.order)
+    .slice(0, MAX_REFINEMENT_CANDIDATES)
+    .map(({ ecl, construction }) => ({ ecl, construction }));
 }
 
 /**
- * Value expressions for one attribute: the best IS-A candidates for the values
- * members carry, with no refinements of their own. Lossy ones are kept too: a
- * value no member uses changes nothing inside the refinement, so `<< Tablet`
- * can be exact there where the value set itself needs exclusions. The input
- * echo (`S . attribute`) would only restate the set, so it is skipped.
+ * Value expressions for one attribute, likeliest first. A value no member uses
+ * changes nothing inside a refinement, so broad options can be exact there
+ * (`<< Tablet`) where the value set alone would need exclusions:
+ *
+ * 1. Values at least half the members carry: with several values per member
+ *    (the ingredients of combination products) `= any of them` over-includes,
+ *    while `= << paracetamol` is the definition. Taken from the sampled
+ *    relationships and checked on the server.
+ * 2. `<<` each root of the values members carry (when there are few roots).
+ * 3. `<<` the values' lowest common ancestor.
+ * 4. The values themselves, when there are only a handful.
  */
 async function valueOptions(
   members: MemberSet,
   attribute: string,
+  sampled: (DefiningRelationship[] | null)[],
   q: SetQueries,
-  terminology: ITerminologyService,
-  opts: Required<DeriveOptions>,
 ): Promise<string[]> {
-  const derived = await deriveEcl({ ecl: `${members.ecl} . ${attribute}` }, terminology, {
-    ...opts,
-    refinements: 'never',
-    hierarchySummary: false,
-    omitTerms: true,
-    maxCandidates: 20,
-  });
-  const usableValues = derived.candidates.filter((c) => c.construction.kind !== 'expression');
-  // The plain roots cover (`<< r`, no exclusions) ranks low as a value set when
-  // many values go unused, but is often what the refinement needs.
-  const plainRoots = usableValues.find(
-    (c) =>
-      c.construction.kind === 'hierarchy' &&
-      c.construction.exclusions.length === 0 &&
-      c.construction.literalExclusions.length === 0 &&
-      c.construction.roots.length <= 5,
-  );
-  const chosen = [...new Set([plainRoots, ...usableValues.slice(0, VALUE_CANDIDATES)])].filter(
-    (c): c is DeriveCandidate => c !== undefined,
-  );
-  const options = chosen.map((c) => (isSingleClause(c.ecl) ? c.ecl : `(${c.ecl})`));
-  // A value most members share: with several values per member (the
-  // ingredients of combination products), `= any of them` over-includes,
-  // while `= << paracetamol` is the definition.
-  options.push(...(await sharedValues(members, attribute, q)));
-  // A handful of values is also worth offering as they are.
-  const literal = await q.codes({ include: [{ ecl: `${members.ecl} . ${attribute}` }] }, MAX_LITERAL_VALUES + 1);
-  if (literal.total > 0 && literal.total <= MAX_LITERAL_VALUES) options.push(orGroup(literal.codes));
-  return options;
+  const values = `(${members.ecl} . ${attribute})`;
+  const literal = await q.codes({ include: [{ ecl: values }] }, MAX_LITERAL_VALUES + 1);
+  if (literal.total === 0) return [];
+  const valueRoots = await q.codes({ include: [{ ecl: `${values} MINUS < ${values}` }] }, MAX_VALUE_ROOTS + 1);
+
+  const options = await sharedValues(members, attribute, sampled, q);
+  if (valueRoots.total <= MAX_ROOTS_AS_VALUE) options.push(orGroup(valueRoots.codes.map((r) => `<< ${r}`)));
+  if (valueRoots.total > 1 && valueRoots.total <= MAX_VALUE_ROOTS) {
+    const [lca] = await lowestCommonAncestors(valueRoots.codes, q);
+    if (lca) options.push(`<< ${lca}`);
+  }
+  if (literal.total <= MAX_LITERAL_VALUES) options.push(orGroup(literal.codes));
+  return [...new Set(options)];
 }
 
 /**
- * `<< v` for the value roots that at least half the members carry, most
- * carried first (at most 2). Roots are the values with no ancestor among the
- * values; only the first {@link MAX_SHARED_VALUE_ROOTS} are tried.
+ * `<< v` for values that at least {@link SHARED_VALUE_SHARE} of the members
+ * carry: candidates from the sample's relationships, each counted on the server.
  */
-async function sharedValues(members: MemberSet, attribute: string, q: SetQueries): Promise<string[]> {
-  const values = `(${members.ecl} . ${attribute})`;
-  const roots = (await q.codes({ include: [{ ecl: `${values} MINUS < ${values}` }] }, MAX_SHARED_VALUE_ROOTS)).codes;
+async function sharedValues(
+  members: MemberSet,
+  attribute: string,
+  sampled: (DefiningRelationship[] | null)[],
+  q: SetQueries,
+): Promise<string[]> {
+  const inSample = new Map<string, number>();
+  for (const relationships of sampled) {
+    const vs = new Set((relationships ?? []).filter((r) => r.type === attribute).map((r) => r.value));
+    for (const v of vs) inSample.set(v, (inSample.get(v) ?? 0) + 1);
+  }
+  const likely = [...inSample.entries()]
+    .filter(([, n]) => n >= sampled.length * SHARED_VALUE_SHARE * 0.8)
+    .sort(([a, x], [b, y]) => y - x || byId(a, b))
+    .slice(0, 3)
+    .map(([v]) => v);
   const carried = await Promise.all(
-    roots.map(async (r) => ({
-      r,
+    likely.map(async (v) => ({
+      v,
       n:
-        members.size - (await q.count({ include: [members.clause], exclude: [{ ecl: `* : ${attribute} = << ${r}` }] })),
+        members.size - (await q.count({ include: [members.clause], exclude: [{ ecl: `* : ${attribute} = << ${v}` }] })),
     })),
   );
   return carried
-    .filter(({ n }) => n * 2 >= members.size)
-    .sort((x, y) => y.n - x.n || byId(x.r, y.r))
-    .slice(0, 2)
-    .map(({ r }) => `<< ${r}`);
+    .filter(({ n }) => n >= members.size * SHARED_VALUE_SHARE)
+    .sort((x, y) => y.n - x.n || byId(x.v, y.v))
+    .map(({ v }) => `<< ${v}`);
+}
+
+/**
+ * The most specific concepts that are `concept` or an ancestor of it for every
+ * one of `concepts`, in two queries: X = `(>> c1) AND (>> c2) …`, then `X MINUS > X`.
+ */
+async function lowestCommonAncestors(concepts: string[], q: SetQueries): Promise<string[]> {
+  if (concepts.length === 0) return [];
+  const each = concepts.map((c) => `(>> ${c})`);
+  const common = `(${each.join(' AND ')})`;
+  const lowest = await q.codes({ include: [{ ecl: `${common} MINUS > ${common}` }] }, 10);
+  return lowest.codes.filter((a) => a !== SNOMED_ROOT);
 }
 
 /**
@@ -936,17 +1013,21 @@ function isSingleClause(ecl: string): boolean {
 }
 
 /**
- * `<< a` (or `< a` when `a` is not a member) for the most specific ancestor of
- * `member` that sits above every member: the smallest of its ancestors whose
- * subtree holds the whole set.
+ * `<< a` (or `< a` when `a` is not a member) for the most specific concept above
+ * every member: a lowest common ancestor of `basis`, which is the set's roots or,
+ * when there are too many, a sample (`checked` then makes sure it covers the set).
  */
-async function commonAncestorFocus(members: MemberSet, member: string, q: SetQueries): Promise<string | null> {
-  const ancestors = (await q.codes({ include: [{ ecl: `>> ${member}` }] }, 500)).codes.filter((a) => a !== SNOMED_ROOT);
-  const sized = await Promise.all(ancestors.map(async (a) => ({ a, size: await q.countEcl(`<< ${a}`) })));
-  sized.sort((x, y) => x.size - y.size || byId(x.a, y.a));
-  for (const { a } of sized) {
-    const outside = await q.count({ include: [members.clause], exclude: [{ ecl: `<< ${a}` }] });
-    if (outside > 0) continue;
+async function commonAncestorFocus(
+  members: MemberSet,
+  basis: string[],
+  checked: boolean,
+  q: SetQueries,
+): Promise<string | null> {
+  for (const a of await lowestCommonAncestors(basis, q)) {
+    if (checked) {
+      const outside = await q.count({ include: [members.clause], exclude: [{ ecl: `<< ${a}` }] });
+      if (outside > 0) continue;
+    }
     const isMember = (await q.count({ include: [{ concepts: [a] }], exclude: [members.clause] })) === 0;
     return `${isMember ? '<<' : '<'} ${a}`;
   }
@@ -1091,6 +1172,10 @@ export function formatDeriveReport(result: DeriveResult): string {
     sample('Misses', c.misses);
   });
   return lines.join('\n');
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function plural(n: number, noun: string): string {

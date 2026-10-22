@@ -2208,6 +2208,42 @@ describe('formatDocument — attribute name operators', () => {
   });
 });
 
+describe('formatDocument — term and string text is left alone', () => {
+  // SNOMED CT terms and filter search strings are data: the spacing rules for
+  // ECL operators must not reach inside them.
+  test('keeps AND/OR inside a display term', () => {
+    assert.strictEqual(
+      formatDocument('<< 32574007 |Past MI diagnosed on ECG AND/OR other|', defaultFormattingOptions),
+      '<< 32574007 | Past MI diagnosed on ECG AND/OR other |',
+    );
+  });
+
+  test('keeps colons and equals signs inside a display term', () => {
+    assert.strictEqual(
+      formatDocument('<<404684003|x:y=z|:363698007=<<39057004', defaultFormattingOptions),
+      '<< 404684003 | x:y=z |: 363698007 = << 39057004',
+    );
+  });
+
+  test('keeps OR inside a filter search string', () => {
+    assert.strictEqual(
+      formatDocument('< 404684003 {{ D term = "fetus OR newborn" }}', defaultFormattingOptions),
+      '< 404684003 {{ D term = "fetus OR newborn" }}',
+    );
+  });
+
+  test('keeps = and : inside a filter search string while formatting the rest', () => {
+    assert.strictEqual(
+      formatDocument('<<404684003  {{ d TERM="a=b:c" }}', defaultFormattingOptions),
+      '<< 404684003 {{ D term = "a=b:c" }}',
+    );
+  });
+
+  test('still collapses whitespace runs inside a term', () => {
+    assert.strictEqual(formatDocument('< 404684003 |a   b|', defaultFormattingOptions), '< 404684003 | a b |');
+  });
+});
+
 describe('formatDocument — round trip over the grammar corpus', () => {
   for (const ecl of roundTripCorpus) {
     test(`preserves meaning: ${ecl}`, () => {

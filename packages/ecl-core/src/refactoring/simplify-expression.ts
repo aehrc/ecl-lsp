@@ -255,6 +255,7 @@ async function fhirSubsumption(
   operandTexts: string[],
   compoundOp: 'AND' | 'OR',
   terminologyService: ITerminologyService,
+  trace: SimplifyTrace | null,
 ): Promise<string[] | null> {
   const n = operandTexts.length;
   if (n < 2) return null;
@@ -269,6 +270,7 @@ async function fhirSubsumption(
       if (result.total > 0) nonEmpty.add(i);
     } catch {
       // Can't evaluate → treat as non-removable
+      if (trace) trace.subsumptionIncomplete = true;
     }
   }
 
@@ -303,12 +305,66 @@ async function fhirSubsumption(
         }
       } catch {
         // Skip this pair
+        if (trace) trace.subsumptionIncomplete = true;
       }
     }
   }
 
   if (removeSet.size === 0) return null;
   return operandTexts.filter((_, i) => !removeSet.has(i));
+}
+
+// ── Step recording ───────────────────────────────────────────────────────
+
+/** Which technique produced a simplification step. */
+export type SimplifyTechnique = 'removeDuplicates' | 'rankOperators' | 'factorFocus' | 'mergeFocus' | 'subsumption';
+
+/** One transformation applied to an AND/OR compound during simplification. */
+export interface SimplifyStep {
+  technique: SimplifyTechnique;
+  /** The compound operator of the node the technique was applied to. */
+  compoundOperator: 'AND' | 'OR';
+  /** The node's operands before the step. */
+  operands: string[];
+  /**
+   * Operands dropped because another operand makes them redundant. Empty for
+   * `factorFocus` / `mergeFocus`, which combine every operand into one.
+   */
+  removed: string[];
+  /** The node's text after the step. */
+  result: string;
+}
+
+/** Mutable collector threaded through the engine by {@link simplifyExpression}. */
+interface SimplifyTrace {
+  steps: SimplifyStep[];
+  subsumptionIncomplete: boolean;
+}
+
+function recordStep(
+  trace: SimplifyTrace | null,
+  technique: SimplifyTechnique,
+  compoundOperator: 'AND' | 'OR',
+  operands: string[],
+  kept: string[],
+  result: string,
+): void {
+  if (!trace) return;
+  const removed = kept.length === 0 ? [] : operandsRemoved(operands, kept);
+  trace.steps.push({ technique, compoundOperator, operands: [...operands], removed, result });
+}
+
+/** Multiset difference `operands - kept`, preserving order (so one copy of a duplicate is reported). */
+function operandsRemoved(operands: string[], kept: string[]): string[] {
+  const remaining = new Map<string, number>();
+  for (const k of kept) remaining.set(k, (remaining.get(k) ?? 0) + 1);
+  const removed: string[] = [];
+  for (const op of operands) {
+    const n = remaining.get(op) ?? 0;
+    if (n > 0) remaining.set(op, n - 1);
+    else removed.push(op);
+  }
+  return removed;
 }
 
 // ── Bottom-up engine ─────────────────────────────────────────────────────
@@ -340,7 +396,11 @@ function decomposeCompound(text: string): {
  * Recursively simplify a parenthesized operand text.
  * If the text is `(inner)`, recursively simplify `inner` and wrap back.
  */
-async function simplifyOperand(text: string, terminologyService: ITerminologyService | null): Promise<string> {
+async function simplifyOperand(
+  text: string,
+  terminologyService: ITerminologyService | null,
+  trace: SimplifyTrace | null,
+): Promise<string> {
   // Check if this operand is a parenthesized expression
   const trimmed = text.trim();
   if (!trimmed.startsWith('(') || !trimmed.endsWith(')')) return text;
@@ -350,7 +410,7 @@ async function simplifyOperand(text: string, terminologyService: ITerminologySer
   if (!inner) return text;
 
   // Recursively simplify the inner expression
-  const simplified = await simplifyText(inner, terminologyService);
+  const simplified = await simplifyText(inner, terminologyService, trace);
   if (simplified === inner) return text;
 
   // Re-wrap if the simplified result is still a compound
@@ -365,24 +425,33 @@ async function simplifyOperand(text: string, terminologyService: ITerminologySer
 /**
  * Apply synchronous techniques to a compound, returning new text or null.
  */
-function applySyncTechniques(operandTexts: string[], compoundOp: 'AND' | 'OR'): string | null {
+function applySyncTechniques(
+  operandTexts: string[],
+  compoundOp: 'AND' | 'OR',
+  trace: SimplifyTrace | null,
+): string | null {
   // Technique 1: Remove duplicates
   const deduped = removeDuplicates(operandTexts);
   if (deduped) {
-    if (deduped.length === 1) return deduped[0];
-    return deduped.join(` ${compoundOp} `);
+    const result = deduped.length === 1 ? deduped[0] : deduped.join(` ${compoundOp} `);
+    recordStep(trace, 'removeDuplicates', compoundOp, operandTexts, deduped, result);
+    return result;
   }
 
   // Technique 2: Same-concept operator ranking
   const ranked = rankOperands(operandTexts, compoundOp);
   if (ranked) {
-    if (ranked.length === 1) return ranked[0];
-    return ranked.join(` ${compoundOp} `);
+    const result = ranked.length === 1 ? ranked[0] : ranked.join(` ${compoundOp} `);
+    recordStep(trace, 'rankOperators', compoundOp, operandTexts, ranked, result);
+    return result;
   }
 
   // Technique 3: Factor/merge focus
   const factored = factorOrMergeFocus(operandTexts, compoundOp);
-  if (factored) return factored;
+  if (factored) {
+    recordStep(trace, compoundOp === 'OR' ? 'factorFocus' : 'mergeFocus', compoundOp, operandTexts, [], factored);
+    return factored;
+  }
 
   return null;
 }
@@ -392,7 +461,11 @@ function applySyncTechniques(operandTexts: string[], compoundOp: 'AND' | 'OR'): 
  * Given expression text, simplifies it bottom-up.
  */
 // eslint-disable-next-line sonarjs/cognitive-complexity -- bottom-up simplification with re-decompose loops and FHIR fallback
-async function simplifyText(text: string, terminologyService: ITerminologyService | null): Promise<string> {
+async function simplifyText(
+  text: string,
+  terminologyService: ITerminologyService | null,
+  trace: SimplifyTrace | null = null,
+): Promise<string> {
   const decomposed = decomposeCompound(text);
   if (!decomposed) return text;
 
@@ -402,7 +475,7 @@ async function simplifyText(text: string, terminologyService: ITerminologyServic
   let innerChanged = false;
   const simplifiedOperands: string[] = [];
   for (const opText of operandTexts) {
-    const simplified = await simplifyOperand(opText, terminologyService);
+    const simplified = await simplifyOperand(opText, terminologyService, trace);
     if (simplified !== opText) innerChanged = true;
     simplifiedOperands.push(simplified);
   }
@@ -424,7 +497,7 @@ async function simplifyText(text: string, terminologyService: ITerminologyServic
   let changed = true;
   while (changed) {
     changed = false;
-    const result = applySyncTechniques(operandTexts, compoundOp);
+    const result = applySyncTechniques(operandTexts, compoundOp, trace);
     if (result !== null) {
       changed = true;
       // Re-decompose the result
@@ -440,14 +513,15 @@ async function simplifyText(text: string, terminologyService: ITerminologyServic
 
   // Technique 4: FHIR subsumption (async)
   if (terminologyService) {
-    const subsumed = await fhirSubsumption(operandTexts, compoundOp, terminologyService);
+    const subsumed = await fhirSubsumption(operandTexts, compoundOp, terminologyService, trace);
     if (subsumed) {
-      if (subsumed.length === 1) return subsumed[0];
+      const afterFhir = subsumed.length === 1 ? subsumed[0] : subsumed.join(` ${compoundOp} `);
+      recordStep(trace, 'subsumption', compoundOp, operandTexts, subsumed, afterFhir);
+      if (subsumed.length === 1) return afterFhir;
       // After FHIR, re-run sync techniques
-      const afterFhir = subsumed.join(` ${compoundOp} `);
       const redecomposed = decomposeCompound(afterFhir);
       if (redecomposed) {
-        const syncResult = applySyncTechniques(redecomposed.operandTexts, redecomposed.compoundOp);
+        const syncResult = applySyncTechniques(redecomposed.operandTexts, redecomposed.compoundOp, trace);
         if (syncResult !== null) return syncResult;
       }
       return afterFhir;
@@ -499,6 +573,64 @@ export function getUnifiedSimplifyAction(ctx: RefactoringContext): CoreCodeActio
     kind: 'refactor' as const,
     documentUri: ctx.documentUri,
     data,
+  };
+}
+
+/** Result of {@link simplifyExpression}. */
+export interface SimplifyResult {
+  /** The simplified expression, or the input unchanged when nothing applied. */
+  expression: string;
+  /** True when `expression` differs from the input. */
+  changed: boolean;
+  /** The steps applied, innermost compounds first, in the order they fired. */
+  steps: SimplifyStep[];
+  /**
+   * Whether technique 4 (subsumption through the terminology server) ran:
+   * - `'not-run'`: no terminology service was given, so only the syntactic techniques ran
+   * - `'complete'`: every evaluation it needed succeeded
+   * - `'partial'`: some evaluations failed; those operand pairs were left as they were
+   */
+  subsumption: 'not-run' | 'complete' | 'partial';
+  /**
+   * Syntax error messages when the input does not parse. The input is then
+   * returned unchanged with no steps, as the editor code action refuses it too.
+   */
+  errors: string[];
+}
+
+/**
+ * Simplify an ECL expression without changing the set of concepts it selects,
+ * and report how. This is the engine behind the editor's "Simplify" code
+ * action, as a plain function for callers outside the editor.
+ *
+ * Techniques 1-3 (duplicates, same-concept operator ranking, factoring or
+ * merging a shared focus) are syntactic. Technique 4 (dropping an operand
+ * subsumed by another) needs `terminologyService`, and is skipped without one.
+ */
+export async function simplifyExpression(
+  ecl: string,
+  terminologyService?: ITerminologyService | null,
+): Promise<SimplifyResult> {
+  const subsumptionIfRun = terminologyService ? 'complete' : 'not-run';
+  const parsed = parseECL(ecl);
+  if (parsed.errors.length > 0) {
+    return {
+      expression: ecl,
+      changed: false,
+      steps: [],
+      subsumption: 'not-run',
+      errors: parsed.errors.map((e) => e.message),
+    };
+  }
+
+  const trace: SimplifyTrace = { steps: [], subsumptionIncomplete: false };
+  const expression = await simplifyText(ecl, terminologyService ?? null, trace);
+  return {
+    expression,
+    changed: expression !== ecl,
+    steps: trace.steps,
+    subsumption: trace.subsumptionIncomplete ? 'partial' : subsumptionIfRun,
+    errors: [],
   };
 }
 

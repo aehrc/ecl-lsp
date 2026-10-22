@@ -270,4 +270,5 @@ export function getRefactoringActions(documentUri: string, documentText: string,
 export const REFACTORING_RESOLVE_KIND = 'ecl.refactoring.resolve';
 
 export { resolveAddDisplayTerms } from './add-display-terms';
-export { resolveUnifiedSimplify } from './simplify-expression';
+export { resolveUnifiedSimplify, simplifyExpression } from './simplify-expression';
+export type { SimplifyResult, SimplifyStep, SimplifyTechnique } from './simplify-expression';

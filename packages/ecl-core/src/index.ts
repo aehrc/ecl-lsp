@@ -86,7 +86,8 @@ export { validateIndentSize, validateIndentStyle, validateMaxLineLength, validat
 export { getRefactoringActions, REFACTORING_RESOLVE_KIND } from './refactoring';
 export type { RefactoringContext } from './refactoring';
 export { resolveAddDisplayTerms } from './refactoring/add-display-terms';
-export { resolveUnifiedSimplify } from './refactoring/simplify-expression';
+export { resolveUnifiedSimplify, simplifyExpression } from './refactoring/simplify-expression';
+export type { SimplifyResult, SimplifyStep, SimplifyTechnique } from './refactoring/simplify-expression';
 export { buildReplacementText } from './refactoring/replace-inactive-concept';
 export type { ReplacementResult } from './refactoring/replace-inactive-concept';
 

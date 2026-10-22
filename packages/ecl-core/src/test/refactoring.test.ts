@@ -6,7 +6,11 @@ import * as assert from 'node:assert';
 import { parseECL } from '../parser';
 import { getStripDisplayTermsAction } from '../refactoring/strip-display-terms';
 import { getAddDisplayTermsAction, resolveAddDisplayTerms } from '../refactoring/add-display-terms';
-import { getUnifiedSimplifyAction, resolveUnifiedSimplify } from '../refactoring/simplify-expression';
+import {
+  getUnifiedSimplifyAction,
+  resolveUnifiedSimplify,
+  simplifyExpression,
+} from '../refactoring/simplify-expression';
 import { getAddParenthesesAction } from '../refactoring/add-parentheses';
 import { getAddHistorySupplementAction, getAddHistorySupplementActions } from '../refactoring/add-history-supplement';
 import { getAddDescriptionFilterAction } from '../refactoring/add-description-filter';
@@ -280,6 +284,20 @@ describe('Add display terms', () => {
 
 // ─── Unified simplify ───────────────────────────────────────────────────────
 
+/**
+ * Resolve the Simplify code action and assert that `simplifyExpression` gives
+ * the same text for the same input and terminology service (issue #149: the
+ * library function and the code action must not drift apart).
+ */
+async function resolveWithParity(action: CoreCodeAction, terminology: ITerminologyService): Promise<CoreCodeAction> {
+  const input = (action.data as { expressionText: string }).expressionText;
+  const resolved = await resolveUnifiedSimplify(action, terminology);
+  const direct = await simplifyExpression(input, terminology);
+  assert.strictEqual(direct.expression, getEditText(resolved) ?? input, `simplifyExpression parity for: ${input}`);
+  assert.strictEqual(direct.changed, getEditText(resolved) !== null);
+  return resolved;
+}
+
 describe('Unified simplify', () => {
   // -- Offering the action --
 
@@ -329,7 +347,7 @@ describe('Unified simplify', () => {
       const ctx = makeCtx('< 404684003 AND < 19829001 AND < 404684003');
       const action = getUnifiedSimplifyAction(ctx);
       assert.ok(action);
-      const resolved = await resolveUnifiedSimplify(action, mock);
+      const resolved = await resolveWithParity(action, mock);
       const text = getEditText(resolved);
       assert.strictEqual(text, '< 404684003 AND < 19829001');
     });
@@ -339,7 +357,7 @@ describe('Unified simplify', () => {
       const ctx = makeCtx('< 404684003 OR < 19829001 OR < 404684003');
       const action = getUnifiedSimplifyAction(ctx);
       assert.ok(action);
-      const resolved = await resolveUnifiedSimplify(action, mock);
+      const resolved = await resolveWithParity(action, mock);
       const text = getEditText(resolved);
       assert.strictEqual(text, '< 404684003 OR < 19829001');
     });
@@ -353,7 +371,7 @@ describe('Unified simplify', () => {
       const ctx = makeCtx('<< 404684003 AND < 404684003');
       const action = getUnifiedSimplifyAction(ctx);
       assert.ok(action);
-      const resolved = await resolveUnifiedSimplify(action, mock);
+      const resolved = await resolveWithParity(action, mock);
       const text = getEditText(resolved);
       assert.strictEqual(text, '< 404684003');
     });
@@ -363,7 +381,7 @@ describe('Unified simplify', () => {
       const ctx = makeCtx('<< 404684003 AND 404684003');
       const action = getUnifiedSimplifyAction(ctx);
       assert.ok(action);
-      const resolved = await resolveUnifiedSimplify(action, mock);
+      const resolved = await resolveWithParity(action, mock);
       const text = getEditText(resolved);
       assert.strictEqual(text, '404684003');
     });
@@ -373,7 +391,7 @@ describe('Unified simplify', () => {
       const ctx = makeCtx('< 404684003 AND 404684003');
       const action = getUnifiedSimplifyAction(ctx);
       assert.ok(action);
-      const resolved = await resolveUnifiedSimplify(action, mock);
+      const resolved = await resolveWithParity(action, mock);
       const text = getEditText(resolved);
       assert.strictEqual(text, '404684003');
     });
@@ -383,7 +401,7 @@ describe('Unified simplify', () => {
       const ctx = makeCtx('<< 404684003 OR < 404684003');
       const action = getUnifiedSimplifyAction(ctx);
       assert.ok(action);
-      const resolved = await resolveUnifiedSimplify(action, mock);
+      const resolved = await resolveWithParity(action, mock);
       const text = getEditText(resolved);
       assert.strictEqual(text, '<< 404684003');
     });
@@ -393,7 +411,7 @@ describe('Unified simplify', () => {
       const ctx = makeCtx('<< 404684003 OR 404684003');
       const action = getUnifiedSimplifyAction(ctx);
       assert.ok(action);
-      const resolved = await resolveUnifiedSimplify(action, mock);
+      const resolved = await resolveWithParity(action, mock);
       const text = getEditText(resolved);
       assert.strictEqual(text, '<< 404684003');
     });
@@ -403,7 +421,7 @@ describe('Unified simplify', () => {
       const ctx = makeCtx('< 404684003 OR 404684003');
       const action = getUnifiedSimplifyAction(ctx);
       assert.ok(action);
-      const resolved = await resolveUnifiedSimplify(action, mock);
+      const resolved = await resolveWithParity(action, mock);
       const text = getEditText(resolved);
       assert.strictEqual(text, '< 404684003');
     });
@@ -417,7 +435,7 @@ describe('Unified simplify', () => {
       const ctx = makeCtx('(< 404684003 : 363698007 = < 39057004) OR (< 404684003 : 116676008 = < 72651009)');
       const action = getUnifiedSimplifyAction(ctx);
       assert.ok(action, 'Action should be offered');
-      const resolved = await resolveUnifiedSimplify(action, mock);
+      const resolved = await resolveWithParity(action, mock);
       const text = getEditText(resolved);
       assert.ok(text);
       assert.ok(text.includes('< 404684003'), 'Should have common focus');
@@ -431,7 +449,7 @@ describe('Unified simplify', () => {
       const ctx = makeCtx('(< 404684003 : 363698007 = < 39057004) OR (< 19829001 : 116676008 = < 72651009)');
       const action = getUnifiedSimplifyAction(ctx);
       assert.ok(action); // offered because compound OR with 2+ operands
-      const resolved = await resolveUnifiedSimplify(action, mock);
+      const resolved = await resolveWithParity(action, mock);
       // No factoring should occur (different focus), no edit unless FHIR finds something
       // Since mock has no subsumptions, no edit
       assert.ok(!resolved.edits, 'Should not factor different focus');
@@ -446,7 +464,7 @@ describe('Unified simplify', () => {
       const ctx = makeCtx('(< 404684003 : 363698007 = < 39057004) AND (< 404684003 : 116676008 = < 72651009)');
       const action = getUnifiedSimplifyAction(ctx);
       assert.ok(action, 'Action should be offered');
-      const resolved = await resolveUnifiedSimplify(action, mock);
+      const resolved = await resolveWithParity(action, mock);
       const text = getEditText(resolved);
       assert.ok(text);
       assert.ok(text.includes('< 404684003'), 'Should have common focus');
@@ -460,7 +478,7 @@ describe('Unified simplify', () => {
       const ctx = makeCtx('(< 404684003 : 363698007 = < 39057004) AND (< 19829001 : 116676008 = < 72651009)');
       const action = getUnifiedSimplifyAction(ctx);
       assert.ok(action);
-      const resolved = await resolveUnifiedSimplify(action, mock);
+      const resolved = await resolveWithParity(action, mock);
       assert.ok(!resolved.edits, 'Should not merge different focus');
     });
 
@@ -469,7 +487,7 @@ describe('Unified simplify', () => {
       const ctx = makeCtx('< 404684003 AND < 19829001');
       const action = getUnifiedSimplifyAction(ctx);
       assert.ok(action);
-      const resolved = await resolveUnifiedSimplify(action, mock);
+      const resolved = await resolveWithParity(action, mock);
       assert.ok(!resolved.edits, 'Should not merge non-refined operands');
     });
   });
@@ -483,7 +501,7 @@ describe('Unified simplify', () => {
       const ctx = makeCtx('< 404684003 AND < 19829001');
       const action = getUnifiedSimplifyAction(ctx);
       assert.ok(action);
-      const resolved = await resolveUnifiedSimplify(action, mock);
+      const resolved = await resolveWithParity(action, mock);
       const text = getEditText(resolved);
       assert.strictEqual(text, '< 19829001');
     });
@@ -494,7 +512,7 @@ describe('Unified simplify', () => {
       const ctx = makeCtx('< 404684003 OR < 19829001');
       const action = getUnifiedSimplifyAction(ctx);
       assert.ok(action);
-      const resolved = await resolveUnifiedSimplify(action, mock);
+      const resolved = await resolveWithParity(action, mock);
       const text = getEditText(resolved);
       assert.strictEqual(text, '< 404684003');
     });
@@ -504,7 +522,7 @@ describe('Unified simplify', () => {
       const ctx = makeCtx('< 404684003 AND < 19829001');
       const action = getUnifiedSimplifyAction(ctx);
       assert.ok(action);
-      const resolved = await resolveUnifiedSimplify(action, mock);
+      const resolved = await resolveWithParity(action, mock);
       assert.ok(!resolved.edits, 'Should not simplify unrelated operands');
     });
 
@@ -515,7 +533,7 @@ describe('Unified simplify', () => {
       const ctx = makeCtx('< 404684003 OR < 19829001 OR < 999999999');
       const action = getUnifiedSimplifyAction(ctx);
       assert.ok(action);
-      const resolved = await resolveUnifiedSimplify(action, mock);
+      const resolved = await resolveWithParity(action, mock);
       const text = getEditText(resolved);
       assert.ok(text);
       assert.ok(!text.includes('19829001'), 'Subsumed operand removed');
@@ -541,7 +559,7 @@ describe('Unified simplify', () => {
       const ctx = makeCtx('< 404684003 AND < 19829001');
       const action = getUnifiedSimplifyAction(ctx);
       assert.ok(action);
-      const resolved = await resolveUnifiedSimplify(action, failService);
+      const resolved = await resolveWithParity(action, failService);
       assert.ok(!resolved.edits, 'Should not have edit when FHIR fails');
     });
 
@@ -552,7 +570,7 @@ describe('Unified simplify', () => {
       const ctx = makeCtx('< 404684003 AND < 19829001 AND < 39057004');
       const action = getUnifiedSimplifyAction(ctx);
       assert.ok(action);
-      const resolved = await resolveUnifiedSimplify(action, mock);
+      const resolved = await resolveWithParity(action, mock);
       const text = getEditText(resolved);
       assert.ok(text);
       assert.ok(text.includes('39057004'), `Should keep most specific, got: ${text}`);
@@ -568,7 +586,7 @@ describe('Unified simplify', () => {
       const ctx = makeCtx('(<< 404684003 OR < 404684003) AND (<< 19829001 OR < 19829001)');
       const action = getUnifiedSimplifyAction(ctx);
       assert.ok(action);
-      const resolved = await resolveUnifiedSimplify(action, mock);
+      const resolved = await resolveWithParity(action, mock);
       const text = getEditText(resolved);
       assert.ok(text);
       // Inner ORs simplify: << 404684003 OR < 404684003 → << 404684003
@@ -584,7 +602,7 @@ describe('Unified simplify', () => {
       const ctx = makeCtx('(<< 404684003 OR < 404684003) AND < 19829001');
       const action = getUnifiedSimplifyAction(ctx);
       assert.ok(action);
-      const resolved = await resolveUnifiedSimplify(action, mock);
+      const resolved = await resolveWithParity(action, mock);
       const text = getEditText(resolved);
       assert.ok(text);
       assert.ok(text.includes('<< 404684003'), `Should simplify inner group, got: ${text}`);
@@ -601,10 +619,122 @@ describe('Unified simplify', () => {
       const ctx = makeCtx('< 404684003 OR << 404684003 OR < 404684003');
       const action = getUnifiedSimplifyAction(ctx);
       assert.ok(action);
-      const resolved = await resolveUnifiedSimplify(action, mock);
+      const resolved = await resolveWithParity(action, mock);
       const text = getEditText(resolved);
       assert.strictEqual(text, '<< 404684003');
     });
+  });
+});
+
+describe('simplifyExpression', () => {
+  it('returns the input unchanged with no steps when nothing applies', async () => {
+    const result = await simplifyExpression('< 404684003 AND < 19829001');
+    assert.deepStrictEqual(result, {
+      expression: '< 404684003 AND < 19829001',
+      changed: false,
+      steps: [],
+      subsumption: 'not-run',
+      errors: [],
+    });
+  });
+
+  it('runs only the syntactic techniques without a terminology service', async () => {
+    const result = await simplifyExpression('< 404684003 OR << 404684003');
+    assert.strictEqual(result.expression, '<< 404684003');
+    assert.strictEqual(result.subsumption, 'not-run');
+  });
+
+  it('does not apply subsumption without a terminology service', async () => {
+    // Would collapse to < 19829001 with a server that knows lung disorders are findings.
+    const result = await simplifyExpression('< 404684003 AND < 19829001');
+    assert.strictEqual(result.changed, false);
+  });
+
+  it('reports a duplicate removal with the dropped copy', async () => {
+    const result = await simplifyExpression('< 404684003 AND < 19829001 AND < 404684003');
+    assert.strictEqual(result.expression, '< 404684003 AND < 19829001');
+    assert.deepStrictEqual(result.steps, [
+      {
+        technique: 'removeDuplicates',
+        compoundOperator: 'AND',
+        operands: ['< 404684003', '< 19829001', '< 404684003'],
+        removed: ['< 404684003'],
+        result: '< 404684003 AND < 19829001',
+      },
+    ]);
+  });
+
+  it('reports a cascade as separate steps in order', async () => {
+    const result = await simplifyExpression('< 404684003 OR << 404684003 OR < 404684003');
+    assert.strictEqual(result.expression, '<< 404684003');
+    assert.deepStrictEqual(
+      result.steps.map((s) => [s.technique, s.removed]),
+      [
+        ['removeDuplicates', ['< 404684003']],
+        ['rankOperators', ['< 404684003']],
+      ],
+    );
+  });
+
+  it('reports factoring a common focus with no removed operands', async () => {
+    const result = await simplifyExpression(
+      '(< 404684003 : 363698007 = < 39057004) OR (< 404684003 : 116676008 = < 72704001)',
+    );
+    assert.strictEqual(result.expression, '< 404684003 : 363698007 = < 39057004 OR 116676008 = < 72704001');
+    assert.strictEqual(result.steps.length, 1);
+    assert.strictEqual(result.steps[0].technique, 'factorFocus');
+    assert.deepStrictEqual(result.steps[0].removed, []);
+  });
+
+  it('reports merging a common focus under AND', async () => {
+    const result = await simplifyExpression(
+      '(< 404684003 : 363698007 = < 39057004) AND (< 404684003 : 116676008 = < 72704001)',
+    );
+    assert.strictEqual(result.steps[0]?.technique, 'mergeFocus');
+  });
+
+  it('reports inner compounds before the outer one', async () => {
+    const result = await simplifyExpression('(<< 404684003 OR < 404684003) AND (< 19829001 OR < 19829001)');
+    assert.deepStrictEqual(
+      result.steps.map((s) => [s.technique, s.compoundOperator, s.result]),
+      [
+        ['rankOperators', 'OR', '<< 404684003'],
+        ['removeDuplicates', 'OR', '< 19829001'],
+      ],
+    );
+  });
+
+  it('reports subsumption with the subsumed operand', async () => {
+    const mock = new SubsumptionMockService();
+    mock.addSubsumption('404684003', '19829001');
+    const result = await simplifyExpression('< 404684003 OR < 19829001', mock);
+    assert.strictEqual(result.expression, '< 404684003');
+    assert.strictEqual(result.subsumption, 'complete');
+    assert.deepStrictEqual(result.steps, [
+      {
+        technique: 'subsumption',
+        compoundOperator: 'OR',
+        operands: ['< 404684003', '< 19829001'],
+        removed: ['< 19829001'],
+        result: '< 404684003',
+      },
+    ]);
+  });
+
+  it('marks subsumption partial when the server fails', async () => {
+    const failing = new SubsumptionMockService();
+    failing.evaluateEcl = () => Promise.reject(new TerminologyTransportError('offline'));
+    const result = await simplifyExpression('< 404684003 AND < 19829001', failing);
+    assert.strictEqual(result.changed, false);
+    assert.strictEqual(result.subsumption, 'partial');
+  });
+
+  it('refuses input with syntax errors, as the code action does', async () => {
+    const result = await simplifyExpression('< 404684003 AND AND < 404684003');
+    assert.strictEqual(result.expression, '< 404684003 AND AND < 404684003');
+    assert.strictEqual(result.changed, false);
+    assert.ok(result.errors.length > 0);
+    assert.deepStrictEqual(result.steps, []);
   });
 });
 

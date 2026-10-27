@@ -39,10 +39,10 @@
   "dependencies": {
     "@aehrc/ecl-core": "file:../ecl-core",
     "vscode-languageserver": "^10.1.2",
-    "vscode-languageserver-textdocument": "^1.0.15"
+    "vscode-languageserver-textdocument": "^1.0.16"
   },
   "devDependencies": {
-    "@types/node": "^26.6.3",
+    "@types/node": "^26.6.5",
     "rimraf": "^5.0.5",
     "typescript": "^6.0.2"
   }

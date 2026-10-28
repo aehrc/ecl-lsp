@@ -655,6 +655,37 @@ describe('getDefiningRelationships — $lookup property=* (issue #149)', () => {
     assert.match(stub.requests[0].url, /\$lookup\?system=http:\/\/snomed\.info\/sct&code=22298006&property=\*$/);
   });
 
+  it('reads concrete values in ECL form', async () => {
+    const concrete = (code: string, value: object) => ({
+      name: 'subproperty',
+      part: [
+        { name: 'code', valueCode: code },
+        { name: 'value', ...value },
+      ],
+    });
+    stub.setHandler(() => ({
+      status: 200,
+      body: {
+        resourceType: 'Parameters',
+        parameter: [
+          property('609096000', [
+            concrete('999000041000168106', { valueDecimal: 500 }),
+            concrete('1142143009', { valueInteger: 2 }),
+            concrete('999000001000168109', { valueString: 'None' }),
+            concrete('859999999102', { valueBoolean: true }),
+          ]),
+        ],
+      },
+    }));
+    const service = new FhirTerminologyService({ baseUrl, timeout: 2000 });
+    assert.deepStrictEqual(await service.getDefiningRelationships('37929011000036107'), [
+      { type: '999000041000168106', value: '#500', group: 1 },
+      { type: '1142143009', value: '#2', group: 1 },
+      { type: '999000001000168109', value: '"None"', group: 1 },
+      { type: '859999999102', value: 'true', group: 1 },
+    ]);
+  });
+
   it('returns null for a code the server does not know', async () => {
     stub.setHandler(() => ({ status: 404, body: outcome('not-found', 'Unknown code 999999991008') }));
     const service = new FhirTerminologyService({ baseUrl, timeout: 2000 });

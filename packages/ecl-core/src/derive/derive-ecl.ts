@@ -36,18 +36,22 @@
 // terminology version give the same output, whatever the input order.
 
 import { canonicalise } from '../canonical/comparator';
-import { parseECL } from '../parser';
-import { NodeType, type SubExpressionNode } from '../parser/ast';
 import { formatDocument } from '../formatter/formatter';
 import { defaultFormattingOptions } from '../formatter/options';
-import type {
-  DefiningRelationship,
-  EvaluationConcept,
-  ITerminologyService,
-  ValueSetClause,
-  ValueSetCompose,
-} from '../terminology/types';
+import type { ITerminologyService, ValueSetCompose } from '../terminology/types';
 import { isValidConceptId } from '../terminology/verhoeff';
+import {
+  byId,
+  compareText,
+  countClauses,
+  orGroup,
+  SetQueries,
+  SNOMED_ROOT,
+  stripTermsAndComments,
+  type MemberSet,
+  type SetDifference,
+} from './set-queries';
+import { asFocus, refinementCandidates, refinementText, refsetFoci, type RefinementClause } from './refinements';
 
 // ── Public types ─────────────────────────────────────────────────────────
 
@@ -92,13 +96,19 @@ export interface DeriveOptions {
   hierarchySummary?: boolean;
   /** Timeout for each set query, in milliseconds. Default 60,000. */
   queryTimeoutMs?: number;
+  /**
+   * When no refinement is exact, try `C MINUS D` for the best lossy refinements
+   * C, with D describing what C adds. Default true.
+   */
+  subtractions?: boolean;
+  /**
+   * Count a candidate's additions only inside this expression (used for the D
+   * in `C MINUS D`). Default: everywhere.
+   */
+  within?: string;
 }
 
-export interface SetDifference {
-  count: number;
-  /** Up to `sampleSize` of the concepts, as the server returned them. */
-  sample: EvaluationConcept[];
-}
+export type { SetDifference } from './set-queries';
 
 /** How a candidate was built, so a caller can explain it. */
 export type CandidateConstruction =
@@ -117,8 +127,14 @@ export type CandidateConstruction =
   | {
       kind: 'refinement';
       focus: string;
-      /** Each attribute and the value expression it must match, all required. */
-      attributes: { attribute: string; value: string }[];
+      /** The clauses after `:`, all required. */
+      attributes: RefinementClause[];
+    }
+  | {
+      kind: 'subtraction';
+      /** A lossy candidate and, subtracted from it, a description of what it adds. */
+      from: string;
+      minus: string;
     }
   | {
       kind: 'ancestor-cover';
@@ -186,128 +202,22 @@ const DEFAULTS: Required<DeriveOptions> = {
   refinementFocus: '',
   hierarchySummary: true,
   queryTimeoutMs: 60_000,
+  subtractions: true,
+  within: '',
 };
 
-const SNOMED_ROOT = '138875005';
-/** Ontoserver returns at most this many concepts per page, whatever `count` asks for. */
-const PAGE_SIZE = 50_000;
 /** Above this many concept references, candidates are not formatted or given terms. */
 const MAX_DECORATED_CLAUSES = 200;
 /** Candidates scored at once (2 queries each). */
 const SCORE_BATCH = 4;
-/** Concurrent set queries; see {@link SetQueries}. */
-const MAX_IN_FLIGHT = 8;
 /** With `refinements: 'auto'`, refinement candidates are always built above this many roots. */
 const REFINEMENT_ROOTS = 20;
-/** Members whose relationships are read to find the attributes the set shares. */
-const REFINEMENT_SAMPLE = 20;
-/** Most refinement candidates scored, likeliest first. */
-const MAX_REFINEMENT_CANDIDATES = 16;
-/** Share of members a value must be carried by to be offered on its own. */
-const SHARED_VALUE_SHARE = 0.5;
-/** Up to this many value roots, `<<` each of them is a value option. */
-const MAX_ROOTS_AS_VALUE = 5;
-/** Up to this many value roots, their lowest common ancestor is a value option. */
-const MAX_VALUE_ROOTS = 50;
-/** Up to this many distinct values, the values themselves are a value option. */
-const MAX_LITERAL_VALUES = 5;
-/** Most attributes tried, those most often present in the sample first. */
-const MAX_REFINEMENT_ATTRIBUTES = 6;
 /** Subtree tops sized when no exact cover is possible anyway. */
 const LOSSY_SIZED = 64;
 /** Most subtree tops (for exclusions) or ancestors (for covers) whose size is counted. */
 const MAX_SIZED = 500;
-
-/** Numeric order for SCTIDs, so output does not depend on input or server order. */
-function byId(a: string, b: string): number {
-  return a.length - b.length || compareText(a, b);
-}
-
-function compareText(a: string, b: string): number {
-  if (a === b) return 0;
-  return a < b ? -1 : 1;
-}
-
-/** `x` alone, or `(x OR y …)` — safe as an operand anywhere. */
-function orGroup(terms: string[]): string {
-  return terms.length === 1 ? terms[0] : `(${terms.join(' OR ')})`;
-}
-
-/**
- * `ecl` without display terms and comments, so candidates built from it can be
- * given terms afresh and their concept references counted. Quoted strings
- * (filter values) are kept as they are.
- */
-export function stripTermsAndComments(ecl: string): string {
-  return ecl
-    .replace(/"(?:[^"\\]|\\.)*"|\/\*[\s\S]*?\*\/|\|[^|]*\|/g, (m) => (m.startsWith('"') ? m : ' '))
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-export function countClauses(ecl: string): number {
-  return ecl.match(/\b\d{6,18}\b/g)?.length ?? 0;
-}
-
-type ExpandCompose = NonNullable<ITerminologyService['expandCompose']>;
-
-/** The set under study, as a compose clause and as an ECL operand. */
-interface MemberSet {
-  clause: ValueSetClause;
-  ecl: string;
-  size: number;
-}
-
-/**
- * Set queries against the server. At most {@link MAX_IN_FLIGHT} run at once:
- * many carry the whole member list, and the service may not queue them itself.
- */
-class SetQueries {
-  private inFlight = 0;
-  private readonly waiting: (() => void)[] = [];
-
-  constructor(private readonly expandCompose: ExpandCompose) {}
-
-  private async expand(...args: Parameters<ExpandCompose>): ReturnType<ExpandCompose> {
-    if (this.inFlight >= MAX_IN_FLIGHT) await new Promise<void>((resolve) => this.waiting.push(resolve));
-    this.inFlight++;
-    try {
-      return await this.expandCompose(...args);
-    } finally {
-      this.inFlight--;
-      this.waiting.shift()?.();
-    }
-  }
-
-  async count(compose: ValueSetCompose): Promise<number> {
-    return (await this.expand(compose, { count: 0 })).total;
-  }
-
-  async sample(compose: ValueSetCompose, count: number): Promise<SetDifference> {
-    const r = await this.expand(compose, { count });
-    return { count: r.total, sample: r.concepts };
-  }
-
-  /** Up to `max` codes of the set, sorted, plus the set's exact total. */
-  async codes(compose: ValueSetCompose, max: number, activeOnly = true): Promise<{ codes: string[]; total: number }> {
-    const codes: string[] = [];
-    let total = 0;
-    for (let offset = 0; codes.length < max;) {
-      const r = await this.expand(compose, { count: Math.min(PAGE_SIZE, max - codes.length), offset, activeOnly });
-      total = r.total;
-      if (r.concepts.length === 0) break;
-      for (const c of r.concepts) codes.push(c.code);
-      offset += r.concepts.length;
-      if (offset >= total) break;
-    }
-    codes.sort(byId);
-    return { codes, total };
-  }
-
-  countEcl(ecl: string): Promise<number> {
-    return this.count({ include: [{ ecl }] });
-  }
-}
+/** Lossy refinements for which a subtraction is sought. */
+const MAX_SUBTRACTED = 2;
 
 // ── Entry point ──────────────────────────────────────────────────────────
 
@@ -366,7 +276,7 @@ export async function deriveEcl(
         fresh.slice(i, i + SCORE_BATCH).map(async (b) => {
           const s = b.known
             ? { ...b.known, clauses: countClauses(b.ecl) }
-            : await compare(b.ecl, members, q, opts.sampleSize);
+            : await compare(b.ecl, members, q, opts.sampleSize, opts.within);
           return { ecl: b.ecl, construction: b.construction, ...s };
         }),
       );
@@ -383,10 +293,26 @@ export async function deriveEcl(
 
   await score(await hierarchyCandidates(roots, result.roots, members, q, opts, notes));
   if (wantRefinements(opts.refinements, result.roots, scored)) {
-    const foci = opts.refinementFocus ? [asFocus(opts.refinementFocus)] : refsetFoci(input);
-    const refinements = await refinementCandidates(members, rootQuery, foci, q, terminology, opts, notes);
+    let given = 'ecl' in input ? refsetFoci(input.ecl) : [];
+    if (opts.refinementFocus) given = [asFocus(opts.refinementFocus)];
+    const found = await refinementCandidates(
+      members,
+      rootQuery,
+      given,
+      Boolean(opts.refinementFocus),
+      q,
+      terminology,
+      notes,
+    );
+    const refinements = found.map(({ focus, clauses }) => ({
+      ecl: refinementText(focus, clauses),
+      construction: { kind: 'refinement' as const, focus, attributes: clauses },
+    }));
     // An exact refinement of three clauses or fewer is as short as they get.
     await score(refinements, (c) => c.exact && c.clauses <= 3);
+    if (opts.subtractions && !scored.some((c) => c.exact && c.construction.kind === 'refinement')) {
+      await score(await subtractions(scored, members, terminology, opts));
+    }
   }
   // The input itself goes last, so a derived candidate that rebuilds it keeps its construction.
   await score([inputItself(input, members)]);
@@ -404,6 +330,45 @@ export async function deriveEcl(
   const terms = opts.omitTerms ? new Map<string, string>() : await displayTerms(top, terminology);
   result.candidates = top.map((s) => ({ expression: decorate(s.ecl, terms), ...s }));
   return result;
+}
+
+/**
+ * `C MINUS D` for the best lossy refinements C that miss nothing: D describes
+ * what C adds, found by deriving refinements for `C MINUS S` and judging them
+ * within C only (what D selects outside C is subtracted from nothing).
+ */
+async function subtractions(
+  scored: Scored[],
+  members: MemberSet,
+  terminology: ITerminologyService,
+  opts: Required<DeriveOptions>,
+): Promise<Built[]> {
+  const lossy = scored
+    .filter((c) => c.construction.kind === 'refinement' && c.misses.count === 0 && c.additions.count > 0)
+    .sort((a, b) => a.clauses + a.additions.count - (b.clauses + b.additions.count))
+    .slice(0, MAX_SUBTRACTED);
+  const built: Built[] = [];
+  for (const c of lossy) {
+    if (c.construction.kind !== 'refinement') continue;
+    const extra = await deriveEcl({ ecl: `(${c.ecl}) MINUS ${members.ecl}` }, terminology, {
+      ...opts,
+      refinements: 'always',
+      refinementFocus: c.construction.focus,
+      within: c.ecl,
+      subtractions: false,
+      hierarchySummary: false,
+      omitTerms: true,
+      maxCandidates: 3,
+    });
+    const d = extra.candidates.find((x) => x.construction.kind !== 'expression' && x.misses.count === 0);
+    if (d) {
+      built.push({
+        ecl: `(${c.ecl}) MINUS (${d.ecl})`,
+        construction: { kind: 'subtraction', from: c.ecl, minus: d.ecl },
+      });
+    }
+  }
+  return built;
 }
 
 /**
@@ -805,235 +770,6 @@ function isBetter(ratio: number, gain: number, conceptId: string, best: { f: Foc
   return byId(conceptId, best.f.conceptId) < 0;
 }
 
-// ── Candidate 3: attribute refinements (issue #149 Part 3) ───────────────
-//
-// A set that cuts across the hierarchy can still share an attribute value:
-// every AMT product with a given dose form, say. Read the relationships of a
-// sample of members to find the attributes most of them carry; for each, ask
-// the server for the values members have (`S . attribute`) and compress those
-// with the IS-A candidates above; then offer `focus : attribute = values`, and
-// conjunctions of the two or three commonest attributes. The server counts
-// what each adds and misses, as for every other candidate.
-
-async function refinementCandidates(
-  members: MemberSet,
-  roots: { codes: string[]; total: number },
-  givenFoci: string[],
-  q: SetQueries,
-  terminology: ITerminologyService,
-  opts: Required<DeriveOptions>,
-  notes: string[],
-): Promise<{ ecl: string; construction: CandidateConstruction }[]> {
-  const getRelationships = terminology.getDefiningRelationships?.bind(terminology);
-  if (!getRelationships) {
-    notes.push('Refinement candidates need a terminology service with getDefiningRelationships.');
-    return [];
-  }
-
-  const sample = (await q.codes({ include: [members.clause] }, REFINEMENT_SAMPLE)).codes;
-  const sampled: (DefiningRelationship[] | null)[] = [];
-  for (let i = 0; i < sample.length; i += MAX_IN_FLIGHT) {
-    sampled.push(...(await Promise.all(sample.slice(i, i + MAX_IN_FLIGHT).map((m) => getRelationships(m)))));
-  }
-  const attributes = sharedAttributes(sampled);
-  if (attributes.length === 0) {
-    notes.push('No attribute is shared by most members, so no refinement candidates were built.');
-    return [];
-  }
-
-  const foci = [...givenFoci];
-  if (!opts.refinementFocus) {
-    // The roots stand for the whole set when all of them were fetched; otherwise the sample does.
-    const basis = roots.total <= roots.codes.length ? roots.codes : sample;
-    const ancestor = await commonAncestorFocus(members, basis, basis === sample, q);
-    if (ancestor) foci.push(ancestor);
-  }
-  if (foci.length === 0) return [];
-
-  const values = new Map<string, string[]>();
-  for (const attribute of attributes) {
-    const options = await valueOptions(members, attribute, sampled, q);
-    if (options.length > 0) values.set(attribute, options);
-  }
-
-  const refinements = refinementSets(
-    attributes.filter((a) => values.has(a)),
-    values,
-  );
-  // Most promising first (each attribute's first option is its likeliest), capped.
-  return foci
-    .flatMap((focus, f) =>
-      refinements.map((refinement, i) => ({
-        order: i * foci.length + f,
-        ecl: `${focus} : ${refinement.map(attributeText).join(', ')}`,
-        construction: { kind: 'refinement' as const, focus, attributes: refinement },
-      })),
-    )
-    .sort((a, b) => a.order - b.order)
-    .slice(0, MAX_REFINEMENT_CANDIDATES)
-    .map(({ ecl, construction }) => ({ ecl, construction }));
-}
-
-/**
- * Value expressions for one attribute, likeliest first. A value no member uses
- * changes nothing inside a refinement, so broad options can be exact there
- * (`<< Tablet`) where the value set alone would need exclusions:
- *
- * 1. Values at least half the members carry: with several values per member
- *    (the ingredients of combination products) `= any of them` over-includes,
- *    while `= << paracetamol` is the definition. Taken from the sampled
- *    relationships and checked on the server.
- * 2. `<<` each root of the values members carry (when there are few roots).
- * 3. `<<` the values' lowest common ancestor.
- * 4. The values themselves, when there are only a handful.
- */
-async function valueOptions(
-  members: MemberSet,
-  attribute: string,
-  sampled: (DefiningRelationship[] | null)[],
-  q: SetQueries,
-): Promise<string[]> {
-  const values = `(${members.ecl} . ${attribute})`;
-  const literal = await q.codes({ include: [{ ecl: values }] }, MAX_LITERAL_VALUES + 1);
-  if (literal.total === 0) return [];
-  const valueRoots = await q.codes({ include: [{ ecl: `${values} MINUS < ${values}` }] }, MAX_VALUE_ROOTS + 1);
-
-  const options = await sharedValues(members, attribute, sampled, q);
-  if (valueRoots.total <= MAX_ROOTS_AS_VALUE) options.push(orGroup(valueRoots.codes.map((r) => `<< ${r}`)));
-  if (valueRoots.total > 1 && valueRoots.total <= MAX_VALUE_ROOTS) {
-    const [lca] = await lowestCommonAncestors(valueRoots.codes, q);
-    if (lca) options.push(`<< ${lca}`);
-  }
-  if (literal.total <= MAX_LITERAL_VALUES) options.push(orGroup(literal.codes));
-  return [...new Set(options)];
-}
-
-/**
- * `<< v` for values that at least {@link SHARED_VALUE_SHARE} of the members
- * carry: candidates from the sample's relationships, each counted on the server.
- */
-async function sharedValues(
-  members: MemberSet,
-  attribute: string,
-  sampled: (DefiningRelationship[] | null)[],
-  q: SetQueries,
-): Promise<string[]> {
-  const inSample = new Map<string, number>();
-  for (const relationships of sampled) {
-    const vs = new Set((relationships ?? []).filter((r) => r.type === attribute).map((r) => r.value));
-    for (const v of vs) inSample.set(v, (inSample.get(v) ?? 0) + 1);
-  }
-  const likely = [...inSample.entries()]
-    .filter(([, n]) => n >= sampled.length * SHARED_VALUE_SHARE * 0.8)
-    .sort(([a, x], [b, y]) => y - x || byId(a, b))
-    .slice(0, 3)
-    .map(([v]) => v);
-  const carried = await Promise.all(
-    likely.map(async (v) => ({
-      v,
-      n:
-        members.size - (await q.count({ include: [members.clause], exclude: [{ ecl: `* : ${attribute} = << ${v}` }] })),
-    })),
-  );
-  return carried
-    .filter(({ n }) => n >= members.size * SHARED_VALUE_SHARE)
-    .sort((x, y) => y.n - x.n || byId(x.v, y.v))
-    .map(({ v }) => `<< ${v}`);
-}
-
-/**
- * The most specific concepts that are `concept` or an ancestor of it for every
- * one of `concepts`, in two queries: X = `(>> c1) AND (>> c2) …`, then `X MINUS > X`.
- */
-async function lowestCommonAncestors(concepts: string[], q: SetQueries): Promise<string[]> {
-  if (concepts.length === 0) return [];
-  const each = concepts.map((c) => `(>> ${c})`);
-  const common = `(${each.join(' AND ')})`;
-  const lowest = await q.codes({ include: [{ ecl: `${common} MINUS > ${common}` }] }, 10);
-  return lowest.codes.filter((a) => a !== SNOMED_ROOT);
-}
-
-/**
- * Reference sets an ECL input is restricted to (`^ R : …`, `^ R AND …`): a
- * natural focus for refinements, such as an AMT product level.
- */
-function refsetFoci(input: DeriveInput): string[] {
-  if (!('ecl' in input)) return [];
-  const ast = parseECL(input.ecl).ast;
-  if (!ast) return [];
-  const expr = ast.expression;
-  let operands: SubExpressionNode[] = [];
-  if (expr.type === NodeType.RefinedExpression) operands = [expr.expression];
-  else if (expr.type === NodeType.SubExpressionConstraint) operands = [expr];
-  else if (expr.type === NodeType.CompoundExpression && expr.operator.operator === 'AND') operands = expr.operands;
-  return operands
-    .filter((o) => o.memberOf && !o.operator && o.focus.type === NodeType.ConceptReference)
-    .map((o) => `^ ${(o.focus as { conceptId: string }).conceptId}`);
-}
-
-/** Attributes at least half the sampled members carry, commonest first. */
-function sharedAttributes(sampled: (DefiningRelationship[] | null)[]): string[] {
-  const seen = new Map<string, number>();
-  for (const relationships of sampled) {
-    for (const type of new Set((relationships ?? []).map((r) => r.type))) seen.set(type, (seen.get(type) ?? 0) + 1);
-  }
-  return [...seen.entries()]
-    .filter(([, n]) => n * 2 >= sampled.length)
-    .sort(([a, x], [b, y]) => y - x || byId(a, b))
-    .slice(0, MAX_REFINEMENT_ATTRIBUTES)
-    .map(([type]) => type);
-}
-
-/** Each attribute with each of its value options, then pairs of the three commonest with their best values. */
-function refinementSets(usable: string[], values: Map<string, string[]>): { attribute: string; value: string }[][] {
-  const sets: { attribute: string; value: string }[][] = [];
-  for (const attribute of usable) {
-    for (const value of values.get(attribute) ?? []) sets.push([{ attribute, value }]);
-  }
-  const best = (attribute: string) => ({ attribute, value: values.get(attribute)?.[0] ?? '*' });
-  const commonest = usable.slice(0, 3);
-  for (let i = 0; i < commonest.length; i++) {
-    for (let j = i + 1; j < commonest.length; j++) sets.push([best(commonest[i]), best(commonest[j])]);
-  }
-  return sets;
-}
-
-/** A focus usable before `:`: a single clause or `^ id` as is, anything else bracketed. */
-function asFocus(ecl: string): string {
-  const trimmed = stripTermsAndComments(ecl);
-  return isSingleClause(trimmed) || /^\^\s*\d{6,18}$/.test(trimmed) ? trimmed : `(${trimmed})`;
-}
-
-function attributeText(r: { attribute: string; value: string }): string {
-  return `${r.attribute} = ${r.value}`;
-}
-
-function isSingleClause(ecl: string): boolean {
-  return /^(<<|<)?\s*\d{6,18}$/.test(ecl.trim());
-}
-
-/**
- * `<< a` (or `< a` when `a` is not a member) for the most specific concept above
- * every member: a lowest common ancestor of `basis`, which is the set's roots or,
- * when there are too many, a sample (`checked` then makes sure it covers the set).
- */
-async function commonAncestorFocus(
-  members: MemberSet,
-  basis: string[],
-  checked: boolean,
-  q: SetQueries,
-): Promise<string | null> {
-  for (const a of await lowestCommonAncestors(basis, q)) {
-    if (checked) {
-      const outside = await q.count({ include: [members.clause], exclude: [{ ecl: `<< ${a}` }] });
-      if (outside > 0) continue;
-    }
-    const isMember = (await q.count({ include: [{ concepts: [a] }], exclude: [members.clause] })) === 0;
-    return `${isMember ? '<<' : '<'} ${a}`;
-  }
-  return null;
-}
-
 // ── Scoring ──────────────────────────────────────────────────────────────
 
 /** A candidate before scoring; `known` when its score needs no server (the input itself). */
@@ -1077,9 +813,12 @@ async function compare(
   members: MemberSet,
   q: SetQueries,
   sampleSize: number,
+  within: string,
 ): Promise<Omit<Scored, 'ecl' | 'construction'>> {
+  // With `within`, only what the candidate adds inside that expression counts.
+  const counted = within ? `(${ecl}) AND (${within})` : ecl;
   const [additions, misses] = await Promise.all([
-    q.sample({ include: [{ ecl }], exclude: [members.clause] }, sampleSize),
+    q.sample({ include: [{ ecl: counted }], exclude: [members.clause] }, sampleSize),
     q.sample({ include: [members.clause], exclude: [{ ecl }] }, sampleSize),
   ]);
   return {

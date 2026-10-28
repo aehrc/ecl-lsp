@@ -545,6 +545,73 @@ describe('deriveEcl — attribute refinements (#149 Part 3)', () => {
     assert.strictEqual(result.candidates[0].exact, true);
   });
 
+  describe('concrete values, cardinality and subtraction', () => {
+    const STRENGTH = sctid(2060);
+    const ING = sctid(2061);
+    const PARA = sctid(2062);
+    const CAFF = sctid(2063);
+
+    // Strengths cycle over 5 products (groupers over 3, so they do not line up);
+    // products 0-11 contain paracetamol, every third one caffeine too.
+    function richer(): HierarchyMockService {
+      const mock = products3()
+        .add(STRENGTH, 'Has strength', [ROOT])
+        .add(ING, 'Has ingredient', [ROOT])
+        .add(PARA, 'Paracetamol', [ROOT])
+        .add(CAFF, 'Caffeine', [ROOT]);
+      products.forEach((p, i) => {
+        mock.relate(p.id, STRENGTH, `#${[250, 500, 1000, 500, 250][i % 5]}`);
+        if (i < 12) mock.relate(p.id, ING, PARA);
+        if (i % 3 === 0) mock.relate(p.id, ING, CAFF);
+      });
+      return mock;
+    }
+
+    const recover = async (mock: HierarchyMockService, ecl: string) => {
+      const set = [...mock.evaluate(ecl)];
+      assert.ok(set.length > 0, `fixture selects something: ${ecl}`);
+      const result = await deriveEcl({ conceptIds: set }, mock, {
+        omitTerms: true,
+        refinements: 'always',
+        refinementFocus: `^ ${P.REFSET}`,
+      });
+      assertCountsHonest(mock, set, result);
+      return { set, result };
+    };
+
+    it('recovers an exact concrete value', async () => {
+      const mock = richer();
+      const { result } = await recover(mock, `^ ${P.REFSET} : ${STRENGTH} = #500`);
+      assert.strictEqual(result.candidates[0].ecl, `^ ${P.REFSET} : ${STRENGTH} = #500`);
+      assert.strictEqual(result.candidates[0].exact, true);
+    });
+
+    it('recovers a concrete range', async () => {
+      const mock = richer();
+      const { result } = await recover(mock, `^ ${P.REFSET} : ${STRENGTH} >= #250, ${STRENGTH} <= #500`);
+      const top = result.candidates[0];
+      assert.strictEqual(top.exact, true, top.ecl);
+      assert.strictEqual(top.ecl, `^ ${P.REFSET} : ${STRENGTH} >= #250, ${STRENGTH} <= #500`);
+    });
+
+    it('recovers a cardinality', async () => {
+      const mock = richer();
+      const { result } = await recover(mock, `^ ${P.REFSET} : [2..*] ${ING} = *`);
+      const top = result.candidates[0];
+      assert.strictEqual(top.exact, true, top.ecl);
+      assert.match(top.ecl, new RegExp(`\\[2\\.\\.\\*\\] ${ING} = `));
+    });
+
+    it('recovers one refinement minus another as a subtraction', async () => {
+      const mock = richer();
+      const ecl = `(^ ${P.REFSET} : ${ING} = << ${PARA}) MINUS (^ ${P.REFSET} : ${P.FORM} = << ${P.CAP})`;
+      const { result } = await recover(mock, ecl);
+      const exact = result.candidates.find((c) => c.exact && c.construction.kind !== 'enumeration');
+      assert.ok(exact, result.candidates.map((c) => `${c.construction.kind} ${c.ecl}`).join(' | '));
+      assert.strictEqual(exact.construction.kind, 'subtraction');
+    });
+  });
+
   it('says so when the service cannot read relationships', async () => {
     const mock = products3().withoutRelationships();
     const set = [...mock.evaluate(`< ${P.PRODUCT} : ${P.FORM} = << ${P.TAB}`)];

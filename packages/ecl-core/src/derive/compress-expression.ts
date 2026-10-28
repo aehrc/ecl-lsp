@@ -23,16 +23,8 @@ import { parseECL } from '../parser';
 import { NodeType, type SubExpressionNode, type ExpressionNode } from '../parser/ast';
 import { simplifyExpression } from '../refactoring/simplify-expression';
 import type { ITerminologyService } from '../terminology/types';
-import {
-  stripTermsAndComments,
-  countClauses,
-  decorate,
-  deriveEcl,
-  displayTerms,
-  type CandidateConstruction,
-  type DeriveOptions,
-  type SetDifference,
-} from './derive-ecl';
+import { decorate, deriveEcl, displayTerms, type CandidateConstruction, type DeriveOptions } from './derive-ecl';
+import { countClauses, stripTermsAndComments, type SetDifference } from './set-queries';
 
 export interface CompressCandidate {
   /** The candidate, formatted, with display terms unless `omitTerms`. */

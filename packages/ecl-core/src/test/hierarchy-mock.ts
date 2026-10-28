@@ -170,8 +170,10 @@ export class HierarchyMockService implements ITerminologyService {
       const constraints = this.conjuncts(expr.refinement);
       return new Set(
         [...focus].filter((id) =>
-          constraints.every(({ types, values }) =>
-            (this.concepts.get(id)?.relationships ?? []).some((r) => types.has(r.type) && values.has(r.value)),
+          constraints.every(
+            ({ types, matches, min }) =>
+              (this.concepts.get(id)?.relationships ?? []).filter((r) => types.has(r.type) && matches(r.value))
+                .length >= min,
           ),
         ),
       );
@@ -189,8 +191,14 @@ export class HierarchyMockService implements ITerminologyService {
     return current;
   }
 
-  /** The attributes of a refinement that are all required (a conjunction without groups). */
-  private conjuncts(refinement: RefinementNode): { types: Set<string>; values: Set<string> }[] {
+  /**
+   * The attributes of a refinement that are all required (a conjunction without
+   * groups): `a = expression`, `a = *`, concrete `a = #5` / `a >= #5` / `a <= #5`,
+   * and a `[n..*]` cardinality.
+   */
+  private conjuncts(
+    refinement: RefinementNode,
+  ): { types: Set<string>; matches: (value: string) => boolean; min: number }[] {
     const walk = (member: RefinementMemberNode | null): void => {
       if (!member) return;
       if (member.type === NodeType.AttributeSet) {
@@ -202,11 +210,27 @@ export class HierarchyMockService implements ITerminologyService {
     };
     walk(refinement.content);
     return refinement.attributes.map((a) => {
-      if (a.reversed || (a.comparison && a.comparison !== '=') || !a.value.expression) {
-        throw new Error('HierarchyMockService: only `attribute = expression` is supported');
-      }
+      if (a.reversed) throw new Error('HierarchyMockService: reversed attributes unsupported');
       const types = a.name.conceptId ? new Set([a.name.conceptId]) : this.sub(a.name.expression!);
-      return { types, values: this.sub(a.value.expression) };
+      const min = a.cardinality ? Number(/\[(\d+)\./.exec(a.cardinality)?.[1] ?? 1) : 1;
+      const comparison = a.comparison ?? '=';
+      if (a.value.rawValue !== undefined) {
+        const target = Number(a.value.rawValue);
+        const compare = {
+          '=': (n: number) => n === target,
+          '>=': (n: number) => n >= target,
+          '<=': (n: number) => n <= target,
+        };
+        if (!(comparison in compare)) throw new Error(`HierarchyMockService: ${comparison} unsupported`);
+        const test = compare[comparison as keyof typeof compare];
+        return { types, min, matches: (v: string) => v.startsWith('#') && test(Number(v.slice(1))) };
+      }
+      if (comparison !== '=' || !a.value.expression) throw new Error('HierarchyMockService: unsupported comparison');
+      if (a.value.expression.focus.type === NodeType.Wildcard && !a.value.expression.operator) {
+        return { types, min, matches: () => true };
+      }
+      const values = this.sub(a.value.expression);
+      return { types, min, matches: (v: string) => values.has(v) };
     });
   }
 

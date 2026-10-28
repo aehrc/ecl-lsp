@@ -116,6 +116,7 @@ export interface ITerminologyService {
 /** One `attribute = value` relationship of a concept. */
 export interface DefiningRelationship {
   type: string;
+  /** A concept id, or a concrete value in ECL form: `#500`, `#1.5`, `"text"`, `true`. */
   value: string;
   /** Role group number; 0 for an ungrouped attribute. */
   group: number;

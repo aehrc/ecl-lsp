@@ -32,6 +32,8 @@ interface FhirParameterPart {
   valueString?: string;
   valueCode?: string;
   valueBoolean?: boolean;
+  valueDecimal?: number;
+  valueInteger?: number;
   valueUri?: string;
   part?: FhirParameterPart[];
 }
@@ -1043,15 +1045,15 @@ export class FhirTerminologyService implements ITerminologyService {
   /** The relationships in a `$lookup` response's `property` parameters; role groups are numbered from 1. */
   private static relationshipsOf(parameters: FhirParameter[]): DefiningRelationship[] {
     const partValue = (parts: FhirParameterPart[] | undefined, name: string) =>
-      parts?.find((p) => p.name === name)?.valueCode;
+      FhirTerminologyService.eclValue(parts?.find((p) => p.name === name));
     const relationships: DefiningRelationship[] = [];
     let group = 0;
     for (const property of parameters.filter((p) => p.name === 'property')) {
-      const code = partValue(property.part, 'code');
+      const code = property.part?.find((p) => p.name === 'code')?.valueCode;
       if (code === ROLE_GROUP) {
         group++;
         for (const sub of (property.part ?? []).filter((p) => p.name === 'subproperty')) {
-          const type = partValue(sub.part, 'code');
+          const type = sub.part?.find((p) => p.name === 'code')?.valueCode;
           const value = partValue(sub.part, 'value');
           if (type && value) relationships.push({ type, value, group });
         }
@@ -1061,6 +1063,17 @@ export class FhirTerminologyService implements ITerminologyService {
       if (code && value && /^\d{6,18}$/.test(code)) relationships.push({ type: code, value, group: 0 });
     }
     return relationships;
+  }
+
+  /** A relationship value in ECL form: a concept id, or a concrete `#500`, `"text"` or `true`. */
+  private static eclValue(part: FhirParameterPart | undefined): string | undefined {
+    if (!part) return undefined;
+    if (part.valueCode !== undefined) return part.valueCode;
+    const number = part.valueDecimal ?? part.valueInteger;
+    if (number !== undefined) return `#${number}`;
+    if (part.valueString !== undefined) return JSON.stringify(part.valueString);
+    if (part.valueBoolean !== undefined) return String(part.valueBoolean);
+    return undefined;
   }
 
   /**

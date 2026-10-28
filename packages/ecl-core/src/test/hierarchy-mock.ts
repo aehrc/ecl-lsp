@@ -71,6 +71,8 @@ interface MockConcept {
 export class HierarchyMockService implements ITerminologyService {
   readonly concepts = new Map<string, MockConcept>();
   readonly refsets = new Map<string, Set<string>>();
+  /** Whether expandCompose honours `parents`; false acts as a server without `property=parent`. */
+  returnsParents = true;
   /** Every expandCompose call, for asserting how much work an operation did. */
   readonly composeCalls: ValueSetCompose[] = [];
 
@@ -130,7 +132,11 @@ export class HierarchyMockService implements ITerminologyService {
     for (const clause of compose.include) for (const id of clauseSet(clause)) result.add(id);
     for (const clause of compose.exclude ?? []) for (const id of clauseSet(clause)) result.delete(id);
     const codes = [...result].filter((id) => !activeOnly || this.concepts.get(id)?.active);
-    return this.page(codes, count, offset);
+    const page = this.page(codes, count, offset);
+    if (options.parents && this.returnsParents) {
+      for (const c of page.concepts) c.parents = [...(this.concepts.get(c.code)?.parents ?? [])];
+    }
+    return page;
   }
 
   // ── Evaluation ──

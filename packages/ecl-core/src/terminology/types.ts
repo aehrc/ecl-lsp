@@ -24,6 +24,8 @@ export interface SearchResponse {
 export interface EvaluationConcept {
   code: string;
   display: string;
+  /** Direct IS-A parents, when asked for with `ExpandComposeOptions.parents` and the server returns them. */
+  parents?: string[];
 }
 
 export interface EvaluationResponse {
@@ -140,4 +142,10 @@ export interface ExpandComposeOptions {
   activeOnly?: boolean;
   /** Request timeout in milliseconds; large enumerations need more than an ECL lookup. */
   timeoutMs?: number;
+  /**
+   * Also return each concept's direct parents (`EvaluationConcept.parents`).
+   * Default false. A server that does not support it returns concepts without
+   * `parents`.
+   */
+  parents?: boolean;
 }

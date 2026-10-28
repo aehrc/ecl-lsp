@@ -59,8 +59,10 @@ interface FhirExpansionContains {
   display?: string;
   system?: string;
   inactive?: boolean; // FHIR R4 standard field on expansion contains entries
-  property?: { code?: string; valueBoolean?: boolean }[];
+  property?: { code?: string; valueBoolean?: boolean; valueCode?: string }[];
   designation?: FhirDesignation[];
+  /** R4 servers carry R5 `contains.property` as this extension. */
+  extension?: { url?: string; extension?: { url?: string; valueCode?: string }[] }[];
 }
 
 /** The expansion section of a ValueSet. */
@@ -88,6 +90,33 @@ interface FhirOperationOutcomeIssue {
 interface FhirOperationOutcomeResponse {
   resourceType: string;
   issue?: FhirOperationOutcomeIssue[];
+}
+
+/** URL of the R5 `ValueSet.expansion.contains.property` element as an R4 extension. */
+const CONTAINS_PROPERTY_EXTENSION =
+  'http://hl7.org/fhir/5.0/StructureDefinition/extension-ValueSet.expansion.contains.property';
+
+/**
+ * The `parent` values of an expansion entry, from R5 `property` or its R4
+ * extension form; undefined when the server sent no parent property at all.
+ */
+function parentCodes(item: FhirExpansionContains): string[] | undefined {
+  const codes: string[] = [];
+  let seen = false;
+  for (const p of item.property ?? []) {
+    if (p.code !== 'parent') continue;
+    seen = true;
+    if (p.valueCode) codes.push(p.valueCode);
+  }
+  for (const ext of item.extension ?? []) {
+    if (ext.url !== CONTAINS_PROPERTY_EXTENSION) continue;
+    const parts = ext.extension ?? [];
+    if (parts.find((x) => x.url === 'code')?.valueCode !== 'parent') continue;
+    seen = true;
+    const value = parts.find((x) => x.url === 'value')?.valueCode;
+    if (value) codes.push(value);
+  }
+  return seen ? codes : undefined;
 }
 
 // ── Module-level constants ──────────────────────────────────────────────
@@ -1085,7 +1114,7 @@ export class FhirTerminologyService implements ITerminologyService {
    * @throws {TerminologyHttpError} when the server answered with an error status.
    */
   async expandCompose(compose: ValueSetCompose, options: ExpandComposeOptions = {}): Promise<EvaluationResponse> {
-    const { count = 0, offset = 0, activeOnly = true, timeoutMs = 60_000 } = options;
+    const { count = 0, offset = 0, activeOnly = true, timeoutMs = 60_000, parents = false } = options;
     const toInclude = (clause: ValueSetClause): Record<string, unknown> => ({
       system: 'http://snomed.info/sct',
       ...(this.snomedVersion ? { version: this.snomedVersion } : {}),
@@ -1101,7 +1130,8 @@ export class FhirTerminologyService implements ITerminologyService {
       },
     };
 
-    const url = `${this.baseUrl}/ValueSet/$expand?count=${count}&offset=${offset}&activeOnly=${activeOnly}`;
+    const property = parents ? '&property=parent' : '';
+    const url = `${this.baseUrl}/ValueSet/$expand?count=${count}&offset=${offset}&activeOnly=${activeOnly}${property}`;
     const operation = 'POST ValueSet/$expand of an inline compose';
     const response = await this.request(url, timeoutMs, operation, {
       method: 'POST',
@@ -1112,7 +1142,15 @@ export class FhirTerminologyService implements ITerminologyService {
       const { detail } = await FhirTerminologyService.readErrorBody(response);
       throw toHttpError({ status: response.status, statusText: response.statusText, url, operation, detail });
     }
-    return this.parseEvaluationResponse((await response.json()) as FhirValueSetResponse);
+    const data = (await response.json()) as FhirValueSetResponse;
+    const result = this.parseEvaluationResponse(data);
+    if (parents) {
+      (data.expansion?.contains ?? []).forEach((item, i) => {
+        const found = parentCodes(item);
+        if (found) result.concepts[i].parents = found;
+      });
+    }
+    return result;
   }
 
   /**

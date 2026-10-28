@@ -64,7 +64,7 @@ const refined = refineParseError({ line, column, message, expression });
 ```typescript
 import { validateSemantics, FhirTerminologyService } from '@aehrc/ecl-core';
 
-const terminology = new FhirTerminologyService('https://tx.ontoserver.csiro.au/fhir');
+const terminology = new FhirTerminologyService({ baseUrl: 'https://tx.ontoserver.csiro.au/fhir' });
 const diagnostics = await validateSemantics(ast, text, terminology);
 ```
 
@@ -109,14 +109,14 @@ const result = await simplifyExpression('< 404684003 OR << 404684003', terminolo
 ```typescript
 import { FhirTerminologyService } from '@aehrc/ecl-core';
 
-const fhir = new FhirTerminologyService(
-  'https://tx.ontoserver.csiro.au/fhir', // server URL
-  2000, // lookup timeout (ms)
-  '', // SNOMED version URI (empty = server default)
-);
+const fhir = new FhirTerminologyService({
+  baseUrl: 'https://tx.ontoserver.csiro.au/fhir', // default
+  timeout: 2000, // lookup timeout (ms)
+  snomedVersion: '', // SNOMED version URI (empty = server default)
+});
 
-const concept = await fhir.lookupConcept('404684003');
-// { id, fsn, pt, active }
+const concept = await fhir.getConceptInfo('404684003');
+// { id, fsn, pt, active } or null when the server does not know it
 
 const results = await fhir.evaluateEcl('< 404684003');
 // { concepts: [...], total }
@@ -144,8 +144,19 @@ result.candidates[0];
 
 Candidates come from the IS-A hierarchy: an exact cover of the set's roots with
 `MINUS` exclusions, cheaper covers by ancestors outside the set (with their
-additions reported), and always the enumeration or `^ refset` itself. They are
-ranked by clauses + additions + misses.
+additions reported), a greedy grouping, and always the enumeration or
+`^ refset` itself. They are ranked by clauses + additions + misses.
+
+The greedy grouping follows REFACTOR, the grouping algorithm in NHS England's
+DMWB (Jeremy Rogers). It scores every ancestor of the set by how much of it is
+in the set, picks groupers while it relaxes its fit threshold, and lists the
+members left over. It then excludes what the groupers add, so it is always
+exact. It is not limited by the number of roots, so it also works on clinical
+sets with hundreds of roots. Its counts come from about four expansions that
+return each concept's parents (`expandCompose` with `parents: true`, FHIR
+`property=parent`), rather than four queries per ancestor. Without a server
+that returns parents, it is skipped with a note. Set `greedyGrouping: false`
+to leave it out.
 
 Sets that cut across the hierarchy (many roots and no short exact IS-A cover,
 e.g. AMT products) also
@@ -155,6 +166,11 @@ attributes come from the relationships of a sample of members
 candidates. The focus is the most specific concept above every member, or a
 refset named in an ECL input, or `refinementFocus`. Set `refinements: 'always'`
 or `'never'` to override.
+
+Refinement values can be concepts (`<< x`), concrete values (`#500`, a shared
+value, a range with `>=` and `<=`, or `= *`) and cardinalities
+(`[2..*] attribute = *`). When no refinement is exact, a subtraction
+`(C) MINUS (D)` is also tried, with D describing what the refinement C adds.
 
 `deriveEcl({ ecl }, terminology)` takes the set an expression selects. To make
 an expression shorter, use `compressExpression`. It compresses the expression's

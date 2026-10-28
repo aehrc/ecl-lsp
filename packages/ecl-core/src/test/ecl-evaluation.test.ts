@@ -590,6 +590,44 @@ describe('expandCompose — inline compose (issue #147)', () => {
     assert.strictEqual(body.compose.exclude, undefined);
   });
 
+  it('asks for parents and reads them from R5 property or its R4 extension', async () => {
+    const extension = 'http://hl7.org/fhir/5.0/StructureDefinition/extension-ValueSet.expansion.contains.property';
+    const parentExtension = (code: string) => ({
+      url: extension,
+      extension: [
+        { url: 'code', valueCode: 'parent' },
+        { url: 'value', valueCode: code },
+      ],
+    });
+    stub.setHandler(() => ({
+      status: 200,
+      body: {
+        resourceType: 'ValueSet',
+        expansion: {
+          total: 3,
+          contains: [
+            {
+              code: '73211009',
+              display: 'Diabetes',
+              extension: [parentExtension('126877002'), parentExtension('362969004')],
+            },
+            { code: '46635009', display: 'Type 1', property: [{ code: 'parent', valueCode: '73211009' }] },
+            { code: '138875005', display: 'Root' },
+          ],
+        },
+      },
+    }));
+    const service = new FhirTerminologyService({ baseUrl, timeout: 2000 });
+
+    const result = await service.expandCompose({ include: [{ ecl: '>> 46635009' }] }, { count: 3, parents: true });
+
+    assert.match(stub.requests[0].url, /&property=parent$/);
+    assert.deepStrictEqual(
+      result.concepts.map((c) => c.parents),
+      [['126877002', '362969004'], ['73211009'], undefined],
+    );
+  });
+
   it('throws a typed HTTP error carrying the server diagnostics', async () => {
     stub.setHandler(() => ({ status: 422, body: outcome('invalid', 'Invalid concept: 1234') }));
     const service = new FhirTerminologyService({ baseUrl, timeout: 2000 });

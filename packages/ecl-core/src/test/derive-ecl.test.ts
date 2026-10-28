@@ -133,7 +133,7 @@ describe('deriveEcl', () => {
       // A1..A4 and their subtrees: `< A` adds only A5 and A5a, 1 clause against 4.
       const mock = fixture();
       const set = membersOf(mock, `<< ${id.A1} OR ${id.A2} OR ${id.A3} OR ${id.A4}`);
-      const result = await deriveEcl({ conceptIds: set }, mock, { omitTerms: true });
+      const result = await deriveEcl({ conceptIds: set }, mock, { omitTerms: true, greedyGrouping: false });
       const top = result.candidates[0];
       assert.strictEqual(top.ecl, `< ${id.A}`);
       assert.strictEqual(top.exact, false);
@@ -273,7 +273,11 @@ describe('deriveEcl', () => {
 
     it('skips hierarchy candidates above maxRoots and says why', async () => {
       const mock = fixture();
-      const result = await deriveEcl({ conceptIds: [id.A1a, id.B2, id.P1] }, mock, { maxRoots: 2, omitTerms: true });
+      const result = await deriveEcl({ conceptIds: [id.A1a, id.B2, id.P1] }, mock, {
+        maxRoots: 2,
+        omitTerms: true,
+        greedyGrouping: false,
+      });
       assert.strictEqual(result.roots, 3);
       assert.deepStrictEqual(
         result.candidates.map((c) => c.construction.kind),
@@ -651,7 +655,10 @@ describe('formatDeriveReport', () => {
   it('reports the input, the notes and each candidate with its differences', async () => {
     const mock = fixture();
     const set = membersOf(mock, `<< ${id.A1} OR ${id.A2} OR ${id.A3} OR ${id.A4}`);
-    const result = await deriveEcl({ conceptIds: [...set, '1234', set[0]] }, mock, { maxCandidates: 2 });
+    const result = await deriveEcl({ conceptIds: [...set, '1234', set[0]] }, mock, {
+      maxCandidates: 2,
+      greedyGrouping: false,
+    });
     const report = formatDeriveReport(result);
     assert.match(report, /^Members: 6 of 7 distinct ids \(1 duplicate ignored\)$/m);
     assert.match(report, /^Not concept ids \(left out\): 1234$/m);

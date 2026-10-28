@@ -104,6 +104,24 @@ export class SetQueries {
     return { codes, total };
   }
 
+  /**
+   * Every concept of the set with its direct parents, or null when the set has
+   * more than `max` concepts or the server does not return parents.
+   */
+  async graph(compose: ValueSetCompose, max: number): Promise<Map<string, string[]> | null> {
+    const graph = new Map<string, string[]>();
+    for (let offset = 0; ;) {
+      const r = await this.expand(compose, { count: PAGE_SIZE, offset, parents: true });
+      if (r.total > max) return null;
+      for (const c of r.concepts) {
+        if (!c.parents && c.code !== SNOMED_ROOT) return null;
+        graph.set(c.code, c.parents ?? []);
+      }
+      offset += r.concepts.length;
+      if (r.concepts.length === 0 || offset >= r.total) return graph;
+    }
+  }
+
   countEcl(ecl: string): Promise<number> {
     return this.count({ include: [{ ecl }] });
   }

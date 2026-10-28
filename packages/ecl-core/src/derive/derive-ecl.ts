@@ -29,7 +29,11 @@
 //      gives a short cover; the best single ancestors are offered too, with
 //      whatever they miss.
 //
-//   3. The input itself: the enumeration (`a OR b OR …`) or `^ refset`, which is
+//   3. Greedy grouping (greedy-grouping.ts): REFACTOR's scored choice of
+//      groupers over every ancestor of the set, with exact exclusions. Unlike
+//      the covers above it is not limited by the number of roots.
+//
+//   4. The input itself: the enumeration (`a OR b OR …`) or `^ refset`, which is
 //      always exact, so a caller is never forced to accept a lossy candidate.
 //
 // Ranking is by cost = clauses + additions + misses. The same input and
@@ -51,6 +55,7 @@ import {
   type MemberSet,
   type SetDifference,
 } from './set-queries';
+import { greedyGrouping } from './greedy-grouping';
 import { asFocus, refinementCandidates, refinementText, refsetFoci, type RefinementClause } from './refinements';
 
 // ── Public types ─────────────────────────────────────────────────────────
@@ -106,6 +111,13 @@ export interface DeriveOptions {
    * in `C MINUS D`). Default: everywhere.
    */
   within?: string;
+  /**
+   * Add a REFACTOR-style greedy grouping candidate. Default true. Needs a
+   * server that returns parents in an expansion (`property=parent`).
+   */
+  greedyGrouping?: boolean;
+  /** Most concepts in a subgraph fetched for greedy grouping. Default 200,000. */
+  maxGreedyConcepts?: number;
 }
 
 export type { SetDifference } from './set-queries';
@@ -135,6 +147,13 @@ export type CandidateConstruction =
       /** A lossy candidate and, subtracted from it, a description of what it adds. */
       from: string;
       minus: string;
+    }
+  | {
+      kind: 'greedy-grouping';
+      /** Clauses ORed together; `=` is the concept alone. */
+      includes: { conceptId: string; operator: '<<' | '<' | '=' }[];
+      /** Clauses subtracted with MINUS. */
+      exclusions: { conceptId: string; operator: '<<' | '<' | '=' }[];
     }
   | {
       kind: 'ancestor-cover';
@@ -204,6 +223,8 @@ const DEFAULTS: Required<DeriveOptions> = {
   queryTimeoutMs: 60_000,
   subtractions: true,
   within: '',
+  greedyGrouping: true,
+  maxGreedyConcepts: 200_000,
 };
 
 /** Above this many concept references, candidates are not formatted or given terms. */
@@ -216,6 +237,8 @@ const REFINEMENT_ROOTS = 20;
 const LOSSY_SIZED = 64;
 /** Most subtree tops (for exclusions) or ancestors (for covers) whose size is counted. */
 const MAX_SIZED = 500;
+/** Most clauses greedy grouping chooses by score; members left over are listed. */
+const MAX_GREEDY_CLAUSES = 300;
 /** Lossy refinements for which a subtraction is sought. */
 const MAX_SUBTRACTED = 2;
 
@@ -292,6 +315,7 @@ export async function deriveEcl(
   };
 
   await score(await hierarchyCandidates(roots, result.roots, members, q, opts, notes));
+  if (opts.greedyGrouping) await score(await greedyCandidates(members, q, opts, notes));
   if (wantRefinements(opts.refinements, result.roots, scored)) {
     let given = 'ecl' in input ? refsetFoci(input.ecl) : [];
     if (opts.refinementFocus) given = [asFocus(opts.refinementFocus)];
@@ -369,6 +393,27 @@ async function subtractions(
     }
   }
   return built;
+}
+
+async function greedyCandidates(
+  members: MemberSet,
+  q: SetQueries,
+  opts: Required<DeriveOptions>,
+  notes: string[],
+): Promise<Built[]> {
+  try {
+    const g = await greedyGrouping(
+      members,
+      q,
+      { maxConcepts: opts.maxGreedyConcepts, maxClauses: MAX_GREEDY_CLAUSES },
+      notes,
+    );
+    if (!g) return [];
+    return [{ ecl: g.ecl, construction: { kind: 'greedy-grouping', includes: g.includes, exclusions: g.exclusions } }];
+  } catch (error) {
+    notes.push(`Greedy grouping failed: ${errorMessage(error)}`);
+    return [];
+  }
 }
 
 /**

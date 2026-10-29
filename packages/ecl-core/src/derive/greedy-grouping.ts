@@ -23,7 +23,8 @@
 // largest subtree with no member as `<< y`, and non-members above members one
 // by one, so the result is exact on the server's release.
 
-import { byId, orGroup, SNOMED_ROOT, type MemberSet, type SetQueries } from './set-queries';
+import { byId, orGroup } from './set-queries';
+import type { TaxonomyGraph } from './taxonomy-graph';
 
 export interface GreedyClause {
   conceptId: string;
@@ -35,13 +36,6 @@ export interface GreedyGrouping {
   ecl: string;
   includes: GreedyClause[];
   exclusions: GreedyClause[];
-}
-
-export interface GreedyLimits {
-  /** Most concepts in any subgraph fetched. */
-  maxConcepts: number;
-  /** Most inclusion clauses chosen by score before the rest are listed. */
-  maxClauses: number;
 }
 
 // Starting values from the DMWB flowchart.
@@ -63,97 +57,46 @@ interface Candidate {
   covers: string[];
 }
 
-/**
- * A greedy grouping of the members, or null (with a note) when a subgraph is
- * larger than `limits.maxConcepts` or the server does not return parents.
- */
-export async function greedyGrouping(
-  members: MemberSet,
-  q: SetQueries,
-  limits: GreedyLimits,
-  notes: string[],
-): Promise<GreedyGrouping | null> {
-  const graphs = await loadGraphs(members, q, limits.maxConcepts);
-  if (typeof graphs === 'string') {
-    notes.push(
-      `Greedy grouping was skipped: ${graphs} has more than ${limits.maxConcepts} concepts, or the server ` +
-        'does not return parents in an expansion (property=parent).',
-    );
-    return null;
-  }
-  const { inList, up, children, down } = graphs;
-  const descendants = memoisedDescendants(childrenOf(down));
-  const candidates = graphs.kept.map((id) => candidate(id, inList, children, descendants)).filter(notSolitaryParent);
+/** A greedy grouping of the members, counted in `graph` (loaded with {@link refactorDescend}). */
+export function greedyGrouping(graph: TaxonomyGraph, maxClauses: number): GreedyGrouping {
+  const inList = graph.members;
+  const candidates = graph
+    .ancestors()
+    .filter((id) => refactorDescend(id, graph))
+    .map((id) => candidate(id, graph))
+    .filter(notSolitaryParent);
+  const descendants = (id: string) => graph.descendants(id);
 
-  const chosen = chooseInclusions(candidates, inList, limits.maxClauses);
-  const includes = prune(withResidue(chosen, inList, children), descendants);
-  const exclusions = exclusionsFor(includedConcepts(includes, descendants), up, inList, down);
+  const chosen = chooseInclusions(candidates, inList, maxClauses);
+  const includes = prune(withResidue(chosen, graph), descendants);
+  const exclusions = exclusionsFor(includedConcepts(includes, descendants), graph);
   return { ecl: render(includes, exclusions), includes, exclusions };
 }
 
-interface Graphs {
-  inList: Set<string>;
-  /** `>> list`, each concept with its parents. */
-  up: Map<string, string[]>;
-  /** The children of every concept in `up`. */
-  children: Map<string, string[]>;
-  /** Candidates left after the discard rules that need no descendant counts. */
-  kept: string[];
-  /** `<< kept`, each concept with its parents. */
-  down: Map<string, string[]>;
-}
-
-/** The subgraphs greedy grouping counts in, or what was too large to fetch. */
-async function loadGraphs(members: MemberSet, q: SetQueries, max: number): Promise<Graphs | string> {
-  const memberList = await q.codes({ include: [members.clause] }, max + 1);
-  if (memberList.total > max) return 'the set';
-  const inList = new Set(memberList.codes);
-  const up = await q.graph({ include: [{ ecl: `>> ${members.ecl}` }] }, max);
-  if (!up) return 'the set with its ancestors';
-  const childGraph = await q.graph({ include: [{ ecl: `<! (>> ${members.ecl})` }] }, max);
-  if (!childGraph) return 'the children of those ancestors';
-  const children = childrenOf(childGraph);
-
-  // Discard rules that need no descendant counts go first, so ALL is counted
-  // only for the candidates that remain.
-  const truePos = countMembersBelow(inList, up);
-  const kept = [...up.keys()].filter((id) => keepByChildren(id, truePos, children, inList)).sort(byId);
-  if (kept.length === 0) return { inList, up, children, kept, down: new Map() };
-  const down = await q.graph({ include: [{ ecl: `<< ${orGroup(kept)}` }] }, max);
-  if (!down) return 'the descendants of the candidate groupers';
-  return { inList, up, children, kept, down };
-}
-
-function keepByChildren(
-  id: string,
-  truePos: Map<string, number>,
-  children: Map<string, string[]>,
-  inList: Set<string>,
-): boolean {
-  if (id === SNOMED_ROOT || (truePos.get(id) ?? 0) < MINIMUM_CLUSTER_SIZE) return false;
-  const kids = children.get(id) ?? [];
-  const trueChildren = kids.filter((k) => inList.has(k)).length;
+/**
+ * The discard rules that need no descendant counts: which concepts of `>> list`
+ * are worth loading descendants for, so ALL is counted only for those.
+ */
+export function refactorDescend(id: string, graph: Pick<TaxonomyGraph, 'truePos' | 'children' | 'members'>): boolean {
+  if (graph.truePos(id) < MINIMUM_CLUSTER_SIZE) return false;
+  const kids = graph.children(id);
+  const trueChildren = kids.filter((k) => graph.members.has(k)).length;
   if (kids.length - trueChildren > trueChildren) return false;
   return !(kids.length > 9 && trueChildren / kids.length < 0.6);
 }
 
-function candidate(
-  id: string,
-  inList: Set<string>,
-  children: Map<string, string[]>,
-  descendants: (id: string) => string[],
-): Candidate {
-  const member = inList.has(id);
-  const desc = descendants(id);
-  const covers = desc.filter((d) => inList.has(d) && (member || d !== id));
-  const kids = children.get(id) ?? [];
+function candidate(id: string, graph: TaxonomyGraph): Candidate {
+  const member = graph.members.has(id);
+  const desc = graph.descendants(id);
+  const covers = desc.filter((d) => graph.members.has(d) && (member || d !== id));
+  const kids = graph.children(id);
   return {
     id,
     member,
     all: desc.length - (member ? 0 : 1),
     truePos: covers.length,
     allChildren: kids.length,
-    trueChildren: kids.filter((k) => inList.has(k)).length,
+    trueChildren: kids.filter((k) => graph.members.has(k)).length,
     covers,
   };
 }
@@ -164,13 +107,13 @@ function notSolitaryParent(c: Candidate): boolean {
 }
 
 /** The chosen groupers, then each member none of them covers. */
-function withResidue(chosen: Candidate[], inList: Set<string>, children: Map<string, string[]>): GreedyClause[] {
-  const remaining = new Set(inList);
+function withResidue(chosen: Candidate[], graph: TaxonomyGraph): GreedyClause[] {
+  const remaining = new Set(graph.members);
   for (const c of chosen) for (const m of c.covers) remaining.delete(m);
   const includes: GreedyClause[] = chosen.map((c) => ({ conceptId: c.id, operator: c.member ? '<<' : '<' }));
   for (const m of [...remaining].sort(byId)) {
     // `=x` with no children is written `<<x`, as REFACTOR does.
-    includes.push({ conceptId: m, operator: (children.get(m) ?? []).length === 0 ? '<<' : '=' });
+    includes.push({ conceptId: m, operator: graph.children(m).length === 0 ? '<<' : '=' });
   }
   return includes;
 }
@@ -236,7 +179,7 @@ function detune(t: Tuning, best: number, remaining: number, maxClauses: number):
 }
 
 /** Automatic groupers, then winners by score while the threshold is detuned. */
-function chooseInclusions(candidates: Candidate[], inList: Set<string>, maxClauses: number): Candidate[] {
+function chooseInclusions(candidates: Candidate[], inList: ReadonlySet<string>, maxClauses: number): Candidate[] {
   const remaining = new Set(inList);
   const chosen = automatic(candidates);
   for (const c of chosen) for (const m of c.covers) remaining.delete(m);
@@ -327,22 +270,17 @@ function includedConcepts(includes: GreedyClause[], descendants: (id: string) =>
 
 /**
  * What the inclusions select outside the set, excluded exactly. A concept with
- * no member at or below it is outside `>> list` (`up`); the highest of them go
+ * no member at or below it is outside `>> list`; the highest of them go
  * as `<< y`. A non-member above a member goes alone.
  */
-function exclusionsFor(
-  included: Set<string>,
-  up: Map<string, string[]>,
-  inList: Set<string>,
-  parents: Map<string, string[]>,
-): GreedyClause[] {
-  const clean = (id: string) => included.has(id) && !up.has(id);
+function exclusionsFor(included: Set<string>, graph: TaxonomyGraph): GreedyClause[] {
+  const clean = (id: string) => included.has(id) && !graph.aboveMember(id);
   const exclusions: GreedyClause[] = [];
   for (const id of included) {
-    if (inList.has(id)) continue;
+    if (graph.members.has(id)) continue;
     if (!clean(id)) exclusions.push({ conceptId: id, operator: '=' });
     // A top of the member-free region: no parent inside it.
-    else if (!(parents.get(id) ?? []).some(clean)) exclusions.push({ conceptId: id, operator: '<<' });
+    else if (!graph.parents(id).some(clean)) exclusions.push({ conceptId: id, operator: '<<' });
   }
   return exclusions.sort((a, b) => byId(a.conceptId, b.conceptId));
 }
@@ -352,52 +290,4 @@ function render(includes: GreedyClause[], exclusions: GreedyClause[]): string {
   const inc = includes.map(text);
   if (exclusions.length === 0) return inc.join(' OR ');
   return `${orGroup(inc)} MINUS ${orGroup(exclusions.map(text))}`;
-}
-
-// ── Graph helpers ────────────────────────────────────────────────────────
-
-function childrenOf(graph: Map<string, string[]>): Map<string, string[]> {
-  const children = new Map<string, string[]>();
-  for (const [child, parents] of graph) {
-    for (const p of parents) {
-      const list = children.get(p) ?? [];
-      list.push(child);
-      children.set(p, list);
-    }
-  }
-  return children;
-}
-
-/** `start` and everything reachable from it along `edges`. */
-function reachable(start: string, edges: Map<string, string[]>): Set<string> {
-  const seen = new Set<string>([start]);
-  const stack = [start];
-  for (let next = stack.pop(); next !== undefined; next = stack.pop()) {
-    for (const x of edges.get(next) ?? []) {
-      if (seen.has(x)) continue;
-      seen.add(x);
-      stack.push(x);
-    }
-  }
-  return seen;
-}
-
-/** For each concept in `graph`, how many of `members` are it or below it. */
-function countMembersBelow(members: Set<string>, graph: Map<string, string[]>): Map<string, number> {
-  const counts = new Map<string, number>();
-  for (const m of members) for (const a of reachable(m, graph)) counts.set(a, (counts.get(a) ?? 0) + 1);
-  return counts;
-}
-
-/** `id` and its descendants in `children`, computed once per concept asked for. */
-function memoisedDescendants(children: Map<string, string[]>): (id: string) => string[] {
-  const cache = new Map<string, string[]>();
-  return (id) => {
-    let list = cache.get(id);
-    if (!list) {
-      list = [...reachable(id, children)];
-      cache.set(id, list);
-    }
-    return list;
-  };
 }

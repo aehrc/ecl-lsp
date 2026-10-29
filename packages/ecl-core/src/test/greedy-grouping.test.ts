@@ -3,7 +3,8 @@
 
 import { describe, it } from 'node:test';
 import * as assert from 'node:assert';
-import { greedyGrouping } from '../derive/greedy-grouping';
+import { greedyGrouping, refactorDescend } from '../derive/greedy-grouping';
+import { loadTaxonomyGraph } from '../derive/taxonomy-graph';
 import { deriveEcl } from '../derive/derive-ecl';
 import { orGroup, SetQueries } from '../derive/set-queries';
 import { HierarchyMockService, sctid } from './hierarchy-mock';
@@ -59,12 +60,12 @@ function fixture(): HierarchyMockService {
     .add(id.RETIRED, 'Retired', [id.A], false);
 }
 
-async function group(mock: HierarchyMockService, set: string[], maxConcepts = 1000) {
-  const notes: string[] = [];
+async function group(mock: HierarchyMockService, set: string[]) {
   const members = { clause: { concepts: set }, ecl: orGroup(set), size: set.length };
   const q = new SetQueries(mock.expandCompose.bind(mock));
-  const result = await greedyGrouping(members, q, { maxConcepts, maxClauses: 300 }, notes);
-  return { result, notes };
+  const graph = await loadTaxonomyGraph(members, q, { maxConcepts: 1000, descend: refactorDescend });
+  assert.ok(!('unavailable' in graph), 'graph unavailable');
+  return { result: greedyGrouping(graph, 300) };
 }
 
 describe('greedyGrouping', () => {
@@ -116,20 +117,6 @@ describe('greedyGrouping', () => {
       assert.deepStrictEqual(selected, [...set].sort(), `${result.ecl} for ${set.join(',')}`);
     }
   });
-
-  it('gives up with a note when the server returns no parents', async () => {
-    const mock = fixture();
-    mock.returnsParents = false;
-    const { result, notes } = await group(mock, [id.A1a, id.A1b]);
-    assert.strictEqual(result, null);
-    assert.match(notes.join('\n'), /property=parent/);
-  });
-
-  it('gives up with a note when a subgraph is larger than the limit', async () => {
-    const { result, notes } = await group(fixture(), [id.A1a, id.A1b, id.A2], 3);
-    assert.strictEqual(result, null);
-    assert.match(notes.join('\n'), /more than 3 concepts/);
-  });
 });
 
 describe('deriveEcl with greedy grouping', () => {
@@ -148,5 +135,22 @@ describe('deriveEcl with greedy grouping', () => {
       greedyGrouping: false,
     });
     assert.ok(!result.candidates.some((c) => c.construction.kind === 'greedy-grouping'));
+  });
+
+  it('notes when the server returns no parents', async () => {
+    const mock = fixture();
+    mock.returnsParents = false;
+    const result = await deriveEcl({ conceptIds: [id.A1a, id.B2, id.P1] }, mock, { maxRoots: 2 });
+    assert.ok(!result.candidates.some((c) => c.construction.kind === 'greedy-grouping'));
+    assert.match(result.notes.join('\n'), /property=parent/);
+  });
+
+  it('notes when a subgraph is larger than the limit', async () => {
+    const result = await deriveEcl({ conceptIds: [id.A1a, id.B2, id.P1] }, fixture(), {
+      maxRoots: 2,
+      maxGreedyConcepts: 3,
+    });
+    assert.ok(!result.candidates.some((c) => c.construction.kind === 'greedy-grouping'));
+    assert.match(result.notes.join('\n'), /more than 3 concepts/);
   });
 });

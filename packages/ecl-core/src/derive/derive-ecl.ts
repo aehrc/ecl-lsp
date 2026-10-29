@@ -55,7 +55,8 @@ import {
   type MemberSet,
   type SetDifference,
 } from './set-queries';
-import { greedyGrouping } from './greedy-grouping';
+import { greedyGrouping, refactorDescend } from './greedy-grouping';
+import { loadTaxonomyGraph } from './taxonomy-graph';
 import { asFocus, refinementCandidates, refinementText, refsetFoci, type RefinementClause } from './refinements';
 
 // ── Public types ─────────────────────────────────────────────────────────
@@ -402,13 +403,19 @@ async function greedyCandidates(
   notes: string[],
 ): Promise<Built[]> {
   try {
-    const g = await greedyGrouping(
-      members,
-      q,
-      { maxConcepts: opts.maxGreedyConcepts, maxClauses: MAX_GREEDY_CLAUSES },
-      notes,
-    );
-    if (!g) return [];
+    const graph = await loadTaxonomyGraph(members, q, {
+      maxConcepts: opts.maxGreedyConcepts,
+      descend: refactorDescend,
+    });
+    if ('unavailable' in graph) {
+      const why =
+        graph.unavailable === 'parents'
+          ? 'the server does not return parents in an expansion (property=parent)'
+          : `${graph.unavailable} has more than ${opts.maxGreedyConcepts} concepts`;
+      notes.push(`Greedy grouping was skipped: ${why}.`);
+      return [];
+    }
+    const g = greedyGrouping(graph, MAX_GREEDY_CLAUSES);
     return [{ ecl: g.ecl, construction: { kind: 'greedy-grouping', includes: g.includes, exclusions: g.exclusions } }];
   } catch (error) {
     notes.push(`Greedy grouping failed: ${errorMessage(error)}`);

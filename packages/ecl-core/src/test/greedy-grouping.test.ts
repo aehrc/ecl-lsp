@@ -84,6 +84,21 @@ describe('greedyGrouping', () => {
     assert.strictEqual(result?.ecl, `<< ${id.A1a} OR << ${id.B2} OR << ${id.P1}`);
   });
 
+  it('drops a grouper whose descendants another grouper already selects', async () => {
+    // Y's children both have X as a parent too, so `< X` alone selects them.
+    const [X, Y, a, b, d1, d2] = [2001, 2002, 2003, 2004, 2005, 2006].map((n) => sctid(n));
+    const mock = new HierarchyMockService()
+      .add(ROOT, 'root')
+      .add(X, 'X', [ROOT])
+      .add(Y, 'Y', [ROOT])
+      .add(a, 'a', [X])
+      .add(b, 'b', [X])
+      .add(d1, 'd1', [X, Y])
+      .add(d2, 'd2', [X, Y]);
+    const { result } = await group(mock, [a, b, d1, d2]);
+    assert.strictEqual(result?.ecl, `< ${X}`);
+  });
+
   it('selects exactly the set, whatever the set', async () => {
     const mock = fixture();
     const pool = Object.values(id).filter((x) => x !== id.RETIRED && x !== ROOT);

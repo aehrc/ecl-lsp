@@ -264,7 +264,12 @@ function chooseInclusions(candidates: Candidate[], inList: Set<string>, maxClaus
 
 // ── Final clear-up and phase 2 ───────────────────────────────────────────
 
-/** Drop clauses another clause already selects; `< x` with `= x` becomes `<< x`. */
+/**
+ * Drop clauses another clause already selects (`< x` with `= x` becomes
+ * `<< x`), then clauses everything they select is selected by the others,
+ * smallest first: `< y` is redundant when each of y's descendants falls under
+ * another clause, though y does not.
+ */
 function prune(clauses: GreedyClause[], descendants: (id: string) => string[]): GreedyClause[] {
   const merged = mergeByConcept(clauses);
   const selectedBelow = new Set<string>();
@@ -272,7 +277,32 @@ function prune(clauses: GreedyClause[], descendants: (id: string) => string[]): 
     if (c.operator === '=') continue;
     for (const d of descendants(c.conceptId)) if (d !== c.conceptId) selectedBelow.add(d);
   }
-  return merged.filter((c) => !selectedBelow.has(c.conceptId)).sort((a, b) => byId(a.conceptId, b.conceptId));
+  const kept = merged.filter((c) => !selectedBelow.has(c.conceptId));
+  return withoutCovered(kept, descendants).sort((a, b) => byId(a.conceptId, b.conceptId));
+}
+
+/** `clauses` without those whose whole selection the others select, smallest first. */
+function withoutCovered(clauses: GreedyClause[], descendants: (id: string) => string[]): GreedyClause[] {
+  const selected = clauses.map((c) => ({ c, sel: selection(c, descendants) }));
+  const times = new Map<string, number>();
+  for (const { sel } of selected) for (const x of sel) times.set(x, (times.get(x) ?? 0) + 1);
+  selected.sort((a, b) => a.sel.length - b.sel.length || byId(a.c.conceptId, b.c.conceptId));
+  const kept: GreedyClause[] = [];
+  for (const { c, sel } of selected) {
+    if (sel.every((x) => (times.get(x) ?? 0) > 1)) {
+      for (const x of sel) times.set(x, (times.get(x) ?? 0) - 1);
+    } else {
+      kept.push(c);
+    }
+  }
+  return kept;
+}
+
+/** The concepts a clause selects. */
+function selection(c: GreedyClause, descendants: (id: string) => string[]): string[] {
+  if (c.operator === '=') return [c.conceptId];
+  const desc = descendants(c.conceptId);
+  return c.operator === '<<' ? desc : desc.filter((d) => d !== c.conceptId);
 }
 
 function mergeByConcept(clauses: GreedyClause[]): GreedyClause[] {
@@ -291,13 +321,7 @@ function mergeByConcept(clauses: GreedyClause[]): GreedyClause[] {
 
 function includedConcepts(includes: GreedyClause[], descendants: (id: string) => string[]): Set<string> {
   const included = new Set<string>();
-  for (const c of includes) {
-    if (c.operator === '=') {
-      included.add(c.conceptId);
-      continue;
-    }
-    for (const d of descendants(c.conceptId)) if (c.operator === '<<' || d !== c.conceptId) included.add(d);
-  }
+  for (const c of includes) for (const x of selection(c, descendants)) included.add(x);
   return included;
 }
 

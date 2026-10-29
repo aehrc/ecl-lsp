@@ -8,7 +8,7 @@
 // takes groupers while one covers more members per clause than listing them
 // would, lists the rest, then makes the whole form exact.
 
-import { exactExclusions, localScore, prune, type ClauseForm, type HierarchyClause } from './hierarchy-clauses';
+import { exactExclusions, prune, type ClauseForm, type HierarchyClause } from './hierarchy-clauses';
 import { byId } from './set-queries';
 import type { TaxonomyGraph } from './taxonomy-graph';
 
@@ -30,14 +30,33 @@ interface Grouper {
   price: number;
 }
 
-/** Exact cover, a greedy approximation of the fewest clauses (includes plus exclusions). */
+/**
+ * Exact cover, a greedy approximation of the fewest clauses (includes plus
+ * exclusions). Lazy greedy: a grouper's count of members not yet covered only
+ * falls, so the count it was queued with bounds its current one, and a
+ * grouper whose count is still current when it comes first is the best.
+ */
 export function costCover(g: TaxonomyGraph, candidates: string[]): ClauseForm {
   const groupers = usable(g, candidates).map((c) => grouper(c, g));
   const remaining = new Set(g.members);
+  const fresh = groupers.map((gr) => gr.covers.length);
+  const heap = new Heap<Queued>(ahead);
+  groupers.forEach((gr, i) => {
+    if (fresh[i] > gr.price) heap.push({ gr, i, fresh: fresh[i] });
+  });
+  const index = coveredBy(groupers);
   const chosen: HierarchyClause[] = [];
-  for (let best = pick(groupers, remaining); best; best = pick(groupers, remaining)) {
-    chosen.push(best.clause);
-    for (const m of best.covers) remaining.delete(m);
+  for (let top = heap.pop(); top; top = heap.pop()) {
+    if (top.fresh !== fresh[top.i]) {
+      // Stale: requeue with the current count, while it still beats listing.
+      if (fresh[top.i] > top.gr.price) heap.push({ ...top, fresh: fresh[top.i] });
+      continue;
+    }
+    chosen.push(top.gr.clause);
+    for (const m of top.gr.covers) {
+      if (!remaining.delete(m)) continue;
+      for (const j of index.get(m) ?? []) fresh[j]--;
+    }
   }
   for (const m of [...remaining].sort(byId)) chosen.push(listed(m, g));
   const includes = prune(chosen, g);
@@ -52,14 +71,19 @@ export function coverDescend(id: string, g: Pick<TaxonomyGraph, 'truePos' | 'chi
   return kids.length - trueChildren <= NON_MEMBER_CHILDREN_PER_MEMBER * trueChildren;
 }
 
-/** The best `k` single clauses by clauses + additions + misses (lossy allowed). */
+/**
+ * The best `k` single clauses by clauses + additions + misses (lossy allowed),
+ * each counted from the graph: `<< a` or `< a` selects the members at or below
+ * a (a is in it only when it is a member) and adds the rest of what it selects.
+ */
 export function bestSingles(g: TaxonomyGraph, candidates: string[], k: number): ClauseForm[] {
-  const scored: { form: ClauseForm; cost: number }[] = [];
-  for (const c of usable(g, candidates)) {
-    const form: ClauseForm = { includes: [clauseFor(c, g)], exclusions: [] };
-    const s = localScore(form, g);
-    if (s) scored.push({ form, cost: s.clauses + s.additions + s.misses });
-  }
+  const scored = usable(g, candidates).map((c) => {
+    const clause = clauseFor(c, g);
+    const selected = g.descendants(c).length - (clause.operator === '<' ? 1 : 0);
+    const covered = g.truePos(c);
+    const cost = 1 + (selected - covered) + (g.members.size - covered);
+    return { form: { includes: [clause], exclusions: [] }, cost };
+  });
   scored.sort((a, b) => a.cost - b.cost || byId(a.form.includes[0].conceptId, b.form.includes[0].conceptId));
   return scored.slice(0, k).map((s) => s.form);
 }
@@ -85,29 +109,77 @@ function listed(m: string, g: TaxonomyGraph): HierarchyClause {
   return { conceptId: m, operator: g.children(m).length === 0 ? '<<' : '=' };
 }
 
-/**
- * The grouper covering the most remaining members per clause, if that beats
- * listing them (one clause each). Ties go to more newly covered, then the lower id.
- */
-function pick(groupers: Grouper[], remaining: ReadonlySet<string>): Grouper | null {
-  let best: Grouper | null = null;
-  let bestNew = 0;
-  for (const gr of groupers) {
-    const fresh = gr.covers.filter((m) => remaining.has(m)).length;
-    if (fresh / gr.price <= 1) continue;
-    if (!best || better(fresh, gr, bestNew, best)) {
-      best = gr;
-      bestNew = fresh;
+/** Each member's groupers, by index. */
+function coveredBy(groupers: Grouper[]): Map<string, number[]> {
+  const index = new Map<string, number[]>();
+  groupers.forEach((gr, i) => {
+    for (const m of gr.covers) {
+      const list = index.get(m) ?? [];
+      list.push(i);
+      index.set(m, list);
     }
-  }
-  return best;
+  });
+  return index;
 }
 
-function better(fresh: number, gr: Grouper, bestNew: number, best: Grouper): boolean {
+/** A grouper queued with its count of members not yet covered when queued. */
+interface Queued {
+  gr: Grouper;
+  i: number;
+  fresh: number;
+}
+
+/**
+ * True when `a` comes before `b`: more members per clause, then more members,
+ * then the lower id.
+ */
+function ahead(a: Queued, b: Queued): boolean {
   // Compare fresh / price without division: a / p vs b / q as a·q vs b·p.
-  const lhs = fresh * best.price;
-  const rhs = bestNew * gr.price;
+  const lhs = a.fresh * b.gr.price;
+  const rhs = b.fresh * a.gr.price;
   if (lhs !== rhs) return lhs > rhs;
-  if (fresh !== bestNew) return fresh > bestNew;
-  return byId(gr.clause.conceptId, best.clause.conceptId) < 0;
+  if (a.fresh !== b.fresh) return a.fresh > b.fresh;
+  return byId(a.gr.clause.conceptId, b.gr.clause.conceptId) < 0;
+}
+
+/** A binary heap: `pop` returns the item `before` puts ahead of all others. */
+class Heap<T> {
+  private readonly items: T[] = [];
+
+  constructor(private readonly before: (a: T, b: T) => boolean) {}
+
+  push(item: T): void {
+    const xs = this.items;
+    xs.push(item);
+    for (let i = xs.length - 1; i > 0;) {
+      const parent = (i - 1) >> 1;
+      if (!this.before(xs[i], xs[parent])) break;
+      [xs[i], xs[parent]] = [xs[parent], xs[i]];
+      i = parent;
+    }
+  }
+
+  pop(): T | undefined {
+    const xs = this.items;
+    const top = xs[0];
+    const last = xs.pop();
+    if (xs.length > 0 && last !== undefined) {
+      xs[0] = last;
+      this.siftDown();
+    }
+    return top;
+  }
+
+  private siftDown(): void {
+    const xs = this.items;
+    for (let i = 0; ;) {
+      let first = i;
+      for (const child of [2 * i + 1, 2 * i + 2]) {
+        if (child < xs.length && this.before(xs[child], xs[first])) first = child;
+      }
+      if (first === i) return;
+      [xs[i], xs[first]] = [xs[first], xs[i]];
+      i = first;
+    }
+  }
 }

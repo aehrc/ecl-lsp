@@ -5,9 +5,16 @@ import { describe, it } from 'node:test';
 import * as assert from 'node:assert';
 import { bestSingles, costCover, coverDescend, rootsCover } from '../derive/cover-optimiser';
 import { greedyGrouping, refactorDescend } from '../derive/greedy-grouping';
-import { localScore, render } from '../derive/hierarchy-clauses';
+import {
+  exactExclusions,
+  localScore,
+  prune,
+  render,
+  type ClauseForm,
+  type HierarchyClause,
+} from '../derive/hierarchy-clauses';
 import { loadTaxonomyGraph, type TaxonomyGraph, type TaxonomyGraphOptions } from '../derive/taxonomy-graph';
-import { orGroup, SetQueries } from '../derive/set-queries';
+import { byId, orGroup, SetQueries } from '../derive/set-queries';
 import { HierarchyMockService, sctid } from './hierarchy-mock';
 
 // The greedy fixture (FINDING > A > A1.., B, PROC > P1) plus a polyhierarchy:
@@ -152,7 +159,96 @@ describe('cover optimiser', () => {
     assert.deepStrictEqual(localScore(best[0], g), { additions: 1, misses: 0, clauses: 1 });
     assert.deepStrictEqual(additionsOf(g, best[0]), [id.A5a]);
   });
+
+  it('bestSingles and costCover give what the per-candidate rescans gave', async () => {
+    const graphs: TaxonomyGraph[] = [];
+    const mock = fixture();
+    for (const set of randomSets()) graphs.push(await load(mock, set, bothDescend));
+    graphs.push(...(await randomDagGraphs()));
+    for (const g of graphs) {
+      const cands = candidates(g);
+      const label = [...g.members].sort(byId).join(',');
+      assert.deepStrictEqual(bestSingles(g, g.ancestors(), 3), rescanBestSingles(g, cands, 3), label);
+      assert.deepStrictEqual(costCover(g, g.ancestors()), rescanCostCover(g, cands), label);
+    }
+  });
 });
+
+/** Graphs for 10 random DAGs x 10 subsets, as in the deriveEcl property test. */
+async function randomDagGraphs(): Promise<TaxonomyGraph[]> {
+  const random = lcg(13);
+  const graphs: TaxonomyGraph[] = [];
+  for (let d = 0; d < 10; d++) {
+    const mock = new HierarchyMockService().add(ROOT, 'root');
+    const ids = [ROOT];
+    for (let i = 0; i < 40; i++) {
+      const c = sctid(30_000 + d * 100 + i);
+      const k = 1 + (random() < 0.4 ? 1 : 0) + (random() < 0.15 ? 1 : 0);
+      mock.add(c, `c${i}`, [...new Set(Array.from({ length: k }, () => ids[Math.floor(random() * ids.length)]))]);
+      ids.push(c);
+    }
+    for (let r = 0; r < 10; r++) {
+      const set = ids.slice(1).filter(() => random() < 0.3);
+      if (set.length > 0) graphs.push(await load(mock, set, bothDescend));
+    }
+  }
+  return graphs;
+}
+
+// The implementations before the counts were taken from the graph: each single
+// scored with localScore, and each costCover pick rescanning every grouper.
+
+function clauseOf(c: string, g: TaxonomyGraph): HierarchyClause {
+  return { conceptId: c, operator: g.members.has(c) ? '<<' : '<' };
+}
+
+function rescanBestSingles(g: TaxonomyGraph, cands: string[], k: number): ClauseForm[] {
+  const scored: { form: ClauseForm; cost: number }[] = [];
+  for (const c of [...cands].sort(byId)) {
+    const form: ClauseForm = { includes: [clauseOf(c, g)], exclusions: [] };
+    const s = localScore(form, g);
+    if (s) scored.push({ form, cost: s.clauses + s.additions + s.misses });
+  }
+  scored.sort((a, b) => a.cost - b.cost || byId(a.form.includes[0].conceptId, b.form.includes[0].conceptId));
+  return scored.slice(0, k).map((s) => s.form);
+}
+
+function rescanCostCover(g: TaxonomyGraph, cands: string[]): ClauseForm {
+  const groupers = [...cands].sort(byId).map((c) => {
+    const clause = clauseOf(c, g);
+    const covers = g.descendants(c).filter((d) => g.members.has(d) && (clause.operator === '<<' || d !== c));
+    return { clause, covers, price: 1 + exactExclusions([clause], g).length };
+  });
+  const remaining = new Set(g.members);
+  const chosen: HierarchyClause[] = [];
+  for (;;) {
+    let best: (typeof groupers)[number] | null = null;
+    let bestNew = 0;
+    for (const gr of groupers) {
+      const fresh = gr.covers.filter((m) => remaining.has(m)).length;
+      if (fresh / gr.price <= 1) continue;
+      const lhs = best ? fresh * best.price : 1;
+      const rhs = best ? bestNew * gr.price : 0;
+      const wins =
+        !best ||
+        lhs > rhs ||
+        (lhs === rhs &&
+          (fresh > bestNew || (fresh === bestNew && byId(gr.clause.conceptId, best.clause.conceptId) < 0)));
+      if (wins) {
+        best = gr;
+        bestNew = fresh;
+      }
+    }
+    if (!best) break;
+    chosen.push(best.clause);
+    for (const m of best.covers) remaining.delete(m);
+  }
+  for (const m of [...remaining].sort(byId)) {
+    chosen.push({ conceptId: m, operator: g.children(m).length === 0 ? '<<' : '=' });
+  }
+  const includes = prune(chosen, g);
+  return { includes, exclusions: exactExclusions(includes, g) };
+}
 
 /** What the form selects outside the members. */
 function additionsOf(g: TaxonomyGraph, form: Parameters<typeof render>[0]): string[] {

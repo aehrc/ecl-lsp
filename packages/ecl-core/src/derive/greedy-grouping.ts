@@ -23,14 +23,11 @@
 // largest subtree with no member as `<< y`, and non-members above members one
 // by one, so the result is exact on the server's release.
 
-import { byId, orGroup } from './set-queries';
+import { exactExclusions, prune, render, type HierarchyClause } from './hierarchy-clauses';
+import { byId } from './set-queries';
 import type { TaxonomyGraph } from './taxonomy-graph';
 
-export interface GreedyClause {
-  conceptId: string;
-  /** `=` is the concept alone, written without an operator. */
-  operator: '<<' | '<' | '=';
-}
+export type GreedyClause = HierarchyClause;
 
 export interface GreedyGrouping {
   ecl: string;
@@ -65,12 +62,11 @@ export function greedyGrouping(graph: TaxonomyGraph, maxClauses: number): Greedy
     .filter((id) => refactorDescend(id, graph))
     .map((id) => candidate(id, graph))
     .filter(notSolitaryParent);
-  const descendants = (id: string) => graph.descendants(id);
 
   const chosen = chooseInclusions(candidates, inList, maxClauses);
-  const includes = prune(withResidue(chosen, graph), descendants);
-  const exclusions = exclusionsFor(includedConcepts(includes, descendants), graph);
-  return { ecl: render(includes, exclusions), includes, exclusions };
+  const includes = prune(withResidue(chosen, graph), graph);
+  const exclusions = exactExclusions(includes, graph);
+  return { ecl: render({ includes, exclusions }), includes, exclusions };
 }
 
 /**
@@ -203,91 +199,4 @@ function chooseInclusions(candidates: Candidate[], inList: ReadonlySet<string>, 
     }
   }
   return chosen;
-}
-
-// ── Final clear-up and phase 2 ───────────────────────────────────────────
-
-/**
- * Drop clauses another clause already selects (`< x` with `= x` becomes
- * `<< x`), then clauses everything they select is selected by the others,
- * smallest first: `< y` is redundant when each of y's descendants falls under
- * another clause, though y does not.
- */
-function prune(clauses: GreedyClause[], descendants: (id: string) => string[]): GreedyClause[] {
-  const merged = mergeByConcept(clauses);
-  const selectedBelow = new Set<string>();
-  for (const c of merged) {
-    if (c.operator === '=') continue;
-    for (const d of descendants(c.conceptId)) if (d !== c.conceptId) selectedBelow.add(d);
-  }
-  const kept = merged.filter((c) => !selectedBelow.has(c.conceptId));
-  return withoutCovered(kept, descendants).sort((a, b) => byId(a.conceptId, b.conceptId));
-}
-
-/** `clauses` without those whose whole selection the others select, smallest first. */
-function withoutCovered(clauses: GreedyClause[], descendants: (id: string) => string[]): GreedyClause[] {
-  const selected = clauses.map((c) => ({ c, sel: selection(c, descendants) }));
-  const times = new Map<string, number>();
-  for (const { sel } of selected) for (const x of sel) times.set(x, (times.get(x) ?? 0) + 1);
-  selected.sort((a, b) => a.sel.length - b.sel.length || byId(a.c.conceptId, b.c.conceptId));
-  const kept: GreedyClause[] = [];
-  for (const { c, sel } of selected) {
-    if (sel.every((x) => (times.get(x) ?? 0) > 1)) {
-      for (const x of sel) times.set(x, (times.get(x) ?? 0) - 1);
-    } else {
-      kept.push(c);
-    }
-  }
-  return kept;
-}
-
-/** The concepts a clause selects. */
-function selection(c: GreedyClause, descendants: (id: string) => string[]): string[] {
-  if (c.operator === '=') return [c.conceptId];
-  const desc = descendants(c.conceptId);
-  return c.operator === '<<' ? desc : desc.filter((d) => d !== c.conceptId);
-}
-
-function mergeByConcept(clauses: GreedyClause[]): GreedyClause[] {
-  const byConcept = new Map<string, Set<GreedyClause['operator']>>();
-  for (const c of clauses) {
-    const ops = byConcept.get(c.conceptId) ?? new Set();
-    ops.add(c.operator);
-    byConcept.set(c.conceptId, ops);
-  }
-  return [...byConcept].map(([conceptId, ops]) => {
-    let operator: GreedyClause['operator'] = ops.has('<') ? '<' : '=';
-    if (ops.has('<<') || (ops.has('<') && ops.has('='))) operator = '<<';
-    return { conceptId, operator };
-  });
-}
-
-function includedConcepts(includes: GreedyClause[], descendants: (id: string) => string[]): Set<string> {
-  const included = new Set<string>();
-  for (const c of includes) for (const x of selection(c, descendants)) included.add(x);
-  return included;
-}
-
-/**
- * What the inclusions select outside the set, excluded exactly. A concept with
- * no member at or below it is outside `>> list`; the highest of them go
- * as `<< y`. A non-member above a member goes alone.
- */
-function exclusionsFor(included: Set<string>, graph: TaxonomyGraph): GreedyClause[] {
-  const clean = (id: string) => included.has(id) && !graph.aboveMember(id);
-  const exclusions: GreedyClause[] = [];
-  for (const id of included) {
-    if (graph.members.has(id)) continue;
-    if (!clean(id)) exclusions.push({ conceptId: id, operator: '=' });
-    // A top of the member-free region: no parent inside it.
-    else if (!graph.parents(id).some(clean)) exclusions.push({ conceptId: id, operator: '<<' });
-  }
-  return exclusions.sort((a, b) => byId(a.conceptId, b.conceptId));
-}
-
-function render(includes: GreedyClause[], exclusions: GreedyClause[]): string {
-  const text = (c: GreedyClause) => (c.operator === '=' ? c.conceptId : `${c.operator} ${c.conceptId}`);
-  const inc = includes.map(text);
-  if (exclusions.length === 0) return inc.join(' OR ');
-  return `${orGroup(inc)} MINUS ${orGroup(exclusions.map(text))}`;
 }

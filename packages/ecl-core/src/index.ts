@@ -107,6 +107,7 @@ export type { SemanticToken } from './semantic-tokens';
 export { deriveEcl, parseConceptIdList, formatDeriveReport } from './derive/derive-ecl';
 export { compressExpression, formatCompressReport } from './derive/compress-expression';
 export type { CompressResult, CompressCandidate } from './derive/compress-expression';
+export type { HierarchyClause } from './derive/hierarchy-clauses';
 export type {
   DeriveInput,
   DeriveOptions,

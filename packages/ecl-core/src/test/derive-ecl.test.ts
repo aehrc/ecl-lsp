@@ -131,9 +131,10 @@ describe('deriveEcl', () => {
   describe('lossy candidates', () => {
     it('offers a parent outside the set when it is cheaper, with the additions sampled', async () => {
       // A1..A4 and their subtrees: `< A` adds only A5 and A5a, 1 clause against 4.
+      // The per-query path: on the graph `< A MINUS << A5` is exact and ranks first.
       const mock = fixture();
       const set = membersOf(mock, `<< ${id.A1} OR ${id.A2} OR ${id.A3} OR ${id.A4}`);
-      const result = await deriveEcl({ conceptIds: set }, mock, { omitTerms: true, greedyGrouping: false });
+      const result = await deriveEcl({ conceptIds: set }, mock, { omitTerms: true, useGraph: false });
       const top = result.candidates[0];
       assert.strictEqual(top.ecl, `< ${id.A}`);
       assert.strictEqual(top.exact, false);
@@ -273,10 +274,11 @@ describe('deriveEcl', () => {
 
     it('skips hierarchy candidates above maxRoots and says why', async () => {
       const mock = fixture();
+      // The per-query path: on the graph, hierarchy candidates cost no query per root.
       const result = await deriveEcl({ conceptIds: [id.A1a, id.B2, id.P1] }, mock, {
         maxRoots: 2,
         omitTerms: true,
-        greedyGrouping: false,
+        useGraph: false,
       });
       assert.strictEqual(result.roots, 3);
       assert.deepStrictEqual(
@@ -415,6 +417,69 @@ describe('deriveEcl', () => {
           if (active.length > 0) assert.ok(result.candidates.some((c) => c.exact));
         }
       }
+    });
+  });
+
+  describe('the graph path', () => {
+    const listed = () => [id.A1, id.A1a, id.A1b, id.A2, id.A3, id.A4];
+
+    it('uses at most 6 + 2 per candidate requests on the graph path', async () => {
+      const mock = fixture();
+      const result = await deriveEcl({ conceptIds: listed() }, mock, { omitTerms: true });
+      assert.ok(result.candidates.length > 0);
+      assert.ok(
+        mock.composeCalls.length <= 6 + 2 * result.candidates.length,
+        `${mock.composeCalls.length} requests for ${result.candidates.length} candidates`,
+      );
+      assertCountsHonest(mock, listed(), result);
+    });
+
+    it('falls back to per-query covers without parents', async () => {
+      const mock = fixture();
+      mock.returnsParents = false;
+      const result = await deriveEcl({ conceptIds: listed() }, mock, { omitTerms: true });
+      const queryPath = await deriveEcl({ conceptIds: listed() }, fixture(), { omitTerms: true, useGraph: false });
+      assert.strictEqual(result.candidates[0].ecl, queryPath.candidates[0].ecl);
+      assert.match(result.notes.join('\n'), /per-query counts: parents/);
+      assertCountsHonest(mock, listed(), result);
+    });
+
+    it('falls back when the graph is too large', async () => {
+      const mock = fixture();
+      const result = await deriveEcl({ conceptIds: listed() }, mock, { omitTerms: true, maxGraphConcepts: 3 });
+      assert.match(result.notes.join('\n'), /per-query counts: .*more than|too large/);
+      assert.ok(result.candidates.length > 0);
+      assertCountsHonest(mock, listed(), result);
+    });
+
+    it('reports server counts when the graph was incomplete', async () => {
+      // The subgraph loses A5a, so locally `< A` adds only A5; the server says A5 and A5a.
+      const mock = fixture();
+      const expand = mock.expandCompose.bind(mock);
+      mock.expandCompose = async (compose, options) => {
+        const r = await expand(compose, options);
+        if (!options?.parents) return r;
+        const concepts = r.concepts.filter((c) => c.code !== id.A5a);
+        return { ...r, concepts, total: r.total - (r.concepts.length - concepts.length) };
+      };
+      const result = await deriveEcl({ conceptIds: listed() }, mock, { omitTerms: true });
+      const parent = result.candidates.find((c) => c.ecl === `< ${id.A}`);
+      assert.ok(parent, result.candidates.map((c) => c.ecl).join(' | '));
+      const added = [...mock.evaluate(`< ${id.A}`)].filter((x) => !listed().includes(x));
+      assert.strictEqual(parent.additions.count, added.length);
+      assertCountsHonest(mock, listed(), result);
+      assert.match(result.notes.join('\n'), /differed from the server/);
+    });
+
+    it('keeps inactive and unknown inputs out of candidates', async () => {
+      const mock = fixture();
+      const result = await deriveEcl({ conceptIds: [id.A1a, id.A1b, id.RETIRED, '1234567890123'] }, mock, {
+        omitTerms: true,
+      });
+      assert.deepStrictEqual(result.input.inactive, [id.RETIRED]);
+      assert.ok(result.candidates.every((c) => !c.ecl.includes(id.RETIRED)));
+      assert.strictEqual(result.candidates[0].exact, true);
+      assertCountsHonest(mock, [id.A1a, id.A1b], result);
     });
   });
 
@@ -655,15 +720,12 @@ describe('formatDeriveReport', () => {
   it('reports the input, the notes and each candidate with its differences', async () => {
     const mock = fixture();
     const set = membersOf(mock, `<< ${id.A1} OR ${id.A2} OR ${id.A3} OR ${id.A4}`);
-    const result = await deriveEcl({ conceptIds: [...set, '1234', set[0]] }, mock, {
-      maxCandidates: 2,
-      greedyGrouping: false,
-    });
+    const result = await deriveEcl({ conceptIds: [...set, '1234', set[0]] }, mock, { maxCandidates: 2 });
     const report = formatDeriveReport(result);
     assert.match(report, /^Members: 6 of 7 distinct ids \(1 duplicate ignored\)$/m);
     assert.match(report, /^Not concept ids \(left out\): 1234$/m);
-    assert.match(report, /^1\. \+2 added, -0 missed; 1 clause; ancestor-cover$/m);
+    assert.match(report, /^1\. exact; 2 clauses; greedy-grouping$/m);
+    assert.match(report, /^2\. \+2 added, -0 missed; 1 clause; ancestor-cover$/m);
     assert.match(report, new RegExp(`^   Adds \\(2\\): ${id.A5} \\|A5\\|, ${id.A5a} \\|A5a\\|$`, 'm'));
-    assert.match(report, /^2\. exact; /m);
   });
 });

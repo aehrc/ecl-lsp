@@ -30,7 +30,7 @@ interface Grouper {
   price: number;
 }
 
-/** Exact cover minimising clauses: includes plus exclusions. */
+/** Exact cover, a greedy approximation of the fewest clauses (includes plus exclusions). */
 export function costCover(g: TaxonomyGraph, candidates: string[]): ClauseForm {
   const groupers = usable(g, candidates).map((c) => grouper(c, g));
   const remaining = new Set(g.members);

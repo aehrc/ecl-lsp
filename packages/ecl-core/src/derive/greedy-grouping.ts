@@ -27,12 +27,10 @@ import { exactExclusions, prune, render, type HierarchyClause } from './hierarch
 import { byId } from './set-queries';
 import type { TaxonomyGraph } from './taxonomy-graph';
 
-export type GreedyClause = HierarchyClause;
-
 export interface GreedyGrouping {
   ecl: string;
-  includes: GreedyClause[];
-  exclusions: GreedyClause[];
+  includes: HierarchyClause[];
+  exclusions: HierarchyClause[];
 }
 
 // Starting values from the DMWB flowchart.
@@ -103,10 +101,10 @@ function notSolitaryParent(c: Candidate): boolean {
 }
 
 /** The chosen groupers, then each member none of them covers. */
-function withResidue(chosen: Candidate[], graph: TaxonomyGraph): GreedyClause[] {
+function withResidue(chosen: Candidate[], graph: TaxonomyGraph): HierarchyClause[] {
   const remaining = new Set(graph.members);
   for (const c of chosen) for (const m of c.covers) remaining.delete(m);
-  const includes: GreedyClause[] = chosen.map((c) => ({ conceptId: c.id, operator: c.member ? '<<' : '<' }));
+  const includes: HierarchyClause[] = chosen.map((c) => ({ conceptId: c.id, operator: c.member ? '<<' : '<' }));
   for (const m of [...remaining].sort(byId)) {
     // `=x` with no children is written `<<x`, as REFACTOR does.
     includes.push({ conceptId: m, operator: graph.children(m).length === 0 ? '<<' : '=' });

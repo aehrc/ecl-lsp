@@ -120,12 +120,13 @@ describe('greedyGrouping', () => {
 });
 
 describe('deriveEcl with greedy grouping', () => {
-  it('offers a greedy candidate when the set has too many roots for hierarchy covers', async () => {
+  it('offers a greedy candidate whatever the number of roots', async () => {
+    // 4 roots; `< A MINUS << A5` is shorter than any roots cover.
     const mock = fixture();
-    const set = [id.A1a, id.B2, id.P1];
+    const set = [id.A1, id.A1a, id.A1b, id.A2, id.A3, id.A4];
     const result = await deriveEcl({ conceptIds: set }, mock, { maxRoots: 2, omitTerms: true });
     const greedy = result.candidates.find((c) => c.construction.kind === 'greedy-grouping');
-    assert.ok(greedy);
+    assert.ok(greedy, result.candidates.map((c) => `${c.construction.kind} ${c.ecl}`).join(' | '));
     assert.strictEqual(greedy.exact, true);
   });
 
@@ -148,7 +149,7 @@ describe('deriveEcl with greedy grouping', () => {
   it('notes when a subgraph is larger than the limit', async () => {
     const result = await deriveEcl({ conceptIds: [id.A1a, id.B2, id.P1] }, fixture(), {
       maxRoots: 2,
-      maxGreedyConcepts: 3,
+      maxGraphConcepts: 3,
     });
     assert.ok(!result.candidates.some((c) => c.construction.kind === 'greedy-grouping'));
     assert.match(result.notes.join('\n'), /more than 3 concepts/);

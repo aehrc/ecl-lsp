@@ -13,8 +13,11 @@
 // downloaded to compare and the input can be large. The work is bounded by the
 // options below, never by the size of the set.
 //
-// Candidates, from the IS-A hierarchy and then, for sets that cut across it,
-// from attribute refinements (section "Candidate 3" below):
+// Hierarchy candidates come from the IS-A subgraph around the set, fetched once
+// (taxonomy-graph.ts, about four requests), built and ranked locally, and the
+// ones returned are counted again on the server. When the server returns no
+// parents in an expansion, or the subgraph is larger than `maxGraphConcepts`,
+// they are built with a query per count instead (the per-query path).
 //
 //   1. Exact hierarchy cover. Take the set's roots R (members with no ancestor
 //      in the set) as `<< r`, remove the over-inclusion with `MINUS << x` over
@@ -24,14 +27,18 @@
 //      description.)
 //
 //   2. Ancestor covers. Ancestors of the roots are not members, so `< a` can
-//      replace several `<< r` at the cost of the non-members under `a`. A greedy
-//      weighted set cover over the roots, cost = 1 + additions per clause,
-//      gives a short cover; the best single ancestors are offered too, with
-//      whatever they miss.
+//      replace several `<< r` at the cost of the non-members under `a`. The
+//      best single ancestors are offered, with whatever they miss. On the
+//      per-query path a greedy weighted set cover over the roots, cost =
+//      1 + additions per clause, gives a short cover too.
 //
-//   3. Greedy grouping (greedy-grouping.ts): REFACTOR's scored choice of
-//      groupers over every ancestor of the set, with exact exclusions. Unlike
-//      the covers above it is not limited by the number of roots.
+//   3. On the graph path, a cost-based exact cover (cover-optimiser.ts) and
+//      greedy grouping (greedy-grouping.ts, REFACTOR's scored choice of
+//      groupers): both pick groupers among every ancestor of the set, with
+//      exact exclusions, so neither is limited by the number of roots.
+//
+// Then, for sets that cut across the hierarchy, attribute refinements
+// (refinements.ts), and last:
 //
 //   4. The input itself: the enumeration (`a OR b OR …`) or `^ refset`, which is
 //      always exact, so a caller is never forced to accept a lossy candidate.
@@ -55,8 +62,10 @@ import {
   type MemberSet,
   type SetDifference,
 } from './set-queries';
+import { bestSingles, costCover, coverDescend, rootsCover } from './cover-optimiser';
 import { greedyGrouping, refactorDescend } from './greedy-grouping';
-import { loadTaxonomyGraph } from './taxonomy-graph';
+import { localScore, render, type ClauseForm, type HierarchyClause } from './hierarchy-clauses';
+import { loadTaxonomyGraph, type TaxonomyGraph } from './taxonomy-graph';
 import { asFocus, refinementCandidates, refinementText, refsetFoci, type RefinementClause } from './refinements';
 
 // ── Public types ─────────────────────────────────────────────────────────
@@ -70,15 +79,18 @@ import { asFocus, refinementCandidates, refinementText, refsetFoci, type Refinem
 export type DeriveInput = { conceptIds: string[] } | { refsetId: string } | { ecl: string };
 
 export interface DeriveOptions {
-  /** Above this many roots, hierarchy candidates are skipped as not compact. Default 200. */
+  /**
+   * Per-query path: above this many roots, hierarchy candidates are skipped as
+   * not compact (on the graph path they cost no query per root). Default 200.
+   */
   maxRoots?: number;
   /** Most `MINUS << x` subtree exclusions in an exact hierarchy cover. Default 32. */
   maxExclusions?: number;
   /** Most literal ids the exact cover may exclude before it is reported as lossy instead. Default 50. */
   maxResidualLiterals?: number;
-  /** Above this many roots, ancestor covers are skipped (they cost a query per root). Default 50. */
+  /** Per-query path: above this many roots, ancestor covers are skipped (they cost a query per root). Default 50. */
   maxAncestorRoots?: number;
-  /** Most ancestors whose counts are fetched for ancestor covers. Default 30. */
+  /** Per-query path: most ancestors whose counts are fetched for ancestor covers. Default 30. */
   maxAncestorCandidates?: number;
   /** Concepts returned in each additions/misses sample. Default 10. */
   sampleSize?: number;
@@ -112,13 +124,16 @@ export interface DeriveOptions {
    * in `C MINUS D`). Default: everywhere.
    */
   within?: string;
-  /**
-   * Add a REFACTOR-style greedy grouping candidate. Default true. Needs a
-   * server that returns parents in an expansion (`property=parent`).
-   */
+  /** Add a REFACTOR-style greedy grouping candidate on the graph path. Default true. */
   greedyGrouping?: boolean;
-  /** Most concepts in a subgraph fetched for greedy grouping. Default 200,000. */
-  maxGreedyConcepts?: number;
+  /**
+   * Build hierarchy candidates from one fetched subgraph. Default true. Needs a
+   * server that returns parents in an expansion (`property=parent`); without
+   * them, or when `false`, each count is a query.
+   */
+  useGraph?: boolean;
+  /** Most concepts in any fetched subgraph. Default 200,000. */
+  maxGraphConcepts?: number;
 }
 
 export type { SetDifference } from './set-queries';
@@ -152,9 +167,17 @@ export type CandidateConstruction =
   | {
       kind: 'greedy-grouping';
       /** Clauses ORed together; `=` is the concept alone. */
-      includes: { conceptId: string; operator: '<<' | '<' | '=' }[];
+      includes: HierarchyClause[];
       /** Clauses subtracted with MINUS. */
-      exclusions: { conceptId: string; operator: '<<' | '<' | '=' }[];
+      exclusions: HierarchyClause[];
+    }
+  | {
+      /** The cost-based exact cover: groupers chosen by members covered per clause, the rest listed. */
+      kind: 'cover';
+      /** Clauses ORed together; `=` is the concept alone. */
+      includes: HierarchyClause[];
+      /** Clauses subtracted with MINUS. */
+      exclusions: HierarchyClause[];
     }
   | {
       kind: 'ancestor-cover';
@@ -225,7 +248,8 @@ const DEFAULTS: Required<DeriveOptions> = {
   subtractions: true,
   within: '',
   greedyGrouping: true,
-  maxGreedyConcepts: 200_000,
+  useGraph: true,
+  maxGraphConcepts: 200_000,
 };
 
 /** Above this many concept references, candidates are not formatted or given terms. */
@@ -274,87 +298,65 @@ export async function deriveEcl(
     return result;
   }
 
-  if (opts.hierarchySummary) result.hierarchies = await hierarchyDistribution(members, q);
+  const graph = opts.useGraph ? await loadGraph(members, q, opts, notes) : null;
+  if (opts.hierarchySummary) {
+    result.hierarchies = graph ? await graphHierarchies(graph, terminology) : await hierarchyDistribution(members, q);
+  }
 
-  const rootQuery = await q.codes(
-    { include: [members.clause], exclude: [{ ecl: `< ${members.ecl}` }] },
-    opts.maxRoots + 1,
-  );
+  const rootQuery = graph
+    ? { codes: graph.roots().slice(0, opts.maxRoots + 1), total: graph.roots().length }
+    : await q.codes({ include: [members.clause], exclude: [{ ecl: `< ${members.ecl}` }] }, opts.maxRoots + 1);
   result.roots = rootQuery.total;
-  const roots = rootQuery.codes;
 
-  // Score each distinct candidate against the set, on the server.
-  const seen = new Set<string>();
-  const scored: Scored[] = [];
-  // Scored a few at a time (the queries are throttled anyway); `enough` stops
-  // after the batch in which a good enough candidate turned up.
-  const score = async (candidates: Built[], enough?: (s: Scored) => boolean) => {
-    const fresh = candidates.filter((b) => {
-      const key = formKey(b.ecl);
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
-    for (let i = 0; i < fresh.length; i += SCORE_BATCH) {
-      const settled = await Promise.allSettled(
-        fresh.slice(i, i + SCORE_BATCH).map(async (b) => {
-          const s = b.known
-            ? { ...b.known, clauses: countClauses(b.ecl) }
-            : await compare(b.ecl, members, q, opts.sampleSize, opts.within);
-          return { ecl: b.ecl, construction: b.construction, ...s };
-        }),
-      );
-      // A candidate the server cannot count in time is dropped, not the whole result.
-      const batch: Scored[] = [];
-      settled.forEach((r, j) => {
-        if (r.status === 'fulfilled') batch.push(r.value);
-        else notes.push(`Could not score ${fresh[i + j].ecl.slice(0, 120)}: ${errorMessage(r.reason)}`);
-      });
-      scored.push(...batch);
-      if (enough && batch.some(enough)) return;
-    }
-  };
-
-  await score(await hierarchyCandidates(roots, result.roots, members, q, opts, notes));
-  if (opts.greedyGrouping) await score(await greedyCandidates(members, q, opts, notes));
-  if (wantRefinements(opts.refinements, result.roots, scored)) {
-    let given = 'ecl' in input ? refsetFoci(input.ecl) : [];
-    if (opts.refinementFocus) given = [asFocus(opts.refinementFocus)];
-    const found = await refinementCandidates(
-      members,
-      rootQuery,
-      given,
-      Boolean(opts.refinementFocus),
-      q,
-      terminology,
-      notes,
-    );
-    const refinements = found.map(({ focus, clauses }) => ({
-      ecl: refinementText(focus, clauses),
-      construction: { kind: 'refinement' as const, focus, attributes: clauses },
-    }));
-    // An exact refinement of three clauses or fewer is as short as they get.
-    await score(refinements, (c) => c.exact && c.clauses <= 3);
-    if (opts.subtractions && !scored.some((c) => c.exact && c.construction.kind === 'refinement')) {
-      await score(await subtractions(scored, members, terminology, opts));
-    }
+  const scorer = new Scorer(members, q, opts, notes);
+  // On the graph path only the best by local counts are counted on the server.
+  if (graph) await scorer.score(graphCandidates(graph, opts, notes).slice(0, opts.maxCandidates));
+  else await scorer.score(await hierarchyCandidates(rootQuery.codes, result.roots, members, q, opts, notes));
+  if (wantRefinements(opts.refinements, result.roots, scorer.scored)) {
+    await scoreRefinements(input, members, rootQuery, scorer, q, terminology, opts, notes);
   }
   // The input itself goes last, so a derived candidate that rebuilds it keeps its construction.
-  await score([inputItself(input, members)]);
+  await scorer.score([inputItself(input, members)]);
 
-  scored.sort(
-    (a, b) =>
-      a.clauses + a.additions.count + a.misses.count - (b.clauses + b.additions.count + b.misses.count) ||
-      Number(b.exact) - Number(a.exact) ||
-      Number(isInputItself(a)) - Number(isInputItself(b)) ||
-      a.ecl.length - b.ecl.length ||
-      compareText(a.ecl, b.ecl),
-  );
-  const top = scored.slice(0, opts.maxCandidates);
+  scorer.scored.sort((a, b) => byRank(rankOf(a), rankOf(b)));
+  const top = scorer.scored.slice(0, opts.maxCandidates);
 
   const terms = opts.omitTerms ? new Map<string, string>() : await displayTerms(top, terminology);
   result.candidates = top.map((s) => ({ expression: decorate(s.ecl, terms), ...s }));
   return result;
+}
+
+/** Refinement candidates and, when none is exact, subtractions. */
+async function scoreRefinements(
+  input: DeriveInput,
+  members: MemberSet,
+  rootQuery: { codes: string[]; total: number },
+  scorer: Scorer,
+  q: SetQueries,
+  terminology: ITerminologyService,
+  opts: Required<DeriveOptions>,
+  notes: string[],
+): Promise<void> {
+  let given = 'ecl' in input ? refsetFoci(input.ecl) : [];
+  if (opts.refinementFocus) given = [asFocus(opts.refinementFocus)];
+  const found = await refinementCandidates(
+    members,
+    rootQuery,
+    given,
+    Boolean(opts.refinementFocus),
+    q,
+    terminology,
+    notes,
+  );
+  const refinements = found.map(({ focus, clauses }) => ({
+    ecl: refinementText(focus, clauses),
+    construction: { kind: 'refinement' as const, focus, attributes: clauses },
+  }));
+  // An exact refinement of three clauses or fewer is as short as they get.
+  await scorer.score(refinements, (c) => c.exact && c.clauses <= 3);
+  if (opts.subtractions && !scorer.scored.some((c) => c.exact && c.construction.kind === 'refinement')) {
+    await scorer.score(await subtractions(scorer.scored, members, terminology, opts));
+  }
 }
 
 /**
@@ -394,33 +396,6 @@ async function subtractions(
     }
   }
   return built;
-}
-
-async function greedyCandidates(
-  members: MemberSet,
-  q: SetQueries,
-  opts: Required<DeriveOptions>,
-  notes: string[],
-): Promise<Built[]> {
-  try {
-    const graph = await loadTaxonomyGraph(members, q, {
-      maxConcepts: opts.maxGreedyConcepts,
-      descend: refactorDescend,
-    });
-    if ('unavailable' in graph) {
-      const why =
-        graph.unavailable === 'parents'
-          ? 'the server does not return parents in an expansion (property=parent)'
-          : `${graph.unavailable} has more than ${opts.maxGreedyConcepts} concepts`;
-      notes.push(`Greedy grouping was skipped: ${why}.`);
-      return [];
-    }
-    const g = greedyGrouping(graph, MAX_GREEDY_CLAUSES);
-    return [{ ecl: g.ecl, construction: { kind: 'greedy-grouping', includes: g.includes, exclusions: g.exclusions } }];
-  } catch (error) {
-    notes.push(`Greedy grouping failed: ${errorMessage(error)}`);
-    return [];
-  }
 }
 
 /**
@@ -548,7 +523,140 @@ async function hierarchyDistribution(
   return counts.filter((c) => c.count > 0).sort((a, b) => b.count - a.count || byId(a.conceptId, b.conceptId));
 }
 
+/** The same summary from the graph: the root's children above a member, counted locally. */
+async function graphHierarchies(
+  g: TaxonomyGraph,
+  terminology: ITerminologyService,
+): Promise<{ conceptId: string; display: string; count: number }[]> {
+  const tops = g
+    .children(SNOMED_ROOT)
+    .filter((c) => g.aboveMember(c))
+    .sort(byId);
+  if (tops.length === 0) return [];
+  const infos = await terminology.validateConcepts(tops);
+  return tops
+    .map((conceptId) => ({ conceptId, display: infos.get(conceptId)?.pt ?? '', count: g.truePos(conceptId) }))
+    .sort((a, b) => b.count - a.count || byId(a.conceptId, b.conceptId));
+}
+
 // ── Hierarchy candidates ─────────────────────────────────────────────────
+
+/** The IS-A subgraph around the set, or null (with a note) when the per-query path must be used. */
+async function loadGraph(
+  members: MemberSet,
+  q: SetQueries,
+  opts: Required<DeriveOptions>,
+  notes: string[],
+): Promise<TaxonomyGraph | null> {
+  let why: string;
+  try {
+    const graph = await loadTaxonomyGraph(members, q, {
+      maxConcepts: opts.maxGraphConcepts,
+      descend: (id, g) => coverDescend(id, g) || refactorDescend(id, g),
+    });
+    if (!('unavailable' in graph)) return graph;
+    why =
+      graph.unavailable === 'parents'
+        ? 'parents (the server does not return them in an expansion, property=parent)'
+        : `${graph.unavailable} has more than ${opts.maxGraphConcepts} concepts`;
+  } catch (error) {
+    why = errorMessage(error);
+  }
+  notes.push(`Hierarchy candidates used per-query counts: ${why}.`);
+  return null;
+}
+
+/**
+ * Hierarchy candidates built and counted on the graph, best first by local
+ * counts. Forms the graph cannot count (descendants not loaded) are left out.
+ */
+function graphCandidates(g: TaxonomyGraph, opts: Required<DeriveOptions>, notes: string[]): Built[] {
+  const ancestors = g.ancestors();
+  // Earlier constructions win when two give the same form, so `cover` is
+  // reported only when it differs from all the others.
+  const built: { form: ClauseForm; construction: CandidateConstruction }[] = [
+    ...rootsCandidates(g, opts, notes),
+    ...bestSingles(g, ancestors, 3).map((form) => ({ form, construction: singleConstruction(form, g) })),
+  ];
+  if (opts.greedyGrouping) {
+    const greedy = greedyGrouping(g, MAX_GREEDY_CLAUSES);
+    built.push({
+      form: greedy,
+      construction: { kind: 'greedy-grouping', includes: greedy.includes, exclusions: greedy.exclusions },
+    });
+  }
+  const cover = costCover(g, ancestors);
+  built.push({ form: cover, construction: { kind: 'cover', ...cover } });
+
+  const seen = new Set<string>();
+  const candidates: (Built & { local: LocalCounts })[] = [];
+  for (const { form, construction } of built) {
+    const ecl = render(form);
+    const key = formKey(ecl);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const local = localScore(form, g);
+    if (local) candidates.push({ ecl, construction, local });
+  }
+  return candidates.sort((a, b) =>
+    byRank({ ecl: a.ecl, inputItself: false, ...a.local }, { ecl: b.ecl, inputItself: false, ...b.local }),
+  );
+}
+
+/** A single clause from bestSingles, as an ancestor cover. */
+function singleConstruction(form: ClauseForm, g: TaxonomyGraph): CandidateConstruction {
+  const { conceptId, operator } = form.includes[0];
+  return {
+    kind: 'ancestor-cover',
+    foci: [{ conceptId, operator: operator === '<' ? '<' : '<<', member: g.members.has(conceptId) }],
+  };
+}
+
+/**
+ * Candidate 1 on the graph: `<< roots` alone, and with its exact exclusions.
+ * As on the per-query path, only the `maxExclusions` largest subtrees are
+ * excluded as `<< x`; the concepts of the others are listed with the
+ * non-members above members, and past `maxResidualLiterals` of those the cover
+ * is offered with the subtrees alone, lossy.
+ */
+function rootsCandidates(
+  g: TaxonomyGraph,
+  opts: Required<DeriveOptions>,
+  notes: string[],
+): { form: ClauseForm; construction: CandidateConstruction }[] {
+  const exact = rootsCover(g);
+  const roots = exact.includes.map((c) => c.conceptId);
+  const candidate = (exclusions: string[], literals: string[]) => ({
+    form: {
+      includes: exact.includes,
+      exclusions: [
+        ...exclusions.map((conceptId) => ({ conceptId, operator: '<<' as const })),
+        ...literals.map((conceptId) => ({ conceptId, operator: '=' as const })),
+      ],
+    },
+    construction: hierarchy(roots, exclusions, literals),
+  });
+  const plain = candidate([], []);
+  if (exact.exclusions.length === 0) return [plain];
+
+  const sized = exact.exclusions
+    .filter((c) => c.operator === '<<')
+    .map((c) => ({ x: c.conceptId, below: g.descendants(c.conceptId) }))
+    .sort((a, b) => b.below.length - a.below.length || byId(a.x, b.x));
+  const kept = sized.slice(0, opts.maxExclusions);
+  const excluded = new Set(kept.flatMap((s) => s.below));
+  const residual = new Set(exact.exclusions.filter((c) => c.operator === '=').map((c) => c.conceptId));
+  for (const s of sized.slice(opts.maxExclusions)) for (const x of s.below) if (!excluded.has(x)) residual.add(x);
+  const exclusions = kept.map((s) => s.x).sort(byId);
+  const literals = [...residual].sort(byId);
+
+  if (literals.length <= opts.maxResidualLiterals) return [plain, candidate(exclusions, literals)];
+  notes.push(
+    `No exact hierarchy cover within limits: after ${exclusions.length} subtree exclusions, ` +
+      `${literals.length} non-members remain (maxResidualLiterals is ${opts.maxResidualLiterals}).`,
+  );
+  return exclusions.length ? [plain, candidate(exclusions, [])] : [plain];
+}
 
 async function hierarchyCandidates(
   roots: string[],
@@ -824,11 +932,105 @@ function isBetter(ratio: number, gain: number, conceptId: string, best: { f: Foc
 
 // ── Scoring ──────────────────────────────────────────────────────────────
 
-/** A candidate before scoring; `known` when its score needs no server (the input itself). */
+/**
+ * A candidate before scoring; `known` when its score needs no server (the input
+ * itself), `local` when it was counted on the graph.
+ */
 interface Built {
   ecl: string;
   construction: CandidateConstruction;
   known?: Omit<Scored, 'ecl' | 'construction'>;
+  local?: LocalCounts;
+}
+
+interface LocalCounts {
+  additions: number;
+  misses: number;
+  clauses: number;
+}
+
+/** What ranking looks at. */
+interface Ranked {
+  ecl: string;
+  clauses: number;
+  additions: number;
+  misses: number;
+  inputItself: boolean;
+}
+
+/**
+ * Cost = clauses + additions + misses, then exact first; on a tie a derived
+ * definition goes before the input itself, then the shorter text.
+ */
+function byRank(a: Ranked, b: Ranked): number {
+  const exact = (r: Ranked) => r.additions === 0 && r.misses === 0;
+  return (
+    a.clauses + a.additions + a.misses - (b.clauses + b.additions + b.misses) ||
+    Number(exact(b)) - Number(exact(a)) ||
+    Number(a.inputItself) - Number(b.inputItself) ||
+    a.ecl.length - b.ecl.length ||
+    compareText(a.ecl, b.ecl)
+  );
+}
+
+/** Scores each distinct candidate against the set, on the server. */
+class Scorer {
+  readonly scored: Scored[] = [];
+  private readonly seen = new Set<string>();
+
+  constructor(
+    private readonly members: MemberSet,
+    private readonly q: SetQueries,
+    private readonly opts: Required<DeriveOptions>,
+    private readonly notes: string[],
+  ) {}
+
+  /**
+   * Score a few at a time (the queries are throttled anyway); `enough` stops
+   * after the batch in which a good enough candidate turned up.
+   */
+  async score(candidates: Built[], enough?: (s: Scored) => boolean): Promise<void> {
+    const fresh = candidates.filter((b) => {
+      const key = formKey(b.ecl);
+      if (this.seen.has(key)) return false;
+      this.seen.add(key);
+      return true;
+    });
+    for (let i = 0; i < fresh.length; i += SCORE_BATCH) {
+      const settled = await Promise.allSettled(fresh.slice(i, i + SCORE_BATCH).map((b) => this.one(b)));
+      // A candidate the server cannot count in time is dropped, not the whole result.
+      const batch: Scored[] = [];
+      settled.forEach((r, j) => {
+        if (r.status === 'rejected') {
+          this.notes.push(`Could not score ${fresh[i + j].ecl.slice(0, 120)}: ${errorMessage(r.reason)}`);
+          return;
+        }
+        this.checkLocal(fresh[i + j], r.value);
+        batch.push(r.value);
+      });
+      this.scored.push(...batch);
+      if (enough && batch.some(enough)) return;
+    }
+  }
+
+  private async one(b: Built): Promise<Scored> {
+    const s = b.known
+      ? { ...b.known, clauses: countClauses(b.ecl) }
+      : await compare(b.ecl, this.members, this.q, this.opts.sampleSize, this.opts.within);
+    return { ecl: b.ecl, construction: b.construction, ...s };
+  }
+
+  /** Say so when the server's counts differ from the graph's, which chose what to count. */
+  private checkLocal(b: Built, s: Scored): void {
+    // With `within`, the server counts only part of the additions.
+    if (!b.local || this.opts.within) return;
+    if (b.local.additions === s.additions.count && b.local.misses === s.misses.count) return;
+    this.notes.push(
+      `Local counts for ${s.ecl.slice(0, 120)} differed from the server's ` +
+        `(+${b.local.additions} -${b.local.misses} locally, +${s.additions.count} -${s.misses.count} on the server); ` +
+        'ranking used local counts.',
+    );
+  }
 }
 
 interface Scored {
@@ -839,6 +1041,16 @@ interface Scored {
   misses: SetDifference;
   exact: boolean;
   clauses: number;
+}
+
+function rankOf(s: Scored): Ranked {
+  return {
+    ecl: s.ecl,
+    clauses: s.clauses,
+    additions: s.additions.count,
+    misses: s.misses.count,
+    inputItself: isInputItself(s),
+  };
 }
 
 /** The enumeration, refset or expression given: on a tie, a derived definition says more. */

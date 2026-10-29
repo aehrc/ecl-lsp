@@ -66,13 +66,16 @@ describe('compressExpression', () => {
 
   it('offers a lossy grouper with what it adds, and keeps the original as an exact choice', async () => {
     const mock = fixture();
-    // 7 of X's 8 children: `< X` is 1 clause plus C1's subtree (3), against 7 clauses.
+    // 7 of X's 8 children: `< X` is 1 clause plus C1's subtree (3), against 7 clauses;
+    // `< X MINUS << C1` is exact in 2.
     const original = [id.C2, id.C3, id.C4, id.C5, id.C6, id.C7, id.C8].join(' OR ');
     const result = await compressExpression(original, mock, { omitTerms: true });
-    const top = result.candidates[0];
-    assert.strictEqual(top.ecl, `< ${id.X}`);
+    assert.strictEqual(result.candidates[0].ecl, `< ${id.X} MINUS << ${id.C1}`);
+    assert.strictEqual(result.candidates[0].exact, true);
+    const grouper = result.candidates.find((c) => c.ecl === `< ${id.X}`);
+    assert.ok(grouper, result.candidates.map((c) => c.ecl).join(' | '));
     assert.deepStrictEqual(
-      top.additions.sample.map((c) => c.code),
+      grouper.additions.sample.map((c) => c.code),
       [id.C1, id.C1a, id.C1b],
     );
     assert.ok(result.candidates.some((c) => c.source === 'original' && c.exact));
@@ -171,7 +174,8 @@ describe('formatCompressReport', () => {
     const original = [id.C2, id.C3, id.C4, id.C5, id.C6, id.C7, id.C8].join(' OR ');
     const report = formatCompressReport(await compressExpression(original, mock, { maxCandidates: 2 }));
     assert.match(report, /^Original selects 7 concepts\.$/m);
-    assert.match(report, /^1\. \+3 added, -0 missed; 1 clause; derived$/m);
+    assert.match(report, /^1\. same result; 2 clauses; derived$/m);
+    assert.match(report, /^2\. \+3 added, -0 missed; 1 clause; derived$/m);
     assert.match(report, /^ {3}Adds \(3\): /m);
   });
 

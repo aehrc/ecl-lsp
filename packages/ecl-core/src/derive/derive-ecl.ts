@@ -1028,7 +1028,7 @@ class Scorer {
     this.notes.push(
       `Local counts for ${s.ecl.slice(0, 120)} differed from the server's ` +
         `(+${b.local.additions} -${b.local.misses} locally, +${s.additions.count} -${s.misses.count} on the server); ` +
-        'ranking used local counts.',
+        "candidates were chosen for checking by local counts and ranked by the server's.",
     );
   }
 }

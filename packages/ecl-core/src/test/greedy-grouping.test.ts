@@ -131,11 +131,13 @@ describe('deriveEcl with greedy grouping', () => {
   });
 
   it('can be turned off', async () => {
-    const result = await deriveEcl({ conceptIds: [id.A1a, id.B2, id.P1] }, fixture(), {
-      maxRoots: 2,
-      greedyGrouping: false,
-    });
-    assert.ok(!result.candidates.some((c) => c.construction.kind === 'greedy-grouping'));
+    // A set where greedy's form differs from every other candidate's.
+    const set = [id.A1, id.A1a, id.A1b, id.A2, id.A3, id.A4];
+    const isGreedy = (c: { construction: { kind: string } }) => c.construction.kind === 'greedy-grouping';
+    const on = await deriveEcl({ conceptIds: set }, fixture(), { omitTerms: true });
+    assert.ok(on.candidates.some(isGreedy), 'offered by default');
+    const off = await deriveEcl({ conceptIds: set }, fixture(), { omitTerms: true, greedyGrouping: false });
+    assert.ok(!off.candidates.some(isGreedy));
   });
 
   it('notes when the server returns no parents', async () => {

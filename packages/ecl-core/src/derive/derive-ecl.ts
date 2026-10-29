@@ -49,7 +49,7 @@
 import { canonicalise } from '../canonical/comparator';
 import { formatDocument } from '../formatter/formatter';
 import { defaultFormattingOptions } from '../formatter/options';
-import type { ITerminologyService, ValueSetCompose } from '../terminology/types';
+import type { ConceptInfo, ITerminologyService, ValueSetCompose } from '../terminology/types';
 import { isValidConceptId } from '../terminology/verhoeff';
 import {
   byId,
@@ -124,7 +124,10 @@ export interface DeriveOptions {
    * in `C MINUS D`). Default: everywhere.
    */
   within?: string;
-  /** Add a REFACTOR-style greedy grouping candidate on the graph path. Default true. */
+  /**
+   * Add a REFACTOR-style greedy grouping candidate. Offered only on the graph
+   * path (see `useGraph`), including a partial graph. Default true.
+   */
   greedyGrouping?: boolean;
   /**
    * Build hierarchy candidates from one fetched subgraph. Default true. Needs a
@@ -310,7 +313,7 @@ export async function deriveEcl(
 
   const scorer = new Scorer(members, q, opts, notes);
   // On the graph path only the best by local counts are counted on the server.
-  if (graph) await scorer.score(graphCandidates(graph, opts, notes).slice(0, opts.maxCandidates));
+  if (graph) await scorer.score(worthCounting(graphCandidates(graph, opts, notes), members.size, opts, notes));
   else await scorer.score(await hierarchyCandidates(rootQuery.codes, result.roots, members, q, opts, notes));
   if (wantRefinements(opts.refinements, result.roots, scorer.scored)) {
     await scoreRefinements(input, members, rootQuery, scorer, q, terminology, opts, notes);
@@ -533,7 +536,12 @@ async function graphHierarchies(
     .filter((c) => g.aboveMember(c))
     .sort(byId);
   if (tops.length === 0) return [];
-  const infos = await terminology.validateConcepts(tops);
+  let infos = new Map<string, ConceptInfo | null>();
+  try {
+    infos = await terminology.validateConcepts(tops);
+  } catch {
+    // The counts are local; without display terms they are still worth giving.
+  }
   return tops
     .map((conceptId) => ({ conceptId, display: infos.get(conceptId)?.pt ?? '', count: g.truePos(conceptId) }))
     .sort((a, b) => b.count - a.count || byId(a.conceptId, b.conceptId));
@@ -553,8 +561,18 @@ async function loadGraph(
     const graph = await loadTaxonomyGraph(members, q, {
       maxConcepts: opts.maxGraphConcepts,
       descend: (id, g) => coverDescend(id, g) || refactorDescend(id, g),
+      fallbackDescend: refactorDescend,
     });
-    if (!('unavailable' in graph)) return graph;
+    if (!('unavailable' in graph)) {
+      if (graph.partial) {
+        notes.push(
+          `The IS-A subgraph is partial: below the set's roots and every candidate grouper it has more than ` +
+            `${opts.maxGraphConcepts} concepts (maxGraphConcepts), so descendants were loaded only for greedy ` +
+            "grouping's candidates, and hierarchy forms that need others were left out.",
+        );
+      }
+      return graph;
+    }
     why =
       graph.unavailable === 'parents'
         ? 'parents (the server does not return them in an expansion, property=parent)'
@@ -570,7 +588,11 @@ async function loadGraph(
  * Hierarchy candidates built and counted on the graph, best first by local
  * counts. Forms the graph cannot count (descendants not loaded) are left out.
  */
-function graphCandidates(g: TaxonomyGraph, opts: Required<DeriveOptions>, notes: string[]): Built[] {
+function graphCandidates(
+  g: TaxonomyGraph,
+  opts: Required<DeriveOptions>,
+  notes: string[],
+): (Built & { local: LocalCounts })[] {
   const ancestors = g.ancestors();
   // Earlier constructions win when two give the same form, so `cover` is
   // reported only when it differs from all the others.
@@ -601,6 +623,33 @@ function graphCandidates(g: TaxonomyGraph, opts: Required<DeriveOptions>, notes:
   return candidates.sort((a, b) =>
     byRank({ ecl: a.ecl, inputItself: false, ...a.local }, { ecl: b.ecl, inputItself: false, ...b.local }),
   );
+}
+
+/**
+ * The graph candidates worth counting on the server: the best `maxCandidates`
+ * by local counts (all of them under `within`, where local additions, counted
+ * everywhere, do not rank them), less those that by local counts cost at least
+ * as much as listing every member: they would lose to the input itself, and
+ * can be long.
+ */
+function worthCounting(
+  candidates: (Built & { local: LocalCounts })[],
+  listing: number,
+  opts: Required<DeriveOptions>,
+  notes: string[],
+): Built[] {
+  const taken = opts.within ? candidates : candidates.slice(0, opts.maxCandidates);
+  const cost = (b: Built & { local: LocalCounts }) =>
+    b.local.clauses + b.local.misses + (opts.within ? 0 : b.local.additions);
+  const kept = taken.filter((b) => cost(b) < listing);
+  const skipped = taken.length - kept.length;
+  if (skipped > 0) {
+    notes.push(
+      `${skipped} graph candidate${skipped === 1 ? ' was' : 's were'} not counted on the server: by local counts ` +
+        `${skipped === 1 ? 'it costs' : 'each costs'} at least as much as listing the ${listing} members.`,
+    );
+  }
+  return kept;
 }
 
 /** A single clause from bestSingles, as an ancestor cover. */

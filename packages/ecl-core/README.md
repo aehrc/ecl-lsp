@@ -154,21 +154,27 @@ fetched in about four expansions that return each concept's parents
 ancestors, their children, and the descendants of the ancestors worth trying
 as groupers. Candidates are built and ranked on that graph without further
 requests, and only the best are counted again on the server, so every count
-reported comes from the server. The cost-based cover treats the set as a
+reported comes from the server. A graph candidate that by its local counts
+costs at least as much as listing every member is not counted, with a note. The cost-based cover treats the set as a
 weighted set cover: a grouper costs its own clause plus the exclusions that
 make it exact, a listed member costs one clause, and groupers are taken while
 they cover more members per clause than listing them would. When the server
 does not return parents, or a fetch would hold more than `maxGraphConcepts`
 concepts (default 200,000), the hierarchy candidates fall back to a query per
-count, with a note. Set `useGraph: false` to always use that path.
+count, with a note. Set `useGraph: false` to always use that path. When only
+the descendants of every root and grouper are too many, they are loaded for
+greedy grouping's groupers alone: the graph is partial, forms that need the
+others are left out, and a note says so. `maxRoots`, `maxAncestorRoots` and
+`maxAncestorCandidates` limit the per-query path only.
 
 The greedy grouping follows REFACTOR, the grouping algorithm in NHS England's
 DMWB (Jeremy Rogers). It scores every ancestor of the set by how much of it is
 in the set, picks groupers while it relaxes its fit threshold, and lists the
 members left over. It then excludes what the groupers add, so it is always
 exact. It is not limited by the number of roots, so it also works on clinical
-sets with hundreds of roots. It needs the subgraph, so without a server that
-returns parents it is skipped with a note. Set `greedyGrouping: false` to leave
+sets with hundreds of roots. It is offered only on the graph path: it needs
+the subgraph, so without a server that returns parents, or with
+`useGraph: false`, it is skipped. Set `greedyGrouping: false` to leave
 it out.
 
 Sets that cut across the hierarchy (many roots and no short exact IS-A cover,

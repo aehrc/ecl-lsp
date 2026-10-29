@@ -108,6 +108,33 @@ describe('loadTaxonomyGraph', () => {
     assert.strictEqual(result.unavailable, 'parents');
   });
 
+  it('loads only the fallback descendants, marked partial, when the others are too many', async () => {
+    // << FINDING is 13 concepts, more than 12; << A1 is 3.
+    const members = { clause: { concepts: SET }, ecl: orGroup(SET), size: SET.length };
+    const mock = fixture();
+    const q = new SetQueries(mock.expandCompose.bind(mock));
+    const g = await loadTaxonomyGraph(members, q, {
+      maxConcepts: 12,
+      descend: (x) => x === id.FINDING,
+      fallbackDescend: (x) => x === id.A1,
+    });
+    assert.ok(!('unavailable' in g), 'graph unavailable');
+    assert.strictEqual(g.partial, true);
+    assert.strictEqual(g.hasDescendants(id.A1), true);
+    assert.strictEqual(g.hasDescendants(id.FINDING), false);
+    const tooLarge = await loadTaxonomyGraph(members, q, {
+      maxConcepts: 12,
+      descend: (x) => x === id.FINDING,
+      fallbackDescend: (x) => x === id.FINDING,
+    });
+    assert.deepStrictEqual(tooLarge, { unavailable: 'the descendants of the candidate groupers' });
+  });
+
+  it('is not partial when everything asked for was loaded', async () => {
+    const g = await loaded(fixture(), (x) => x === id.A);
+    assert.strictEqual(g.partial, false);
+  });
+
   it('makes at most 4 requests', async () => {
     const mock = fixture();
     await load(mock, SET, 1000, () => true);

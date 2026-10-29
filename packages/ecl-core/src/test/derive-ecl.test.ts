@@ -220,6 +220,18 @@ describe('deriveEcl', () => {
         { conceptId: id.PROC, display: 'Procedure', count: 1 },
       ]);
     });
+
+    it('summarises without display terms when they cannot be read', async () => {
+      const mock = fixture();
+      mock.validateConcepts = async () => {
+        throw new Error('lookup failed');
+      };
+      const result = await deriveEcl({ conceptIds: [id.A1, id.A2, id.P1] }, mock, { omitTerms: true });
+      assert.deepStrictEqual(result.hierarchies, [
+        { conceptId: id.FINDING, display: '', count: 2 },
+        { conceptId: id.PROC, display: '', count: 1 },
+      ]);
+    });
   });
 
   describe('expression input', () => {
@@ -377,10 +389,16 @@ describe('deriveEcl', () => {
         mock.add(id, `big${b}`, [a]);
         for (let k = 0; k < 10; k++) mock.add(sctid(n++), 'x', [id]);
       }
+      // M has 150 member children, so the exact cover (1 + 2 subtrees + 131
+      // literals) is cheaper than listing the 152 members, and is counted.
       const m = sctid(5050);
-      const mc = sctid(5051);
-      mock.add(m, 'M', [a]).add(mc, 'Mc', [m]);
-      const result = await deriveEcl({ conceptIds: [a, m, mc] }, mock, {
+      mock.add(m, 'M', [a]);
+      const set = [a, m];
+      for (let i = 0; i < 150; i++) {
+        mock.add(sctid(7000 + i), `Mc${i}`, [m]);
+        set.push(sctid(7000 + i));
+      }
+      const result = await deriveEcl({ conceptIds: set }, mock, {
         omitTerms: true,
         maxExclusions: 2,
         maxResidualLiterals: 200,
@@ -480,6 +498,54 @@ describe('deriveEcl', () => {
       assert.ok(result.candidates.every((c) => !c.ecl.includes(id.RETIRED)));
       assert.strictEqual(result.candidates[0].exact, true);
       assertCountsHonest(mock, [id.A1a, id.A1b], result);
+      assert.doesNotMatch(result.notes.join('\n'), /per-query counts/);
+    });
+
+    it('scores every graph candidate on the server under `within`', async () => {
+      // Within `< A MINUS << A5`, `< A` adds nothing; everywhere it adds A5 and
+      // A5a, so by local counts it ranks below `< A MINUS << A5`.
+      const mock = fixture();
+      const result = await deriveEcl({ conceptIds: listed() }, mock, {
+        omitTerms: true,
+        refinements: 'never',
+        within: `< ${id.A} MINUS << ${id.A5}`,
+        maxCandidates: 1,
+      });
+      assert.strictEqual(result.candidates[0].ecl, `< ${id.A}`);
+      assert.strictEqual(result.candidates[0].exact, true);
+    });
+
+    it('offers greedy grouping on a partial graph when the descendants are too many', async () => {
+      // M is a root with a deep subtree (C and 20 children), so loading below
+      // every root is too large; below REFACTOR's candidates (A, A1) is not.
+      const mock = fixture();
+      const [m, c] = [sctid(3000), sctid(3001)];
+      mock.add(m, 'M', [id.PROC]).add(c, 'C', [m]);
+      for (let i = 0; i < 20; i++) mock.add(sctid(3010 + i), `C${i}`, [c]);
+      const set = [...listed(), m];
+      const result = await deriveEcl({ conceptIds: set }, mock, {
+        omitTerms: true,
+        refinements: 'never',
+        maxGraphConcepts: 20,
+      });
+      const notes = result.notes.join('\n');
+      assert.doesNotMatch(notes, /per-query counts/);
+      assert.match(notes, /partial/);
+      const greedy = result.candidates.find((x) => x.construction.kind === 'greedy-grouping');
+      assert.ok(greedy, result.candidates.map((x) => x.ecl).join(' | '));
+      assert.strictEqual(greedy.exact, true);
+      assertCountsHonest(mock, set, result);
+    });
+
+    it('does not count on the server a graph candidate no cheaper than listing the members', async () => {
+      // Two unrelated members: every hierarchy form is `<< A2 OR << P1`, 2 clauses.
+      const mock = fixture();
+      const result = await deriveEcl({ conceptIds: [id.A2, id.P1] }, mock, { omitTerms: true, refinements: 'never' });
+      assert.deepStrictEqual(
+        result.candidates.map((x) => x.construction.kind),
+        ['enumeration'],
+      );
+      assert.match(result.notes.join('\n'), /1 graph candidate was not counted on the server/);
     });
   });
 

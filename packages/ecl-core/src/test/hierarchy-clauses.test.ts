@@ -146,4 +146,17 @@ describe('hierarchy clauses', () => {
     assert.strictEqual(evaluate({ includes: [{ conceptId: id.A, operator: '<' }], exclusions: [] }, g), null);
     assert.ok(evaluate({ includes: [{ conceptId: id.A, operator: '=' }], exclusions: [] }, g));
   });
+
+  it('evaluate returns null for a clause on a concept whose children were never loaded', async () => {
+    // A5 is a child of A (so in the graph) but not above a member: its own children are unknown.
+    const mock = fixture();
+    const set = [id.A1a, id.A1b, id.A2];
+    const members = { clause: { concepts: set }, ecl: orGroup(set), size: set.length };
+    const q = new SetQueries(mock.expandCompose.bind(mock));
+    const g = await loadTaxonomyGraph(members, q, { maxConcepts: 1000, descend: () => false });
+    assert.ok(!('unavailable' in g));
+    assert.ok(!g.hasDescendants(id.A5) && !g.aboveMember(id.A5) && g.children(id.A5).length === 0);
+    assert.strictEqual(evaluate({ includes: [{ conceptId: id.A5, operator: '<<' }], exclusions: [] }, g), null);
+    assert.strictEqual(evaluate({ includes: [{ conceptId: id.A2, operator: '<<' }], exclusions: [] }, g)?.size, 1);
+  });
 });

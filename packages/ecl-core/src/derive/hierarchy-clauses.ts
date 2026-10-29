@@ -26,9 +26,14 @@ export function selection(c: HierarchyClause, g: TaxonomyGraph): string[] {
   return c.operator === '<<' ? desc : desc.filter((d) => d !== c.conceptId);
 }
 
-/** True when the clause needs descendants the graph did not load. */
+/**
+ * True when the clause needs descendants the graph did not load. Children are
+ * known completely only for concepts above a member (and below a loaded
+ * candidate), so elsewhere no children does not mean none exist.
+ */
 function unloaded(c: HierarchyClause, g: TaxonomyGraph): boolean {
-  return c.operator !== '=' && !g.hasDescendants(c.conceptId) && g.children(c.conceptId).length > 0;
+  if (c.operator === '=' || g.hasDescendants(c.conceptId)) return false;
+  return !g.aboveMember(c.conceptId) || g.children(c.conceptId).length > 0;
 }
 
 /** What the form selects, or null when a clause needs descendants the graph did not load. */

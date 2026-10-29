@@ -14,6 +14,8 @@ import { byId, orGroup, SNOMED_ROOT, type MemberSet, type SetQueries } from './s
 
 export interface TaxonomyGraph {
   readonly members: ReadonlySet<string>;
+  /** True when only the `fallbackDescend` descendants were loaded (the others were too many). */
+  readonly partial: boolean;
   /** True when the concept is a member or has a member below it (it is in `>> list`). */
   aboveMember(id: string): boolean;
   /** Direct children; complete for every concept in `>> list` and every concept below a loaded candidate. */
@@ -40,6 +42,12 @@ export interface TaxonomyGraphOptions {
   maxConcepts: number;
   /** Picks which concepts of `>> list` get their descendants loaded. Roots with children always do. */
   descend: (id: string, graph: Pick<TaxonomyGraph, 'truePos' | 'children' | 'members'>) => boolean;
+  /**
+   * When the descendants `descend` picks (with the roots) are more than
+   * `maxConcepts`, load only those this picks, without the roots, and mark the
+   * graph partial. Default: none, the graph is unavailable.
+   */
+  fallbackDescend?: TaxonomyGraphOptions['descend'];
 }
 
 export async function loadTaxonomyGraph(
@@ -57,14 +65,27 @@ export async function loadTaxonomyGraph(
 
   const graph = new LoadedGraph(new Set(memberList.codes), up, childGraph);
   const roots = new Set(graph.roots());
-  const load = graph
-    .ancestors()
-    .filter((id) => graph.children(id).length > 0 && (options.descend(id, graph) || roots.has(id)));
-  if (load.length === 0) return graph;
-  const down = await q.graph({ include: [{ ecl: `<< ${orGroup(load)}` }] }, max);
+  let down = await descendantsOf(graph, (id) => options.descend(id, graph) || roots.has(id), q, max);
+  if (down === 'too-large' && options.fallbackDescend) {
+    const fallback = options.fallbackDescend;
+    down = await descendantsOf(graph, (id) => fallback(id, graph), q, max);
+    graph.partial = true;
+  }
   if (typeof down === 'string') return refused(down, 'the descendants of the candidate groupers');
   graph.addBelow(down);
   return graph;
+}
+
+/** `<< (the concepts of >> list with children that `pick` picks)`, empty when it picks none. */
+async function descendantsOf(
+  graph: LoadedGraph,
+  pick: (id: string) => boolean,
+  q: SetQueries,
+  max: number,
+): Promise<Map<string, string[]> | 'too-large' | 'no-parents'> {
+  const load = graph.ancestors().filter((id) => graph.children(id).length > 0 && pick(id));
+  if (load.length === 0) return new Map();
+  return q.graph({ include: [{ ecl: `<< ${orGroup(load)}` }] }, max);
 }
 
 function refused(reason: 'too-large' | 'no-parents', what: string): GraphUnavailable {
@@ -72,6 +93,7 @@ function refused(reason: 'too-large' | 'no-parents', what: string): GraphUnavail
 }
 
 class LoadedGraph implements TaxonomyGraph {
+  partial = false;
   private readonly parentMap = new Map<string, string[]>();
   private childMap = new Map<string, string[]>();
   private readonly below = new Set<string>();

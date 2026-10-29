@@ -206,6 +206,16 @@ export default tseslint.config(
     },
   },
 
+  // CommonJS scripts (benchmarks run against the compiled library) — no type information
+  {
+    files: ['packages/*/scripts/**/*.cjs'],
+    extends: [tseslint.configs.disableTypeChecked],
+    languageOptions: { globals: globals.node, sourceType: 'commonjs' },
+    rules: {
+      '@typescript-eslint/no-require-imports': 'off',
+    },
+  },
+
   // Prettier — must be last to override formatting rules
   eslintConfigPrettier,
 );

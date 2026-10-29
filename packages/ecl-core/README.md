@@ -144,19 +144,32 @@ result.candidates[0];
 
 Candidates come from the IS-A hierarchy: an exact cover of the set's roots with
 `MINUS` exclusions, cheaper covers by ancestors outside the set (with their
-additions reported), a greedy grouping, and always the enumeration or
-`^ refset` itself. They are ranked by clauses + additions + misses.
+additions reported), a greedy grouping, a cost-based cover, and always the
+enumeration or `^ refset` itself. They are ranked by clauses + additions +
+misses.
+
+The hierarchy candidates are built from one IS-A subgraph around the set,
+fetched in about four expansions that return each concept's parents
+(`expandCompose` with `parents: true`, FHIR `property=parent`): the set, its
+ancestors, their children, and the descendants of the ancestors worth trying
+as groupers. Candidates are built and ranked on that graph without further
+requests, and only the best are counted again on the server, so every count
+reported comes from the server. The cost-based cover treats the set as a
+weighted set cover: a grouper costs its own clause plus the exclusions that
+make it exact, a listed member costs one clause, and groupers are taken while
+they cover more members per clause than listing them would. When the server
+does not return parents, or a fetch would hold more than `maxGraphConcepts`
+concepts (default 200,000), the hierarchy candidates fall back to a query per
+count, with a note. Set `useGraph: false` to always use that path.
 
 The greedy grouping follows REFACTOR, the grouping algorithm in NHS England's
 DMWB (Jeremy Rogers). It scores every ancestor of the set by how much of it is
 in the set, picks groupers while it relaxes its fit threshold, and lists the
 members left over. It then excludes what the groupers add, so it is always
 exact. It is not limited by the number of roots, so it also works on clinical
-sets with hundreds of roots. Its counts come from about four expansions that
-return each concept's parents (`expandCompose` with `parents: true`, FHIR
-`property=parent`), rather than four queries per ancestor. Without a server
-that returns parents, it is skipped with a note. Set `greedyGrouping: false`
-to leave it out.
+sets with hundreds of roots. It needs the subgraph, so without a server that
+returns parents it is skipped with a note. Set `greedyGrouping: false` to leave
+it out.
 
 Sets that cut across the hierarchy (many roots and no short exact IS-A cover,
 e.g. AMT products) also
@@ -184,6 +197,36 @@ import { compressExpression } from '@aehrc/ecl-core';
 const { candidates } = await compressExpression('(<< 372594008 OR << 372767007 OR …) AND ^ 929360081000036101', fhir);
 // candidates[i]: { expression, ecl, additions, misses, exact, clauses, source: 'derived' | 'simplified' | 'original' }
 ```
+
+#### Benchmark
+
+`scripts/derive-benchmark.cjs` runs `deriveEcl` over a file of reference sets
+and, optionally, judges reference ECL for the same sets on the same release.
+It reads the compiled library, so run `npm run compile` first.
+
+```bash
+node scripts/derive-benchmark.cjs \
+  --sets members.tsv --reference refactor.tsv \
+  --version http://snomed.info/sct/83821000000107/version/20230830 \
+  --base-url https://tx.ontoserver.csiro.au/fhir --max-size 10000 \
+  --out results.jsonl
+node scripts/derive-benchmark.cjs --out results.jsonl --summary
+```
+
+The input files use the layout of the NHS England DMWB export (tab-separated,
+latin1, with `ID`, `DESCRIPTION` and `SCTRULE` columns, `SCTRULE` holding the
+ECL). The UK clinical reference sets used in development came from the DMWB
+export of the 37.0.0 release, with REFACTOR's intensional definitions as the
+reference; the data files are not part of this repository. Results are judged
+on the release given with `--version`, so a reference made on another release
+can add or miss concepts there. Each output line holds the set's top
+candidate, its best exact candidate, the reference, the time taken and the
+number of `expandCompose` requests. The run is resumable (sets already in
+`--out` are skipped), retries a failed set once after 30 s, and pauses 1.5 s
+between sets to stay inside public servers' rate limits. `--no-graph` runs the
+per-query path for comparison, and `--only id,id` limits the run to some sets.
+`--summary` prints win/tie/loss against the reference by cost and by exact
+clauses, total clauses, and median and maximum time and requests.
 
 ### Canonical Comparison
 

@@ -11,7 +11,11 @@
 // The TSV files use the UK DMWB export layout: a header row, tab-separated,
 // latin1, with the columns ID, DESCRIPTION and SCTRULE (an ECL OR list of the
 // members, or the reference ECL). Every set is judged on the release given by
-// --version, which may differ from the release the reference was made on.
+// --version, which may differ from the release the reference was made on. The
+// reference is judged against the same members deriveEcl used: the given codes
+// less those deriveEcl left out as inactive, unknown or malformed on that
+// release. A reference that cannot be judged is recorded as
+// `reference: { error }` without failing the set.
 //
 // Reads the compiled library in dist-tsc (run `npm run compile` first). The
 // run is resumable: ids already in --out without an error are skipped. A set
@@ -152,7 +156,7 @@ async function run(args) {
       rec.requests,
       rec.bestExact?.clauses,
       rec.reference?.clauses,
-      rec.error ?? '',
+      rec.error ?? rec.reference?.error ?? '',
     );
     await sleep(PAUSE_MS);
   }
@@ -173,15 +177,33 @@ async function deriveOne(ctx, { refset, name, codes }) {
     rec.bestExact = pick(exact.sort((a, b) => a.clauses - b.clauses || a.ecl.length - b.ecl.length)[0]);
     rec.notes = r.notes;
     const ref = ctx.reference.get(refset)?.rule;
-    if (ref) rec.reference = await judge(ref, codes, ctx.expandCompose, ctx.countClauses);
+    if (ref) rec.reference = await judgeOrError(ref, activeMembers(codes, r.input), ctx);
   } catch (error) {
-    rec.error = String(error?.message ?? error).slice(0, 300);
+    rec.error = messageOf(error);
     delete rec.top;
   }
   return rec;
 }
 
-/** The reference ECL's additions and misses against the given codes, on this release. */
+/** The codes deriveEcl kept: the given ones less those it left out as inactive, unknown or malformed. */
+function activeMembers(codes, input) {
+  const left = new Set([...input.inactive, ...input.unknown, ...input.malformed]);
+  return [...new Set(codes)].filter((c) => !left.has(c));
+}
+
+async function judgeOrError(ecl, members, ctx) {
+  try {
+    return await judge(ecl, members, ctx.expandCompose, ctx.countClauses);
+  } catch (error) {
+    return { error: messageOf(error) };
+  }
+}
+
+function messageOf(error) {
+  return String(error?.message ?? error).slice(0, 300);
+}
+
+/** The reference ECL's additions and misses against the members deriveEcl used, on this release. */
 async function judge(ecl, codes, expandCompose, countClauses) {
   const members = { concepts: codes };
   const o = { count: 0, timeoutMs: TIMEOUT_MS };
@@ -222,7 +244,7 @@ function summary(args) {
     }
     return `win ${t.win} / tie ${t.tie} / loss ${t.loss} (n=${pairs.length})`;
   };
-  const judged = ok.filter((r) => r.reference);
+  const judged = ok.filter((r) => r.reference && !r.reference.error);
   if (judged.length) {
     console.log('top vs reference, by cost:', tally(judged.map((r) => [r.top.cost, r.reference.cost])));
     const exact = judged.filter((r) => r.bestExact);
@@ -250,6 +272,9 @@ function summary(args) {
   );
   console.log(`requests: median ${median(ok.map((r) => r.requests))}  max ${Math.max(...ok.map((r) => r.requests))}`);
   for (const r of errors) console.log('error', r.refset, r.error.slice(0, 150));
+  for (const r of ok.filter((x) => x.reference?.error)) {
+    console.log('reference not judged', r.refset, r.reference.error.slice(0, 150));
+  }
 }
 
 const args = parseArgs(process.argv.slice(2));

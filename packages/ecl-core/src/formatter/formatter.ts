@@ -3,7 +3,13 @@
 
 import { parseECL, type ExpressionNode } from '../parser';
 import { FormattingOptions } from './options';
-import { formatRefinementColon, formatRefinementEquals, getIndentString, normalizeTerm } from './rules';
+import {
+  collapseTermWhitespace,
+  formatRefinementColon,
+  formatRefinementEquals,
+  getIndentString,
+  normalizeTerm,
+} from './rules';
 import { extractComments, reinsertComments } from './comments';
 import { printAst } from './ast-printer';
 import { signatureOf, structuralSignature } from './semantic-guard';
@@ -166,17 +172,29 @@ function applyRefinementCommaBreaks(text: string, options: FormattingOptions): s
       commaIndent = getIndentString(1, options);
     }
 
-    // Process commas outside terms and parens
+    // Process commas outside terms, quoted strings and parens
     let output = '';
     let inTerm = false;
+    let inString = false;
     for (let i = 0; i < line.length; i++) {
       const ch = line[i];
+      if (inString) {
+        output += ch;
+        if (ch === '\\' && i + 1 < line.length) output += line[++i];
+        else if (ch === '"') inString = false;
+        continue;
+      }
       if (ch === '|') {
         inTerm = !inTerm;
         output += ch;
         continue;
       }
       if (inTerm) {
+        output += ch;
+        continue;
+      }
+      if (ch === '"') {
+        inString = true;
         output += ch;
         continue;
       }
@@ -293,6 +311,39 @@ function normalizeFilterBlocks(text: string): string {
   });
 }
 
+const LITERAL_START = '\uE000';
+const LITERAL_END = '\uE001';
+const PLACEHOLDER = /\uE000(\d+)\uE001/g;
+
+/**
+ * Replace the contents of display terms (`|…|`) and quoted strings (`"…"`) with
+ * numbered placeholders, keeping the delimiters so the pipe and quote handling
+ * still applies. `restore` puts the contents back; a term's whitespace runs are
+ * collapsed to one space, as `normalizeTerm` would.
+ */
+function maskLiterals(text: string): { masked: string; restore: (formatted: string) => string } {
+  // Text that already holds the placeholder characters is left unmasked rather
+  // than have its own characters taken for placeholders on the way back.
+  if (text.includes(LITERAL_START) || text.includes(LITERAL_END)) {
+    return { masked: text, restore: (formatted) => formatted };
+  }
+  const contents: string[] = [];
+  const placeholder = (content: string) => {
+    contents.push(content);
+    return `${LITERAL_START}${contents.length - 1}${LITERAL_END}`;
+  };
+  // Strings first in the alternation so a pipe inside a string is not taken for a term.
+  const masked = text.replace(/"((?:[^"\\]|\\.)*)"|\|([^|]*)\|/g, (match, str?: string, term?: string) => {
+    if (str !== undefined) return `"${placeholder(str)}"`;
+    if (term?.trim()) return `|${placeholder(collapseTermWhitespace(term))}|`;
+    return match;
+  });
+  return {
+    masked,
+    restore: (formatted) => formatted.replace(PLACEHOLDER, (_m, i: string) => contents[Number(i)]),
+  };
+}
+
 /**
  * Apply AST-based indentation and line breaking to already-normalized text.
  *
@@ -335,8 +386,13 @@ function formatExpressionBody(text: string, options: FormattingOptions, ast?: Ex
   // Filter out ECL-END comments as they're handled separately
   const nonDelimiterComments = comments.filter((c) => c.content.trim() !== '/* ECL-END */');
 
+  // Hide term and string contents so the operator spacing rules below cannot
+  // rewrite them ("AND/OR" in a SNOMED CT term, "fetus OR newborn" in a search string).
+  const literals = maskLiterals(textWithoutComments);
+
   // Normalize filter blocks (keyword case, spacing, type letter)
-  let formatted = normalizeFilterBlocks(textWithoutComments);
+  const filterNormalized = normalizeFilterBlocks(literals.masked);
+  let formatted = filterNormalized;
 
   // Normalize spaces around logical operators.
   // Use a negative lookbehind for letters to avoid matching inside words like HISTORY.
@@ -387,6 +443,7 @@ function formatExpressionBody(text: string, options: FormattingOptions, ast?: Ex
   formatted = formatted.replace(/\|([^|]+)\|/g, (_match: string, content: string) => {
     return normalizeTerm(content);
   });
+  formatted = literals.restore(formatted);
 
   // AST-based indentation and line breaking.
   if (ast) {
@@ -408,7 +465,7 @@ function formatExpressionBody(text: string, options: FormattingOptions, ast?: Ex
     // The baseline is filter-normalized because filter blocks are opaque to the
     // AST, so their (intentional) keyword and spacing normalization would
     // otherwise read as a change of meaning.
-    const baseline = signatureOf(normalizeFilterBlocks(textWithoutComments));
+    const baseline = signatureOf(literals.restore(filterNormalized));
     if (baseline !== null && signatureOf(formatted) !== baseline) {
       formatted = textWithoutComments;
     }

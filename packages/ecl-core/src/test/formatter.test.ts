@@ -2208,6 +2208,90 @@ describe('formatDocument — attribute name operators', () => {
   });
 });
 
+describe('formatDocument — term and string text is left alone', () => {
+  const fmt = (text: string, options: FormattingOptions = defaultFormattingOptions) => formatDocument(text, options);
+
+  test('keeps // inside a search string and a display term', () => {
+    assert.strictEqual(fmt('< 404684003 {{ D term = "http://x" }}'), '< 404684003 {{ D term = "http://x" }}');
+    assert.strictEqual(fmt('<< 404684003 |see http://x.org|'), '<< 404684003 | see http://x.org |');
+  });
+
+  test('keeps /* */ inside a search string as text', () => {
+    assert.strictEqual(fmt('< 404684003 {{ D term = "a /* b */ c" }}'), '< 404684003 {{ D term = "a /* b */ c" }}');
+  });
+
+  test('keeps an escaped quote, and a pipe, inside a search string', () => {
+    assert.strictEqual(fmt('< 404684003 {{ D term = "a\\"b OR c" }}'), '< 404684003 {{ D term = "a\\"b OR c" }}');
+    assert.strictEqual(
+      fmt('< 404684003 {{ D term = "a|b" }} OR << 19829001'),
+      '< 404684003 {{ D term = "a|b" }} OR << 19829001',
+    );
+  });
+
+  test('keeps a colon inside a concrete string value', () => {
+    assert.strictEqual(fmt('< 404684003:363698007="a:b"'), '< 404684003: 363698007 = "a:b"');
+  });
+
+  test('does not break a refinement inside a string value', () => {
+    const out = fmt('<< 404684003 : 363698007 = "a, b", 116676008 = << 4', {
+      ...defaultFormattingOptions,
+      breakOnRefinementComma: true,
+    });
+    assert.ok(out.includes('"a, b"'), out);
+    assert.match(out, /,\n\s*116676008/);
+  });
+
+  test('a pipe or bracket inside a string does not stop later refinement breaks', () => {
+    const out = fmt('<< 404684003 : 363698007 = "a|(b", 116676008 = << 4, 246075003 = << 5', {
+      ...defaultFormattingOptions,
+      breakOnRefinementComma: true,
+    });
+    assert.ok(out.includes('"a|(b"'), out);
+    assert.match(out, /,\n\s*116676008[^\n]*,\n\s*246075003/);
+  });
+
+  test('leaves private-use placeholder characters in the input alone', () => {
+    const input = '<< 1 |a| OR 7 << 2';
+    const out = fmt(input);
+    assert.ok(!out.includes('undefined'), out);
+    assert.ok(out.includes('7'), out);
+  });
+
+  // SNOMED CT terms and filter search strings are data: the spacing rules for
+  // ECL operators must not reach inside them.
+  test('keeps AND/OR inside a display term', () => {
+    assert.strictEqual(
+      formatDocument('<< 32574007 |Past MI diagnosed on ECG AND/OR other|', defaultFormattingOptions),
+      '<< 32574007 | Past MI diagnosed on ECG AND/OR other |',
+    );
+  });
+
+  test('keeps colons and equals signs inside a display term', () => {
+    assert.strictEqual(
+      formatDocument('<<404684003|x:y=z|:363698007=<<39057004', defaultFormattingOptions),
+      '<< 404684003 | x:y=z |: 363698007 = << 39057004',
+    );
+  });
+
+  test('keeps OR inside a filter search string', () => {
+    assert.strictEqual(
+      formatDocument('< 404684003 {{ D term = "fetus OR newborn" }}', defaultFormattingOptions),
+      '< 404684003 {{ D term = "fetus OR newborn" }}',
+    );
+  });
+
+  test('keeps = and : inside a filter search string while formatting the rest', () => {
+    assert.strictEqual(
+      formatDocument('<<404684003  {{ d TERM="a=b:c" }}', defaultFormattingOptions),
+      '<< 404684003 {{ D term = "a=b:c" }}',
+    );
+  });
+
+  test('still collapses whitespace runs inside a term', () => {
+    assert.strictEqual(formatDocument('< 404684003 |a   b|', defaultFormattingOptions), '< 404684003 | a b |');
+  });
+});
+
 describe('formatDocument — round trip over the grammar corpus', () => {
   for (const ecl of roundTripCorpus) {
     test(`preserves meaning: ${ecl}`, () => {

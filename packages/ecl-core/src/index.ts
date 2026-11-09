@@ -116,6 +116,9 @@ export type {
   DeriveInputReport,
   CandidateConstruction,
   SetDifference,
+  CritiqueOptions,
+  CodelistCritique,
+  NearMiss,
 } from './derive/derive-ecl';
 
 // Canonical comparison

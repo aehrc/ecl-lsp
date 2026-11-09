@@ -560,6 +560,77 @@ describe('deriveEcl', () => {
     });
   });
 
+  describe('critique', () => {
+    const NEARLY_A = [id.A, id.A1, id.A1a, id.A1b, id.A2, id.A3, id.A4, id.A5];
+
+    it('is absent by default and costs no request', async () => {
+      const set = [id.A1a, id.B2, id.P1];
+      const off = fixture();
+      const result = await deriveEcl({ conceptIds: set }, off, { omitTerms: true });
+      assert.strictEqual(result.critique, undefined);
+      const explicit = fixture();
+      await deriveEcl({ conceptIds: set }, explicit, { omitTerms: true, critique: false });
+      assert.strictEqual(explicit.composeCalls.length, off.composeCalls.length);
+    });
+
+    it('flags a list that needs more clauses than the limit', async () => {
+      const set = [id.A1a, id.B2, id.P1];
+      const tight = await deriveEcl({ conceptIds: set }, fixture(), { omitTerms: true, critique: { maxClauses: 2 } });
+      assert.deepStrictEqual(tight.critique?.clauses, { best: 3, limit: 2, exceeded: true });
+      const loose = await deriveEcl({ conceptIds: set }, fixture(), { omitTerms: true, critique: true });
+      assert.deepStrictEqual(loose.critique?.clauses, { best: 3, limit: 35, exceeded: false });
+    });
+
+    it('reports a near miss with server-counted missing members', async () => {
+      const result = await deriveEcl({ conceptIds: NEARLY_A }, fixture(), {
+        omitTerms: true,
+        critique: { nearMissShare: 0.85 },
+      });
+      const misses = result.critique?.nearMisses ?? [];
+      assert.strictEqual(misses.length, 1, JSON.stringify(misses));
+      const [n] = misses;
+      assert.strictEqual(n.conceptId, id.A);
+      assert.strictEqual(n.descendants, 9);
+      assert.strictEqual(n.listed, 8);
+      assert.strictEqual(n.missing.count, 1);
+      assert.strictEqual(n.missing.sample[0].code, id.A5a);
+    });
+
+    it('gives near misses terms unless omitTerms', async () => {
+      const result = await deriveEcl({ conceptIds: NEARLY_A }, fixture(), { critique: { nearMissShare: 0.85 } });
+      assert.strictEqual(result.critique?.nearMisses[0]?.display, 'A');
+    });
+
+    it('has no near misses off the graph, with a note', async () => {
+      const result = await deriveEcl({ conceptIds: NEARLY_A }, fixture(), {
+        omitTerms: true,
+        useGraph: false,
+        critique: { nearMissShare: 0.85 },
+      });
+      assert.deepStrictEqual(result.critique?.nearMisses, []);
+      assert.match(result.notes.join('\n'), /near misses need the IS-A subgraph/i);
+      assert.ok(result.critique?.clauses.best);
+    });
+
+    it('notes whether the members span more than one top-level hierarchy', async () => {
+      const result = await deriveEcl({ conceptIds: [id.A1a, id.P1] }, fixture(), {
+        omitTerms: true,
+        hierarchySummary: false,
+        critique: true,
+      });
+      assert.strictEqual(result.critique?.spansHierarchies, true);
+      assert.strictEqual(result.critique?.hierarchies.length, 2);
+    });
+
+    it('lists the inactive ids given', async () => {
+      const result = await deriveEcl({ conceptIds: [id.A2, id.A3, id.RETIRED] }, fixture(), {
+        omitTerms: true,
+        critique: true,
+      });
+      assert.deepStrictEqual(result.critique?.inactive, [id.RETIRED]);
+    });
+  });
+
   describe('presentation', () => {
     it('formats candidates with display terms', async () => {
       const mock = fixture();

@@ -63,6 +63,7 @@ import {
   type SetDifference,
 } from './set-queries';
 import { bestSingles, costCover, coverDescend, rootsCover } from './cover-optimiser';
+import { findNearMisses } from './critique';
 import { greedyGrouping, refactorDescend } from './greedy-grouping';
 import { localScore, render, type ClauseForm, type HierarchyClause } from './hierarchy-clauses';
 import { loadTaxonomyGraph, type TaxonomyGraph } from './taxonomy-graph';
@@ -137,6 +138,59 @@ export interface DeriveOptions {
   useGraph?: boolean;
   /** Most concepts in any fetched subgraph. Default 200,000. */
   maxGraphConcepts?: number;
+  /**
+   * Add `critique`: structural checks on the list (see {@link CodelistCritique}).
+   * `true` uses the defaults of {@link CritiqueOptions}. Default false.
+   */
+  critique?: boolean | CritiqueOptions;
+}
+
+/** Limits for {@link CodelistCritique}. */
+export interface CritiqueOptions {
+  /** CHK16: the most clauses the best exact form may need before it is flagged. Default 35. */
+  maxClauses?: number;
+  /** CHK12: the share of `<< X` the list must hold for X to be a near miss. Default 0.9. */
+  nearMissShare?: number;
+  /** CHK12: the fewest concepts in `<< X` for X to be considered. Default 5. */
+  nearMissMinSize?: number;
+  /** CHK12: the most near misses reported. Default 5. */
+  maxNearMisses?: number;
+  /**
+   * CHK08: look for inactive concepts the members' history implies but the
+   * input leaves out, with this history profile (`true` means `'HISTORY-MOD'`).
+   * Needs a server that supports ECL history supplements. Default false.
+   */
+  impliedInactive?: boolean | 'HISTORY-MIN' | 'HISTORY-MOD' | 'HISTORY-MAX';
+}
+
+/** A concept the list holds most, but not all, of `<< conceptId` of (CHK12). */
+export interface NearMiss {
+  conceptId: string;
+  display?: string;
+  /** Concepts in `<< conceptId`. */
+  descendants: number;
+  /** Members in `<< conceptId`. */
+  listed: number;
+  /** `<< conceptId` concepts the list leaves out, counted on the server. */
+  missing: SetDifference;
+}
+
+/**
+ * Structural checks on the list, after the NHS ValueSet Management Tool's
+ * (CHK numbers are its checks). Advisory: each can be intended.
+ */
+export interface CodelistCritique {
+  /** CHK16: clauses the best exact candidate needs, against the limit. */
+  clauses: { best: number; limit: number; exceeded: boolean };
+  /** CHK12: groupers the list nearly fills; empty when the IS-A subgraph was not loaded. */
+  nearMisses: NearMiss[];
+  /** CHK15: members by top-level hierarchy. */
+  hierarchies: DeriveResult['hierarchies'];
+  spansHierarchies: boolean;
+  /** CHK07: inactive ids in the input. */
+  inactive: string[];
+  /** CHK08: inactive concepts the history implies but the input leaves out (when asked for). */
+  impliedInactive?: SetDifference;
 }
 
 export type { SetDifference } from './set-queries';
@@ -231,6 +285,8 @@ export interface DeriveResult {
   candidates: DeriveCandidate[];
   /** What was skipped or limited, and why. */
   notes: string[];
+  /** Structural checks on the list, when the `critique` option asks for them. */
+  critique?: CodelistCritique;
 }
 
 // ── Defaults and small helpers ───────────────────────────────────────────
@@ -253,6 +309,15 @@ const DEFAULTS: Required<DeriveOptions> = {
   greedyGrouping: true,
   useGraph: true,
   maxGraphConcepts: 200_000,
+  critique: false,
+};
+
+const CRITIQUE_DEFAULTS: Required<CritiqueOptions> = {
+  maxClauses: 35,
+  nearMissShare: 0.9,
+  nearMissMinSize: 5,
+  maxNearMisses: 5,
+  impliedInactive: false,
 };
 
 /** Above this many concept references, candidates are not formatted or given terms. */
@@ -302,7 +367,8 @@ export async function deriveEcl(
   }
 
   const graph = opts.useGraph ? await loadGraph(members, q, opts, notes) : null;
-  if (opts.hierarchySummary) {
+  const critique = critiqueOptions(opts.critique);
+  if (opts.hierarchySummary || critique) {
     result.hierarchies = graph ? await graphHierarchies(graph, terminology) : await hierarchyDistribution(members, q);
   }
 
@@ -321,6 +387,15 @@ export async function deriveEcl(
   }
   // The input itself goes last, so a derived candidate that rebuilds it keeps its construction.
   await scorer.score([inputItself(input, members)]);
+  if (critique) {
+    result.critique = await buildCritique(
+      critique,
+      { result, members, graph, scored: scorer.scored },
+      q,
+      terminology,
+      opts,
+    );
+  }
 
   scorer.scored.sort((a, b) => byRank(rankOf(a), rankOf(b)));
   const top = scorer.scored.slice(0, opts.maxCandidates);
@@ -412,6 +487,69 @@ function wantRefinements(mode: DeriveOptions['refinements'], roots: number, scor
   if (mode === 'never') return false;
   if (roots > REFINEMENT_ROOTS) return true;
   return roots > 3 && !scored.some((c) => c.exact && c.clauses <= 3);
+}
+
+function critiqueOptions(option: DeriveOptions['critique']): Required<CritiqueOptions> | null {
+  if (!option) return null;
+  return { ...CRITIQUE_DEFAULTS, ...(option === true ? {} : option) };
+}
+
+/** The critique of the list, from what deriving it found plus a query per near miss. */
+async function buildCritique(
+  limits: Required<CritiqueOptions>,
+  found: { result: DeriveResult; members: MemberSet; graph: TaxonomyGraph | null; scored: Scored[] },
+  q: SetQueries,
+  terminology: ITerminologyService,
+  opts: Required<DeriveOptions>,
+): Promise<CodelistCritique> {
+  const { result, members, graph, scored } = found;
+  const best = Math.min(...scored.filter((s) => s.exact).map((s) => s.clauses));
+  const { hierarchies } = result;
+  return {
+    clauses: { best, limit: limits.maxClauses, exceeded: best > limits.maxClauses },
+    nearMisses: await nearMisses(limits, members, graph, q, terminology, opts, result.notes),
+    hierarchies,
+    spansHierarchies: hierarchies.length > 1,
+    inactive: [...result.input.inactive],
+  };
+}
+
+async function nearMisses(
+  limits: Required<CritiqueOptions>,
+  members: MemberSet,
+  graph: TaxonomyGraph | null,
+  q: SetQueries,
+  terminology: ITerminologyService,
+  opts: Required<DeriveOptions>,
+  notes: string[],
+): Promise<NearMiss[]> {
+  if (!graph) {
+    notes.push('Near misses need the IS-A subgraph, which was not loaded (see above).');
+    return [];
+  }
+  const local = findNearMisses(graph, limits.nearMissShare, limits.nearMissMinSize, limits.maxNearMisses);
+  const counted = await Promise.all(
+    local.map(async (n) => {
+      const missing = await q.sample(
+        { include: [{ ecl: `<< ${n.conceptId}` }], exclude: [members.clause] },
+        opts.sampleSize,
+      );
+      return { conceptId: n.conceptId, descendants: n.listed + missing.count, listed: n.listed, missing };
+    }),
+  );
+  const found: NearMiss[] = counted.filter((n) => n.missing.count > 0);
+  if (!opts.omitTerms && found.length > 0) {
+    try {
+      const info = await terminology.validateConcepts(found.map((n) => n.conceptId));
+      for (const n of found) {
+        const pt = info.get(n.conceptId)?.pt;
+        if (pt) n.display = pt;
+      }
+    } catch {
+      // Terms are a convenience; the ids stand on their own.
+    }
+  }
+  return found;
 }
 
 function inputItself(

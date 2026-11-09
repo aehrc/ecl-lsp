@@ -17,42 +17,19 @@ export interface Comment {
 export function extractComments(text: string): { comments: Comment[]; textWithoutComments: string } {
   const comments: Comment[] = [];
 
-  // Find all comments (both block and line)
-  // Important: Process line comments first since they take precedence
-  // (a block comment marker inside a line comment is just text)
+  // One left-to-right scan: whichever starts first wins, so a comment marker
+  // inside a display term or quoted string (`|see http://x|`, `"a /* b */"`) is
+  // text, and a block marker inside a line comment is part of that comment.
   const allComments: { start: number; end: number; content: string; type: 'block' | 'line' }[] = [];
-
-  // First, find all line comments
-  const lineCommentRegex = /\/\/[^\n]*/g;
+  const tokens = /\/\/[^\n]*|\/\*[\s\S]*?\*\/|"(?:[^"\\]|\\.)*"|\|[^|]*\|/g;
   let match: RegExpExecArray | null;
-  const lineCommentRanges: { start: number; end: number }[] = [];
-
-  while ((match = lineCommentRegex.exec(text)) !== null) {
-    const range = { start: match.index, end: lineCommentRegex.lastIndex };
-    lineCommentRanges.push(range);
-    allComments.push({
-      start: range.start,
-      end: range.end,
-      content: match[0],
-      type: 'line',
-    });
-  }
-
-  // Helper to check if a position is inside a line comment
-  const isInsideLineComment = (pos: number): boolean => {
-    return lineCommentRanges.some((range) => pos >= range.start && pos < range.end);
-  };
-
-  // Then find block comments, but skip ones inside line comments
-  const blockCommentRegex = /\/\*[\s\S]*?\*\//g;
-  while ((match = blockCommentRegex.exec(text)) !== null) {
-    // Skip if this block comment is inside a line comment
-    if (!isInsideLineComment(match.index)) {
+  while ((match = tokens.exec(text)) !== null) {
+    if (match[0].startsWith('/')) {
       allComments.push({
         start: match.index,
-        end: blockCommentRegex.lastIndex,
+        end: tokens.lastIndex,
         content: match[0],
-        type: 'block',
+        type: match[0].startsWith('//') ? 'line' : 'block',
       });
     }
   }

@@ -26,10 +26,15 @@ export function formatRefinementEquals(operator: string): string {
   return ` ${operator} `;
 }
 
+/** A display term's text with newlines, tabs and runs of spaces collapsed to single spaces. */
+export function collapseTermWhitespace(term: string): string {
+  return term.replaceAll(/\s+/g, ' ').trim();
+}
+
 export function normalizeTerm(term: string): string {
   // Normalize whitespace: remove newlines/tabs, collapse multiple spaces to single space
   // Preserve internal spaces between words
-  const normalized = term.replaceAll(/\s+/g, ' ').trim();
+  const normalized = collapseTermWhitespace(term);
   // Return with single space padding on each side
   return ` | ${normalized} |`;
 }

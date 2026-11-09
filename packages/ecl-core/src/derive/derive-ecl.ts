@@ -313,7 +313,8 @@ export async function deriveEcl(
 
   const scorer = new Scorer(members, q, opts, notes);
   // On the graph path only the best by local counts are counted on the server.
-  if (graph) await scorer.score(worthCounting(graphCandidates(graph, opts, notes), members.size, opts, notes));
+  if (graph)
+    await scorer.score(worthCounting(graphCandidates(graph, opts, notes), inputCost(input, members), opts, notes));
   else await scorer.score(await hierarchyCandidates(rootQuery.codes, result.roots, members, q, opts, notes));
   if (wantRefinements(opts.refinements, result.roots, scorer.scored)) {
     await scoreRefinements(input, members, rootQuery, scorer, q, terminology, opts, notes);
@@ -632,21 +633,33 @@ function graphCandidates(
  * as much as listing every member: they would lose to the input itself, and
  * can be long.
  */
+/**
+ * What the input itself costs, the candidate every result offers: the clauses
+ * of an expression, or one clause per member of a list or reference set.
+ */
+function inputCost(input: DeriveInput, members: MemberSet): { clauses: number; what: string } {
+  if ('ecl' in input) {
+    const clauses = countClauses(stripTermsAndComments(input.ecl));
+    return { clauses, what: `the ${clauses}-clause input expression` };
+  }
+  return { clauses: members.size, what: `listing the ${members.size} members` };
+}
+
 function worthCounting(
   candidates: (Built & { local: LocalCounts })[],
-  listing: number,
+  input: { clauses: number; what: string },
   opts: Required<DeriveOptions>,
   notes: string[],
 ): Built[] {
   const taken = opts.within ? candidates : candidates.slice(0, opts.maxCandidates);
   const cost = (b: Built & { local: LocalCounts }) =>
     b.local.clauses + b.local.misses + (opts.within ? 0 : b.local.additions);
-  const kept = taken.filter((b) => cost(b) < listing);
+  const kept = taken.filter((b) => cost(b) < input.clauses);
   const skipped = taken.length - kept.length;
   if (skipped > 0) {
     notes.push(
       `${skipped} graph candidate${skipped === 1 ? ' was' : 's were'} not counted on the server: by local counts ` +
-        `${skipped === 1 ? 'it costs' : 'each costs'} at least as much as listing the ${listing} members.`,
+        `${skipped === 1 ? 'it costs' : 'each costs'} at least as much as ${input.what}.`,
     );
   }
   return kept;

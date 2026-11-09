@@ -246,6 +246,17 @@ describe('deriveEcl', () => {
       assert.strictEqual(itself.ecl, ecl);
       assert.strictEqual(itself.exact, true);
     });
+
+    it('offers a form shorter than the expression even when it is no shorter than the member list', async () => {
+      // Selects A2 and P1 only; `<< A2 OR << P1` (2 clauses) costs the same as listing
+      // the 2 members, but less than the 5-clause expression.
+      const ecl = `(${id.A2} OR ${id.P1}) MINUS (${id.A5} OR ${id.A5a} OR ${id.A3})`;
+      const result = await deriveEcl({ ecl }, fixture(), { omitTerms: true, refinements: 'never' });
+      const shorter = result.candidates.find((c) => c.exact && c.clauses === 2);
+      assert.ok(shorter, result.candidates.map((c) => `${c.construction.kind} ${c.ecl}`).join(' | '));
+      assert.strictEqual(result.candidates[0], shorter);
+      assert.doesNotMatch(result.notes.join('\n'), /not counted on the server/);
+    });
   });
 
   describe('reference set input', () => {

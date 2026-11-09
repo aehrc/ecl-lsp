@@ -532,6 +532,24 @@ describe('deriveEcl', () => {
       assert.strictEqual(result.candidates[0].exact, true);
     });
 
+    it('under `within`, offers the single ancestor that misses nothing even when it adds much elsewhere', async () => {
+      // FINDING has 10 more children outside the set, so everywhere `< FINDING`
+      // adds more than `< A1`, `< B` and `< A` cost with their misses; within
+      // the members and PROC it adds nothing (issue #147, ecl-047).
+      const mock = fixture();
+      for (let i = 0; i < 10; i++) mock.add(sctid(4000 + i), `F${i}`, [id.FINDING]);
+      const set = [id.A1a, id.A1b, id.A5a, id.B1, id.B2];
+      const result = await deriveEcl({ conceptIds: set }, mock, {
+        omitTerms: true,
+        refinements: 'never',
+        within: `${set.join(' OR ')} OR << ${id.PROC}`,
+      });
+      const single = result.candidates.find((c) => c.ecl === `< ${id.FINDING}`);
+      assert.ok(single, result.candidates.map((c) => c.ecl).join(' | '));
+      assert.strictEqual(single.exact, true);
+      assert.strictEqual(result.candidates[0].ecl, `< ${id.FINDING}`);
+    });
+
     it('offers greedy grouping on a partial graph when the descendants are too many', async () => {
       // M is a root with a deep subtree (C and 20 children), so loading below
       // every root is too large; below REFACTOR's candidates (A, A1) is not.

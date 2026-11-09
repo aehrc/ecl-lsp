@@ -78,12 +78,18 @@ function commentsIn(text: string): string[] {
   return [...text.matchAll(COMMENT_OR_LITERAL)].map((m) => m[0]).filter((m) => m.startsWith('/*'));
 }
 
-/** `text` without comments, for comparing operands and for server queries. */
+/** Comments, terms, quoted strings and runs of whitespace. */
+const COMMENT_LITERAL_OR_SPACE = /"(?:[^"\\]|\\.)*"|\|[^|]*\||\/\*[\s\S]*?\*\/|\s+/g;
+
+/**
+ * `text` without comments and with single spaces, for comparing operands and
+ * for server queries. Terms and quoted strings are kept exactly.
+ */
 function withoutComments(text: string): string {
-  return text
-    .replaceAll(COMMENT_OR_LITERAL, (m) => (m.startsWith('/*') ? ' ' : m))
-    .replaceAll(/\s+/g, ' ')
-    .trim();
+  const blank = (t: string) =>
+    t.replaceAll(COMMENT_LITERAL_OR_SPACE, (m) => (m.startsWith('/*') || /^\s/.test(m) ? ' ' : m));
+  // Twice: blanking a comment can leave spaces next to the run around it.
+  return blank(blank(text)).trim();
 }
 
 /** `text` split into its leading comments, the rest, and its trailing comments. */
@@ -117,39 +123,45 @@ function splitGap(gap: string): [string[], string[]] {
   return [commentsIn(gap.slice(0, op)), commentsIn(gap.slice(op))];
 }
 
-/**
- * `kept`, an order-preserving subsequence of `operands`, with the comments of
- * each removed operand added to the nearest kept operand (the one before it,
- * or the first when none is before it).
- */
-function carryComments(operands: string[], kept: string[]): string[] {
-  const result = [...kept];
-  let k = 0;
-  let lastKept = -1;
-  const orphans: string[] = [];
-  for (const operand of operands) {
-    if (k < kept.length && operand === kept[k]) {
-      lastKept = k++;
-      continue;
-    }
-    const comments = commentsIn(operand);
-    if (comments.length === 0) continue;
-    if (lastKept >= 0) result[lastKept] = `${result[lastKept]} ${comments.join(' ')}`;
-    else orphans.push(...comments);
-  }
-  if (orphans.length > 0 && result.length > 0) result[0] = `${orphans.join(' ')} ${result[0]}`;
-  return result;
+/** Operands a step keeps, and those it removes (as they were). */
+interface Pruned {
+  kept: string[];
+  removed: string[];
 }
 
-/** `result` with every comment of `input` it lost put back after it. */
-function restoreComments(input: string, result: string): string {
-  const left = commentsIn(result);
-  const lost: string[] = [];
-  for (const c of commentsIn(input)) {
-    const i = left.indexOf(c);
-    if (i >= 0) left.splice(i, 1);
-    else lost.push(c);
+/**
+ * `operands` without those at `drop`, each dropped operand's comments added
+ * to the nearest kept operand (the one before it, or the first when none is
+ * before it) unless that operand already has them.
+ */
+function prune(operands: string[], drop: ReadonlySet<number>): Pruned {
+  const kept: string[] = [];
+  const removed: string[] = [];
+  const orphans: string[] = [];
+  const carry = (target: number, comments: string[]) => {
+    const fresh = comments.filter((c) => !commentsIn(kept[target]).includes(c));
+    if (fresh.length > 0) kept[target] = `${kept[target]} ${fresh.join(' ')}`;
+  };
+  operands.forEach((operand, i) => {
+    if (!drop.has(i)) {
+      kept.push(operand);
+      return;
+    }
+    removed.push(operand);
+    if (kept.length > 0) carry(kept.length - 1, commentsIn(operand));
+    else orphans.push(...commentsIn(operand));
+  });
+  if (orphans.length > 0 && kept.length > 0) {
+    const fresh = orphans.filter((c) => !commentsIn(kept[0]).includes(c));
+    if (fresh.length > 0) kept[0] = `${fresh.join(' ')} ${kept[0]}`;
   }
+  return { kept, removed };
+}
+
+/** `result` with each comment of `input` it no longer has put back after it (once). */
+function restoreComments(input: string, result: string): string {
+  const kept = new Set(commentsIn(result));
+  const lost = [...new Set(commentsIn(input))].filter((c) => !kept.has(c));
   return lost.length > 0 ? `${result} ${lost.join(' ')}` : result;
 }
 
@@ -175,22 +187,15 @@ function hasAnyCompound(ast: ExpressionNode): boolean {
 
 // ── Technique 1: Remove exact duplicate operands ─────────────────────────
 
-function removeDuplicates(operandTexts: string[]): string[] | null {
+function removeDuplicates(operandTexts: string[]): Pruned | null {
   const seen = new Set<string>();
-  const kept: string[] = [];
-  let changed = false;
-
-  for (const t of operandTexts) {
+  const drop = new Set<number>();
+  operandTexts.forEach((t, i) => {
     const key = withoutComments(t);
-    if (seen.has(key)) {
-      changed = true;
-    } else {
-      seen.add(key);
-      kept.push(t);
-    }
-  }
-
-  return changed ? carryComments(operandTexts, kept) : null;
+    if (seen.has(key)) drop.add(i);
+    else seen.add(key);
+  });
+  return drop.size > 0 ? prune(operandTexts, drop) : null;
 }
 
 // ── Technique 2: Same-concept operator ranking ───────────────────────────
@@ -199,7 +204,7 @@ const AND_RANK: Record<string, number> = { self: 0, '<': 1, '<<': 2 };
 const OR_RANK: Record<string, number> = { self: 0, '<': 1, '<<': 2 };
 
 // eslint-disable-next-line sonarjs/cognitive-complexity -- inherently complex: parses each operand, groups by concept, then selects best rank per group for AND/OR
-function rankOperands(operandTexts: string[], compoundOp: 'AND' | 'OR'): string[] | null {
+function rankOperands(operandTexts: string[], compoundOp: 'AND' | 'OR'): Pruned | null {
   // Parse each operand to get concept info
   interface OperandInfo {
     conceptId: string;
@@ -270,15 +275,14 @@ function rankOperands(operandTexts: string[], compoundOp: 'AND' | 'OR'): string[
   }
 
   if (removeSet.size === 0) return null;
-  return carryComments(
-    operandTexts,
-    operandTexts.filter((_, i) => !removeSet.has(i)),
-  );
+  return prune(operandTexts, removeSet);
 }
 
 // ── Technique 3: Factor common focus (OR) / Merge same-focus (AND) ───────
 
-function getFocusKey(text: string): { focusKey: string; focusText: string; refinementText: string } | null {
+function getFocusKey(
+  text: string,
+): { focusKey: string; focusText: string; focusComments: string[]; refinementText: string } | null {
   const result = parseECL(text);
   if (!result.ast?.expression) return null;
   const expr = result.ast.expression;
@@ -317,8 +321,12 @@ function getFocusKey(text: string): { focusKey: string; focusText: string; refin
 
   const focusText = sliceText(innerText, innerRefined.expression);
   const refinementText = sliceText(innerText, innerRefined.refinement);
+  // Comments between the focus and its refinement (`< X /* c */ : …`) are about the focus.
+  const focusComments = commentsIn(
+    innerText.slice(innerRefined.expression.range.end.offset, innerRefined.refinement.range.start.offset),
+  );
 
-  return { focusKey, focusText, refinementText };
+  return { focusKey, focusText, focusComments, refinementText };
 }
 
 function bracketIfCompound(refinement: string): string {
@@ -341,14 +349,16 @@ function factorOrMergeFocus(operandTexts: string[], compoundOp: 'AND' | 'OR'): s
   const commonKey = validParts[0].focusKey;
   if (!validParts.every((p) => p.focusKey === commonKey)) return null;
 
-  const commonFocusText = validParts[0].focusText;
+  const commonFocusText = withComments([], validParts[0].focusText, validParts[0].focusComments);
   // OR: factor keeps OR between refinements
   // AND: merge uses comma (equivalent to AND in refinement context, reads as continuation)
   const joinSep = compoundOp === 'OR' ? ' OR ' : ', ';
   // Bracket any refinement that is itself a conjunction or disjunction. ECL has
   // no precedence between `,`/AND and OR in a refinement, and servers disagree
   // on `a, b OR c`: Ontoserver reads it as `a, (b OR c)`.
-  const joinedRefinements = validParts.map((p) => bracketIfCompound(p.refinementText)).join(joinSep);
+  const joinedRefinements = validParts
+    .map((p, i) => withComments(i === 0 ? [] : p.focusComments, bracketIfCompound(p.refinementText), []))
+    .join(joinSep);
 
   const comments = peeled.flatMap((p) => [...p.before, ...p.after]);
   return withComments([], `${commonFocusText} : ${joinedRefinements}`, comments);
@@ -362,7 +372,7 @@ async function fhirSubsumption(
   compoundOp: 'AND' | 'OR',
   terminologyService: ITerminologyService,
   trace: SimplifyTrace | null,
-): Promise<string[] | null> {
+): Promise<Pruned | null> {
   const n = operandTexts.length;
   if (n < 2) return null;
   const plain = operandTexts.map((t) => withoutComments(t));
@@ -419,10 +429,7 @@ async function fhirSubsumption(
   }
 
   if (removeSet.size === 0) return null;
-  return carryComments(
-    operandTexts,
-    operandTexts.filter((_, i) => !removeSet.has(i)),
-  );
+  return prune(operandTexts, removeSet);
 }
 
 // ── Step recording ───────────────────────────────────────────────────────
@@ -458,25 +465,11 @@ function recordStep(
   technique: SimplifyTechnique,
   compoundOperator: 'AND' | 'OR',
   operands: string[],
-  kept: string[],
+  removed: string[],
   result: string,
 ): void {
   if (!trace) return;
-  const removed = kept.length === 0 ? [] : operandsRemoved(operands, kept);
   trace.steps.push({ technique, compoundOperator, operands: [...operands], removed, result });
-}
-
-/** Multiset difference `operands - kept`, preserving order (so one copy of a duplicate is reported). */
-function operandsRemoved(operands: string[], kept: string[]): string[] {
-  const remaining = new Map<string, number>();
-  for (const k of kept) remaining.set(k, (remaining.get(k) ?? 0) + 1);
-  const removed: string[] = [];
-  for (const op of operands) {
-    const n = remaining.get(op) ?? 0;
-    if (n > 0) remaining.set(op, n - 1);
-    else removed.push(op);
-  }
-  return removed;
 }
 
 // ── Bottom-up engine ─────────────────────────────────────────────────────
@@ -551,16 +544,16 @@ function applySyncTechniques(
   // Technique 1: Remove duplicates
   const deduped = removeDuplicates(operandTexts);
   if (deduped) {
-    const result = deduped.length === 1 ? deduped[0] : deduped.join(` ${compoundOp} `);
-    recordStep(trace, 'removeDuplicates', compoundOp, operandTexts, deduped, result);
+    const result = deduped.kept.join(` ${compoundOp} `);
+    recordStep(trace, 'removeDuplicates', compoundOp, operandTexts, deduped.removed, result);
     return result;
   }
 
   // Technique 2: Same-concept operator ranking
   const ranked = rankOperands(operandTexts, compoundOp);
   if (ranked) {
-    const result = ranked.length === 1 ? ranked[0] : ranked.join(` ${compoundOp} `);
-    recordStep(trace, 'rankOperators', compoundOp, operandTexts, ranked, result);
+    const result = ranked.kept.join(` ${compoundOp} `);
+    recordStep(trace, 'rankOperators', compoundOp, operandTexts, ranked.removed, result);
     return result;
   }
 
@@ -633,9 +626,9 @@ async function simplifyText(
   if (terminologyService) {
     const subsumed = await fhirSubsumption(operandTexts, compoundOp, terminologyService, trace);
     if (subsumed) {
-      const afterFhir = subsumed.length === 1 ? subsumed[0] : subsumed.join(` ${compoundOp} `);
-      recordStep(trace, 'subsumption', compoundOp, operandTexts, subsumed, afterFhir);
-      if (subsumed.length === 1) return afterFhir;
+      const afterFhir = subsumed.kept.join(` ${compoundOp} `);
+      recordStep(trace, 'subsumption', compoundOp, operandTexts, subsumed.removed, afterFhir);
+      if (subsumed.kept.length === 1) return afterFhir;
       // After FHIR, re-run sync techniques
       const redecomposed = decomposeCompound(afterFhir);
       if (redecomposed) {

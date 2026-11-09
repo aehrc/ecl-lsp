@@ -851,6 +851,30 @@ describe('simplifyExpression', () => {
       });
     }
 
+    it('reports only the removed operand when it carried a comment', async () => {
+      const result = await simplifyExpression('<< 73211009 OR /* again */ << 73211009');
+      assert.deepStrictEqual(result.steps[0].removed, ['/* again */ << 73211009']);
+    });
+
+    it('does not repeat a comment both duplicates carry', async () => {
+      const result = await simplifyExpression('<< 73211009 /* x */ OR << 73211009 /* x */');
+      assert.strictEqual(result.expression, '<< 73211009 /* x */');
+    });
+
+    it('keeps a comment on a factored focus with the focus', async () => {
+      const result = await simplifyExpression(
+        '(< 404684003 /* c */ : 363698007 = << 39057004) OR (< 404684003 : 116676008 = << 79654002)',
+      );
+      assert.strictEqual(result.expression, '< 404684003 /* c */ : 363698007 = << 39057004 OR 116676008 = << 79654002');
+    });
+
+    it('does not treat filter strings that differ only in spacing as duplicates', async () => {
+      const input = '<< 73211009 {{ term = "a  b" }} OR << 73211009 {{ term = "a b" }}';
+      const result = await simplifyExpression(input);
+      assert.strictEqual(result.expression, input);
+      assert.strictEqual(result.changed, false);
+    });
+
     it('keeps a comment outside a factored operand', async () => {
       const result = await simplifyExpression(
         '/* lung */ (< 404684003 : 363698007 = << 39057004) OR (< 404684003 : 116676008 = << 79654002)',

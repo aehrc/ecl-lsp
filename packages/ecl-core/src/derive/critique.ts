@@ -20,12 +20,10 @@ export interface LocalNearMiss {
 
 /**
  * Concepts X whose `<< X` has at least `minSize` concepts, of which the list
- * holds at least `share` but not all; largest first, at most `max`. Only
- * concepts with their descendants loaded are considered, and one inside an
- * already reported concept is left out (its missing members are among that
- * concept's).
+ * holds at least `share` but not all; largest first, nested ones included.
+ * Only concepts with their descendants loaded are considered.
  */
-export function findNearMisses(g: TaxonomyGraph, share: number, minSize: number, max: number): LocalNearMiss[] {
+export function nearMissCandidates(g: TaxonomyGraph, share: number, minSize: number): LocalNearMiss[] {
   const found: LocalNearMiss[] = [];
   for (const conceptId of g.ancestors()) {
     if (!g.hasDescendants(conceptId)) continue;
@@ -35,15 +33,26 @@ export function findNearMisses(g: TaxonomyGraph, share: number, minSize: number,
       found.push({ conceptId, descendants, listed });
     }
   }
-  found.sort((a, b) => b.descendants - a.descendants || byId(a.conceptId, b.conceptId));
+  return found.sort((a, b) => b.descendants - a.descendants || byId(a.conceptId, b.conceptId));
+}
 
-  const kept: LocalNearMiss[] = [];
+/**
+ * The first `max` of `items` (largest first) that are not inside one already
+ * taken: its missing members are among that one's.
+ */
+export function outermost<T extends { conceptId: string }>(g: TaxonomyGraph, items: T[], max: number): T[] {
+  const kept: T[] = [];
   const covered = new Set<string>();
-  for (const n of found) {
+  for (const n of items) {
     if (kept.length >= max) break;
     if (covered.has(n.conceptId)) continue;
     kept.push(n);
     for (const d of g.descendants(n.conceptId)) covered.add(d);
   }
   return kept;
+}
+
+/** The near misses on the graph alone: {@link nearMissCandidates}, outermost first, at most `max`. */
+export function findNearMisses(g: TaxonomyGraph, share: number, minSize: number, max: number): LocalNearMiss[] {
+  return outermost(g, nearMissCandidates(g, share, minSize), max);
 }

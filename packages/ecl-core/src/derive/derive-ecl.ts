@@ -64,7 +64,7 @@ import {
   type SetDifference,
 } from './set-queries';
 import { bestSingles, costCover, coverDescend, rootsCover } from './cover-optimiser';
-import { findNearMisses } from './critique';
+import { nearMissCandidates, outermost } from './critique';
 import { greedyGrouping, refactorDescend } from './greedy-grouping';
 import { localScore, render, type ClauseForm, type HierarchyClause } from './hierarchy-clauses';
 import { loadTaxonomyGraph, type TaxonomyGraph } from './taxonomy-graph';
@@ -331,6 +331,8 @@ const REFINEMENT_ROOTS = 20;
 const LOSSY_SIZED = 64;
 /** Most subtree tops (for exclusions) or ancestors (for covers) whose size is counted. */
 const MAX_SIZED = 500;
+/** Near-miss candidates counted on the server for each one reported (nested ones included). */
+const NEAR_MISS_CANDIDATES_PER_REPORTED = 4;
 /** Most clauses greedy grouping chooses by score; members left over are listed. */
 const MAX_GREEDY_CLAUSES = 300;
 /** Lossy refinements for which a subtraction is sought. */
@@ -466,6 +468,8 @@ async function subtractions(
       within: c.ecl,
       subtractions: false,
       hierarchySummary: false,
+      // Only its candidates are used: a critique of the subtracted set would be thrown away.
+      critique: false,
       omitTerms: true,
       maxCandidates: 3,
     });
@@ -519,12 +523,16 @@ async function buildCritique(
     (s) => s.exact && s.construction.kind !== 'refset' && s.construction.kind !== 'expression',
   );
   const best = Math.min(members.size, ...induced.map((s) => s.clauses));
+  const [near, inactive] = await Promise.all([
+    nearMisses(limits, members, graph, q, terminology, opts, result.notes),
+    'refsetId' in input ? inactiveMembers(members, graph, q, result.notes) : [...result.input.inactive],
+  ]);
   const critique: CodelistCritique = {
     clauses: { best, limit: limits.maxClauses, exceeded: best > limits.maxClauses },
-    nearMisses: await nearMisses(limits, members, graph, q, terminology, opts, result.notes),
+    nearMisses: near,
     hierarchies,
     spansHierarchies: hierarchies.length > 1,
-    inactive: 'refsetId' in input ? await inactiveMembers(members, q, result.notes) : [...result.input.inactive],
+    inactive,
   };
   if (limits.impliedInactive) {
     const profile = limits.impliedInactive === true ? 'HISTORY-MOD' : limits.impliedInactive;
@@ -562,12 +570,17 @@ async function nearMisses(
     );
     return [];
   }
-  const local = findNearMisses(graph, limits.nearMissShare, limits.nearMissMinSize, limits.maxNearMisses);
+  // Nested candidates are counted too, so one the server confirms still counts
+  // when the server's count drops the concept around it.
+  const local = nearMissCandidates(graph, limits.nearMissShare, limits.nearMissMinSize).slice(
+    0,
+    limits.maxNearMisses * NEAR_MISS_CANDIDATES_PER_REPORTED,
+  );
   // Advisory: a failed count drops that near miss, never the result.
   const counted = await Promise.allSettled(
     local.map((n) => q.sample({ include: [{ ecl: `<< ${n.conceptId}` }], exclude: [members.clause] }, opts.sampleSize)),
   );
-  const found: NearMiss[] = [];
+  const confirmed: NearMiss[] = [];
   counted.forEach((r, i) => {
     const { conceptId, listed } = local[i];
     if (r.status === 'rejected') {
@@ -576,10 +589,11 @@ async function nearMisses(
       // The server's count is the truth: the graph may have missed concepts below.
       const descendants = listed + r.value.count;
       if (r.value.count > 0 && listed / descendants >= limits.nearMissShare) {
-        found.push({ conceptId, descendants, listed, missing: r.value });
+        confirmed.push({ conceptId, descendants, listed, missing: r.value });
       }
     }
   });
+  const found = outermost(graph, confirmed, limits.maxNearMisses);
   if (!opts.omitTerms && found.length > 0) {
     try {
       const info = await terminology.validateConcepts(found.map((n) => n.conceptId));
@@ -596,14 +610,20 @@ async function nearMisses(
 
 /**
  * A reference set's inactive members (CHK07). Its member set holds only the
- * active ones, so one count says whether there are any, and two listings which.
+ * active ones, so one count says whether there are any, and a listing which
+ * (two off the graph, which already holds the active members).
  */
-async function inactiveMembers(members: MemberSet, q: SetQueries, notes: string[]): Promise<string[]> {
+async function inactiveMembers(
+  members: MemberSet,
+  graph: TaxonomyGraph | null,
+  q: SetQueries,
+  notes: string[],
+): Promise<string[]> {
   const refset: ValueSetCompose = { include: [members.clause] };
   try {
     const all = await q.sample(refset, 0, false);
     if (all.count <= members.size) return [];
-    const active = new Set((await q.codes(refset, members.size)).codes);
+    const active = graph?.members ?? new Set((await q.codes(refset, members.size)).codes);
     return (await q.codes(refset, all.count, false)).codes.filter((c) => !active.has(c));
   } catch (error) {
     notes.push(`Inactive reference set members were not checked: ${errorMessage(error)}.`);

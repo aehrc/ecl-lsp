@@ -672,6 +672,25 @@ describe('deriveEcl', () => {
       assert.deepStrictEqual(result.critique?.nearMisses, []);
     });
 
+    it('reconsiders a nested near miss when the server drops the outer one', async () => {
+      const mock = fixture();
+      const expand = mock.expandCompose.bind(mock);
+      mock.expandCompose = async (compose, options) => {
+        const ecl = compose.include.map((x) => ('ecl' in x ? x.ecl : '')).join();
+        const r = await expand(compose, options);
+        // The server finds 4 more under Finding: 8 of 17 is below 0.5, so A (8 of 9) is the near miss.
+        return ecl === `<< ${id.FINDING}` && compose.exclude?.length ? { ...r, total: r.total + 4 } : r;
+      };
+      const result = await deriveEcl({ conceptIds: NEARLY_A }, mock, {
+        omitTerms: true,
+        critique: { nearMissShare: 0.5 },
+      });
+      assert.deepStrictEqual(
+        result.critique?.nearMisses.map((n) => n.conceptId),
+        [id.A],
+      );
+    });
+
     it('leaves the hierarchy summary out of the result when it was turned off', async () => {
       const result = await deriveEcl({ conceptIds: [id.A1a, id.P1] }, fixture(), {
         omitTerms: true,

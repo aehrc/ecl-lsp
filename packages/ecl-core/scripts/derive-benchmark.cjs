@@ -30,6 +30,7 @@ const path = require('node:path');
 
 const DIST = path.join(__dirname, '..', 'dist-tsc');
 const RETRY_MS = 30_000;
+const NO_CANDIDATES = 'no candidates';
 const PAUSE_MS = 1500;
 const TIMEOUT_MS = 120_000;
 const NOT_DERIVED = new Set(['enumeration', 'refset', 'expression']);
@@ -61,11 +62,10 @@ function parseArgs(argv) {
 
 /** Rows of a DMWB export, keyed by ID, with the DESCRIPTION and SCTRULE columns. */
 function readSets(file) {
-  const lines = fs
-    .readFileSync(file, 'latin1')
-    .replace(/^(?:\uFEFF|\u00EF\u00BB\u00BF)/, '')
-    .split(/\r?\n/)
-    .filter(Boolean);
+  // DMWB exports are Latin-1; one starting with a UTF-8 byte-order mark is UTF-8.
+  const bytes = fs.readFileSync(file);
+  const utf8 = bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf;
+  const lines = (utf8 ? bytes.subarray(3).toString('utf8') : bytes.toString('latin1')).split(/\r?\n/).filter(Boolean);
   if (lines.length === 0) throw new Error(`${file} is empty`);
   const header = lines[0].split('\t');
   const col = (name) => {
@@ -157,7 +157,8 @@ async function run(args) {
   const ctx = { deriveEcl, countClauses, fhir, expandCompose, reference, options, counted: () => requests };
   for (const set of todo) {
     let rec;
-    for (let attempt = 0; attempt < 2 && !rec?.top; attempt++) {
+    // A set with no candidates gets none on a retry either.
+    for (let attempt = 0; attempt < 2 && !rec?.top && !rec?.error?.startsWith(NO_CANDIDATES); attempt++) {
       if (attempt) await sleep(RETRY_MS);
       requests = 0;
       rec = await deriveOne(ctx, set);
@@ -185,7 +186,7 @@ async function deriveOne(ctx, { refset, name, codes }) {
     rec.ms = Date.now() - t;
     rec.requests = ctx.counted();
     rec.members = r.input.members;
-    if (r.candidates.length === 0) throw new Error(`no candidates: ${r.notes.join(' ') || 'none returned'}`);
+    if (r.candidates.length === 0) throw new Error(`${NO_CANDIDATES}: ${r.notes.join(' ') || 'none returned'}`);
     rec.top = pick(r.candidates[0]);
     rec.topDerived = pick(r.candidates.find((c) => !NOT_DERIVED.has(c.construction.kind)));
     const exact = r.candidates.filter((c) => c.exact);

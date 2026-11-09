@@ -1095,6 +1095,13 @@ describe('deriveInputFromText', () => {
     assert.throws(() => deriveInputFromText(`<< ${id.A1}\n/* ECL-END */\n<< ${id.A2}`), /2 ECL expressions/);
   });
 
+  it('does not count a delimiter inside a search string or a line comment as a split', () => {
+    const quoted = `<< ${id.A1} {{ D term = "/* ECL-END */ 1234567" }}`;
+    assert.deepStrictEqual(deriveInputFromText(quoted), { ecl: quoted });
+    const commented = `<< ${id.A1} // see /* ECL-END */ 1234567\nOR << ${id.A2}`;
+    assert.doesNotThrow(() => deriveInputFromText(commented));
+  });
+
   it('reads pasted code lists line by line', () => {
     assert.deepStrictEqual(deriveInputFromText(`${id.A1}\n${id.A2}\n`), { conceptIds: [id.A1, id.A2] });
     assert.deepStrictEqual(deriveInputFromText(`code,term\n${id.A1},A1\n${id.A2},A2`), {

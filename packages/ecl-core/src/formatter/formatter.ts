@@ -10,65 +10,25 @@ import {
   getIndentString,
   normalizeTerm,
 } from './rules';
-import { extractComments, reinsertComments } from './comments';
+import { commentSpans, extractComments, reinsertComments } from './comments';
 import { printAst } from './ast-printer';
 import { signatureOf, structuralSignature } from './semantic-guard';
 
-/** The index just past a quoted string or display term starting at `start` (it ends at the line's end at most). */
-function skipLiteral(text: string, start: number): number {
-  const close = text[start];
-  let i = start + 1;
-  while (i < text.length && text[i] !== close && text[i] !== '\n') {
-    i += close === '"' && text[i] === '\\' ? 2 : 1;
-  }
-  return Math.min(i + 1, text.length);
-}
-
-/**
- * The index after the string, term, line comment or block comment starting at
- * `i`, or `i + 1` when none starts there. Strings and terms come first, so
- * `"http://x"` holds no line comment.
- */
-function skipNonCode(text: string, i: number): number {
-  if (text[i] === '"' || text[i] === '|') return skipLiteral(text, i);
-  if (text.startsWith('//', i)) {
-    const end = text.indexOf('\n', i);
-    return end < 0 ? text.length : end;
-  }
-  if (text.startsWith('/*', i)) {
-    const end = text.indexOf('*/', i + 2);
-    return end < 0 ? text.length : end + 2;
-  }
-  return i + 1;
-}
-
-// Task 4.1-4.5: Split document by /* ECL-END */ delimiters
-// Ignores /* ECL-END */ inside a line comment (//), a quoted string or a display term
+// Task 4.1-4.5: Split document by /* ECL-END */ delimiters. The delimiters are
+// the ECL-END comments commentSpans finds, the same scan extractComments uses,
+// so one in a line comment, a quoted string or a display term is not one, and
+// every one extractComments later drops has been split at.
 function splitExpressions(text: string): { expressions: string[]; hasDelimiters: boolean } {
-  const delimiter = '/* ECL-END */';
-
-  // Find all delimiter positions that are NOT inside comments or literals
-  const delimiterPositions: number[] = [];
-  let i = 0;
-  while (i < text.length) {
-    if (text.startsWith(delimiter, i)) {
-      delimiterPositions.push(i);
-      i += delimiter.length;
-    } else {
-      i = skipNonCode(text, i);
-    }
-  }
-
-  if (delimiterPositions.length === 0) {
+  const delimiters = commentSpans(text).filter((c) => c.content === '/* ECL-END */');
+  if (delimiters.length === 0) {
     return { expressions: [text], hasDelimiters: false };
   }
 
-  // Split at delimiter positions
   const parts: string[] = [];
   let lastEnd = 0;
-  for (const pos of delimiterPositions) {
-    parts.push(text.substring(lastEnd, pos));
-    lastEnd = pos + delimiter.length;
+  for (const d of delimiters) {
+    parts.push(text.substring(lastEnd, d.start));
+    lastEnd = d.end;
   }
   parts.push(text.substring(lastEnd));
 

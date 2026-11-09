@@ -2269,6 +2269,20 @@ describe('formatDocument — term and string text is left alone', () => {
     assert.strictEqual(fmt(input), input);
   });
 
+  // A delimiter the splitter misses is dropped as a comment: never lose one.
+  for (const input of [
+    '<< 404684003 |Clinical\nfinding| /* ECL-END */ << 19829001',
+    '<< 404684003 {{ D term = "a\nb" }} /* ECL-END */ << 19829001',
+    '<< 404684003 |Clinical finding /* ECL-END */ << 19829001',
+  ]) {
+    test(`keeps the delimiter in ${JSON.stringify(input)}`, () => {
+      const parts = fmt(input).split('/* ECL-END */');
+      assert.strictEqual(parts.length, 2, fmt(input));
+      assert.match(parts[0], /404684003/);
+      assert.match(parts[1], /19829001/);
+    });
+  }
+
   test('leaves private-use placeholder characters in the input alone', () => {
     const input = '<< 1 |a| OR 7 << 2';
     const out = fmt(input);

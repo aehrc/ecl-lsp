@@ -67,6 +67,7 @@ import { bestSingles, costCover, coverDescend, rootsCover } from './cover-optimi
 import { nearMissCandidates, outermost } from './critique';
 import { greedyGrouping, refactorDescend } from './greedy-grouping';
 import { localScore, render, type ClauseForm, type HierarchyClause } from './hierarchy-clauses';
+import { commentSpans } from '../formatter/comments';
 import { loadTaxonomyGraph, type TaxonomyGraph } from './taxonomy-graph';
 import { asFocus, refinementCandidates, refinementText, refsetFoci, type RefinementClause } from './refinements';
 
@@ -1453,6 +1454,19 @@ export function parseConceptIdList(text: string): string[] {
   return ids;
 }
 
+/** `text` split at its `/* ECL-END *\/` comments, not at one in a string, a term or a line comment. */
+function splitAtDelimiters(text: string): string[] {
+  const parts: string[] = [];
+  let last = 0;
+  for (const c of commentSpans(text)) {
+    if (!/^\/\*\s*ECL-END\s*\*\/$/.test(c.content)) continue;
+    parts.push(text.slice(last, c.start));
+    last = c.end;
+  }
+  parts.push(text.slice(last));
+  return parts;
+}
+
 /**
  * The derive input for pasted text: an OR list of bare concepts (one line or
  * formatted) as its concepts, so inactive and unknown ids are reported; any
@@ -1461,7 +1475,7 @@ export function parseConceptIdList(text: string): string[] {
  * line or as CSV, by {@link parseConceptIdList}.
  */
 export function deriveInputFromText(text: string): DeriveInput {
-  const expressions = text.split(/\/\*\s*ECL-END\s*\*\//).filter((part) => /\d/.test(part));
+  const expressions = splitAtDelimiters(text).filter((part) => /\d/.test(part));
   if (expressions.length > 1) {
     throw new Error(
       `The text holds ${expressions.length} ECL expressions (separated by /* ECL-END */); select the one to derive from.`,

@@ -83,8 +83,8 @@ export class SetQueries {
     return (await this.expand(compose, { count: 0 })).total;
   }
 
-  async sample(compose: ValueSetCompose, count: number): Promise<SetDifference> {
-    const r = await this.expand(compose, { count });
+  async sample(compose: ValueSetCompose, count: number, activeOnly = true): Promise<SetDifference> {
+    const r = await this.expand(compose, { count, activeOnly });
     return { count: r.total, sample: r.concepts };
   }
 

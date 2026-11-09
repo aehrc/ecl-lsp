@@ -505,13 +505,30 @@ async function buildCritique(
   const { result, members, graph, scored } = found;
   const best = Math.min(...scored.filter((s) => s.exact).map((s) => s.clauses));
   const { hierarchies } = result;
-  return {
+  const critique: CodelistCritique = {
     clauses: { best, limit: limits.maxClauses, exceeded: best > limits.maxClauses },
     nearMisses: await nearMisses(limits, members, graph, q, terminology, opts, result.notes),
     hierarchies,
     spansHierarchies: hierarchies.length > 1,
     inactive: [...result.input.inactive],
   };
+  if (limits.impliedInactive) {
+    const profile = limits.impliedInactive === true ? 'HISTORY-MOD' : limits.impliedInactive;
+    const given = result.input.inactive;
+    try {
+      critique.impliedInactive = await q.sample(
+        {
+          include: [{ ecl: `${members.ecl} {{ +${profile} }}` }],
+          exclude: [members.clause, ...(given.length > 0 ? [{ concepts: given }] : [])],
+        },
+        opts.sampleSize,
+        false,
+      );
+    } catch (error) {
+      result.notes.push(`Implied inactive codes were not checked: ${errorMessage(error)}.`);
+    }
+  }
+  return critique;
 }
 
 async function nearMisses(

@@ -629,6 +629,64 @@ describe('deriveEcl', () => {
       });
       assert.deepStrictEqual(result.critique?.inactive, [id.RETIRED]);
     });
+
+    describe('implied inactive codes', () => {
+      const OLD = sctid(1060);
+      const withHistory = () => fixture().add(OLD, 'Old', [id.A], false).associate(OLD, id.A2);
+      const ecls = (mock: HierarchyMockService) =>
+        mock.composeCalls.flatMap((c) => c.include.flatMap((x) => ('ecl' in x ? [x.ecl] : [])));
+
+      it('reports inactive codes the history implies', async () => {
+        const mock = withHistory();
+        const result = await deriveEcl({ conceptIds: [id.A2, id.A3] }, mock, {
+          omitTerms: true,
+          critique: { impliedInactive: true },
+        });
+        assert.strictEqual(result.critique?.impliedInactive?.count, 1);
+        assert.strictEqual(result.critique?.impliedInactive?.sample[0].code, OLD);
+        assert.ok(ecls(mock).some((e) => e.includes('{{ +HISTORY-MOD }}')));
+      });
+
+      it('uses the profile asked for', async () => {
+        const mock = withHistory();
+        await deriveEcl({ conceptIds: [id.A2, id.A3] }, mock, {
+          omitTerms: true,
+          critique: { impliedInactive: 'HISTORY-MIN' },
+        });
+        assert.ok(ecls(mock).some((e) => e.includes('{{ +HISTORY-MIN }}')));
+      });
+
+      it('does not report an inactive code the list already gives', async () => {
+        const result = await deriveEcl({ conceptIds: [id.A2, id.A3, OLD] }, withHistory(), {
+          omitTerms: true,
+          critique: { impliedInactive: true },
+        });
+        assert.strictEqual(result.critique?.impliedInactive?.count, 0);
+      });
+
+      it('is off unless asked', async () => {
+        const mock = withHistory();
+        const result = await deriveEcl({ conceptIds: [id.A2, id.A3] }, mock, { omitTerms: true, critique: true });
+        assert.strictEqual(result.critique?.impliedInactive, undefined);
+        assert.ok(!ecls(mock).some((e) => e.includes('HISTORY')));
+      });
+
+      it('notes a server that rejects the history supplement', async () => {
+        const mock = withHistory();
+        const expand = mock.expandCompose.bind(mock);
+        mock.expandCompose = async (compose, options) => {
+          if (compose.include.some((x) => 'ecl' in x && x.ecl.includes('HISTORY'))) throw new Error('unsupported');
+          return expand(compose, options);
+        };
+        const result = await deriveEcl({ conceptIds: [id.A2, id.A3] }, mock, {
+          omitTerms: true,
+          critique: { impliedInactive: true },
+        });
+        assert.strictEqual(result.critique?.impliedInactive, undefined);
+        assert.match(result.notes.join('\n'), /implied inactive.*unsupported/i);
+        assert.ok(result.critique?.clauses.best);
+      });
+    });
   });
 
   describe('presentation', () => {

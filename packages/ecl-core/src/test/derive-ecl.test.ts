@@ -532,6 +532,24 @@ describe('deriveEcl', () => {
       assert.strictEqual(result.candidates[0].exact, true);
     });
 
+    it('under `within`, offers the single ancestor that misses nothing even when it adds much elsewhere', async () => {
+      // FINDING has 10 more children outside the set, so everywhere `< FINDING`
+      // adds more than `< A1`, `< B` and `< A` cost with their misses; within
+      // the members and PROC it adds nothing (issue #147, ecl-047).
+      const mock = fixture();
+      for (let i = 0; i < 10; i++) mock.add(sctid(4000 + i), `F${i}`, [id.FINDING]);
+      const set = [id.A1a, id.A1b, id.A5a, id.B1, id.B2];
+      const result = await deriveEcl({ conceptIds: set }, mock, {
+        omitTerms: true,
+        refinements: 'never',
+        within: `${set.join(' OR ')} OR << ${id.PROC}`,
+      });
+      const single = result.candidates.find((c) => c.ecl === `< ${id.FINDING}`);
+      assert.ok(single, result.candidates.map((c) => c.ecl).join(' | '));
+      assert.strictEqual(single.exact, true);
+      assert.strictEqual(result.candidates[0].ecl, `< ${id.FINDING}`);
+    });
+
     it('offers greedy grouping on a partial graph when the descendants are too many', async () => {
       // M is a root with a deep subtree (C and 20 children), so loading below
       // every root is too large; below REFACTOR's candidates (A, A1) is not.
@@ -552,6 +570,30 @@ describe('deriveEcl', () => {
       assert.ok(greedy, result.candidates.map((x) => x.ecl).join(' | '));
       assert.strictEqual(greedy.exact, true);
       assertCountsHonest(mock, set, result);
+    });
+
+    it('does not size a roots cover from a partial graph that lacks the roots descendants', async () => {
+      // M's subtree (C and its 25 children) is too large to load, so a count of what
+      // `<< M` adds would come from the few concepts that were loaded.
+      const [m, c, a] = [sctid(3000), sctid(3001), sctid(3002)];
+      const mock = new HierarchyMockService()
+        .add(ROOT, 'root')
+        .add(m, 'M', [ROOT])
+        .add(c, 'C', [m])
+        .add(a, 'A', [ROOT]);
+      for (let i = 0; i < 25; i++) mock.add(sctid(3010 + i), `C${i}`, [c]);
+      const leaves = Array.from({ length: 6 }, (_, i) => sctid(4010 + i));
+      for (const l of leaves) mock.add(l, 'leaf', [a]);
+      const result = await deriveEcl({ conceptIds: [m, ...leaves] }, mock, {
+        omitTerms: true,
+        refinements: 'never',
+        maxGraphConcepts: 20,
+        maxExclusions: 0,
+        maxResidualLiterals: 0,
+      });
+      const notes = result.notes.join('\n');
+      assert.match(notes, /partial/);
+      assert.doesNotMatch(notes, /non-members remain/);
     });
 
     it('does not count on the server a graph candidate no cheaper than listing the members', async () => {
@@ -1051,6 +1093,13 @@ describe('deriveInputFromText', () => {
 
   it('refuses text holding several expressions', () => {
     assert.throws(() => deriveInputFromText(`<< ${id.A1}\n/* ECL-END */\n<< ${id.A2}`), /2 ECL expressions/);
+  });
+
+  it('does not count a delimiter inside a search string or a line comment as a split', () => {
+    const quoted = `<< ${id.A1} {{ D term = "/* ECL-END */ 1234567" }}`;
+    assert.deepStrictEqual(deriveInputFromText(quoted), { ecl: quoted });
+    const commented = `<< ${id.A1} // see /* ECL-END */ 1234567\nOR << ${id.A2}`;
+    assert.doesNotThrow(() => deriveInputFromText(commented));
   });
 
   it('reads pasted code lists line by line', () => {

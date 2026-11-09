@@ -67,6 +67,7 @@ import { bestSingles, costCover, coverDescend, rootsCover } from './cover-optimi
 import { nearMissCandidates, outermost } from './critique';
 import { greedyGrouping, refactorDescend } from './greedy-grouping';
 import { localScore, render, type ClauseForm, type HierarchyClause } from './hierarchy-clauses';
+import { commentSpans } from '../formatter/comments';
 import { loadTaxonomyGraph, type TaxonomyGraph } from './taxonomy-graph';
 import { asFocus, refinementCandidates, refinementText, refsetFoci, type RefinementClause } from './refinements';
 
@@ -83,7 +84,8 @@ export type DeriveInput = { conceptIds: string[] } | { refsetId: string } | { ec
 export interface DeriveOptions {
   /**
    * Per-query path: above this many roots, hierarchy candidates are skipped as
-   * not compact (on the graph path they cost no query per root). Default 200.
+   * not compact (on the graph path they cost no query per root). On either
+   * path, the most roots refinement candidates take as their basis. Default 200.
    */
   maxRoots?: number;
   /** Most `MINUS << x` subtree exclusions in an exact hierarchy cover. Default 32. */
@@ -818,6 +820,12 @@ function graphCandidates(
     ...rootsCandidates(g, opts, notes),
     ...bestSingles(g, ancestors, 3).map((form) => ({ form, construction: singleConstruction(form, g) })),
   ];
+  if (opts.within) {
+    for (const a of lowestCommonAncestors(g)) {
+      const form: ClauseForm = { includes: [{ conceptId: a, operator: '<' }], exclusions: [] };
+      built.push({ form, construction: singleConstruction(form, g) });
+    }
+  }
   if (opts.greedyGrouping) {
     const greedy = greedyGrouping(g, MAX_GREEDY_CLAUSES);
     built.push({
@@ -835,12 +843,29 @@ function graphCandidates(
     const key = formKey(ecl);
     if (seen.has(key)) continue;
     seen.add(key);
-    const local = localScore(form, g);
+    const local = localScore(form, g) ?? (opts.within ? withinOnlyScore(form, g) : null);
     if (local) candidates.push({ ecl, construction, local });
   }
   return candidates.sort((a, b) =>
     byRank({ ecl: a.ecl, inputItself: false, ...a.local }, { ecl: b.ecl, inputItself: false, ...b.local }),
   );
+}
+
+/**
+ * The lowest non-member concepts with every member below them, at most 3. Their
+ * descendants may not be loaded: under `within` they are still worth counting
+ * on the server, where what they add outside `within` does not count.
+ */
+function lowestCommonAncestors(g: TaxonomyGraph): string[] {
+  const common = new Set(g.ancestors().filter((a) => !g.members.has(a) && g.truePos(a) === g.members.size));
+  return [...common].filter((a) => !g.children(a).some((c) => common.has(c))).slice(0, 3);
+}
+
+/** A single `< a` from {@link lowestCommonAncestors}: it misses nothing; additions are left to the server. */
+function withinOnlyScore(form: ClauseForm, g: TaxonomyGraph): LocalCounts | null {
+  if (form.includes.length !== 1 || form.exclusions.length > 0) return null;
+  const a = form.includes[0].conceptId;
+  return g.truePos(a) === g.members.size ? { additions: 0, misses: 0, clauses: 1 } : null;
 }
 
 /**
@@ -903,6 +928,10 @@ function rootsCandidates(
   opts: Required<DeriveOptions>,
   notes: string[],
 ): { form: ClauseForm; construction: CandidateConstruction }[] {
+  // On a partial graph a root's subtree may not be loaded: neither the cover's
+  // exclusions nor what it adds can be counted, and the partial-graph note says
+  // that such forms were left out.
+  if (g.roots().some((r) => !g.hasDescendants(r))) return [];
   const exact = rootsCover(g);
   const roots = exact.includes.map((c) => c.conceptId);
   const candidate = (exclusions: string[], literals: string[]) => ({
@@ -1425,6 +1454,19 @@ export function parseConceptIdList(text: string): string[] {
   return ids;
 }
 
+/** `text` split at its `/* ECL-END *\/` comments, not at one in a string, a term or a line comment. */
+function splitAtDelimiters(text: string): string[] {
+  const parts: string[] = [];
+  let last = 0;
+  for (const c of commentSpans(text)) {
+    if (!/^\/\*\s*ECL-END\s*\*\/$/.test(c.content)) continue;
+    parts.push(text.slice(last, c.start));
+    last = c.end;
+  }
+  parts.push(text.slice(last));
+  return parts;
+}
+
 /**
  * The derive input for pasted text: an OR list of bare concepts (one line or
  * formatted) as its concepts, so inactive and unknown ids are reported; any
@@ -1433,7 +1475,7 @@ export function parseConceptIdList(text: string): string[] {
  * line or as CSV, by {@link parseConceptIdList}.
  */
 export function deriveInputFromText(text: string): DeriveInput {
-  const expressions = text.split(/\/\*\s*ECL-END\s*\*\//).filter((part) => /\d/.test(part));
+  const expressions = splitAtDelimiters(text).filter((part) => /\d/.test(part));
   if (expressions.length > 1) {
     throw new Error(
       `The text holds ${expressions.length} ECL expressions (separated by /* ECL-END */); select the one to derive from.`,

@@ -2250,6 +2250,39 @@ describe('formatDocument — term and string text is left alone', () => {
     assert.match(out, /,\n\s*116676008[^\n]*,\n\s*246075003/);
   });
 
+  test('splits at /* ECL-END */ after a search string holding //', () => {
+    assert.strictEqual(
+      fmt('<< 404684003 {{ D term = "a//b" }} /* ECL-END */ << 19829001'),
+      '<< 404684003 {{ D term = "a//b" }}\n\n/* ECL-END */\n\n<< 19829001',
+    );
+  });
+
+  test('a quote inside a block comment does not hide a delimiter', () => {
+    assert.strictEqual(
+      fmt('<< 404684003 /* say "hi */ /* ECL-END */ << 19829001'),
+      '<< 404684003 /* say "hi */\n\n/* ECL-END */\n\n<< 19829001',
+    );
+  });
+
+  test('does not split at /* ECL-END */ inside a search string', () => {
+    const input = '<< 404684003 {{ D term = "/* ECL-END */" }}';
+    assert.strictEqual(fmt(input), input);
+  });
+
+  // A delimiter the splitter misses is dropped as a comment: never lose one.
+  for (const input of [
+    '<< 404684003 |Clinical\nfinding| /* ECL-END */ << 19829001',
+    '<< 404684003 {{ D term = "a\nb" }} /* ECL-END */ << 19829001',
+    '<< 404684003 |Clinical finding /* ECL-END */ << 19829001',
+  ]) {
+    test(`keeps the delimiter in ${JSON.stringify(input)}`, () => {
+      const parts = fmt(input).split('/* ECL-END */');
+      assert.strictEqual(parts.length, 2, fmt(input));
+      assert.match(parts[0], /404684003/);
+      assert.match(parts[1], /19829001/);
+    });
+  }
+
   test('leaves private-use placeholder characters in the input alone', () => {
     const input = '<< 1 |a| OR 7 << 2';
     const out = fmt(input);

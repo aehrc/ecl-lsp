@@ -10,43 +10,25 @@ import {
   getIndentString,
   normalizeTerm,
 } from './rules';
-import { extractComments, reinsertComments } from './comments';
+import { commentSpans, extractComments, reinsertComments } from './comments';
 import { printAst } from './ast-printer';
 import { signatureOf, structuralSignature } from './semantic-guard';
 
-// Task 4.1-4.5: Split document by /* ECL-END */ delimiters
-// Ignores /* ECL-END */ that appears inside a line comment (//)
+// Task 4.1-4.5: Split document by /* ECL-END */ delimiters. The delimiters are
+// the ECL-END comments commentSpans finds, the same scan extractComments uses,
+// so one in a line comment, a quoted string or a display term is not one, and
+// every one extractComments later drops has been split at.
 function splitExpressions(text: string): { expressions: string[]; hasDelimiters: boolean } {
-  const delimiter = '/* ECL-END */';
-
-  // Find all delimiter positions that are NOT inside line comments
-  const delimiterPositions: number[] = [];
-  let i = 0;
-  while (i < text.length) {
-    // Skip line comments (// ... \n)
-    if (text[i] === '/' && i + 1 < text.length && text[i + 1] === '/') {
-      while (i < text.length && text[i] !== '\n') i++;
-      continue;
-    }
-    // Check for ECL-END delimiter
-    if (text.startsWith(delimiter, i)) {
-      delimiterPositions.push(i);
-      i += delimiter.length;
-      continue;
-    }
-    i++;
-  }
-
-  if (delimiterPositions.length === 0) {
+  const delimiters = commentSpans(text).filter((c) => c.content === '/* ECL-END */');
+  if (delimiters.length === 0) {
     return { expressions: [text], hasDelimiters: false };
   }
 
-  // Split at delimiter positions
   const parts: string[] = [];
   let lastEnd = 0;
-  for (const pos of delimiterPositions) {
-    parts.push(text.substring(lastEnd, pos));
-    lastEnd = pos + delimiter.length;
+  for (const d of delimiters) {
+    parts.push(text.substring(lastEnd, d.start));
+    lastEnd = d.end;
   }
   parts.push(text.substring(lastEnd));
 

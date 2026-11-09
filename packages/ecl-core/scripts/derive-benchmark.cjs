@@ -9,8 +9,9 @@
 //   node scripts/derive-benchmark.cjs --out <jsonl> --summary
 //
 // The TSV files use the UK DMWB export layout: a header row, tab-separated,
-// latin1, with the columns ID, DESCRIPTION and SCTRULE (an ECL OR list of the
-// members, or the reference ECL). Every set is judged on the release given by
+// latin1 (a UTF-8 byte-order mark is ignored), with the columns ID,
+// DESCRIPTION and SCTRULE: in --sets an ECL OR list of the members, or a single
+// code; in --reference the reference ECL. Every set is judged on the release given by
 // --version, which may differ from the release the reference was made on. The
 // reference is judged against the same members deriveEcl used: the given codes
 // less those deriveEcl left out as inactive, unknown or malformed on that
@@ -29,6 +30,7 @@ const path = require('node:path');
 
 const DIST = path.join(__dirname, '..', 'dist-tsc');
 const RETRY_MS = 30_000;
+const NO_CANDIDATES = 'no candidates';
 const PAUSE_MS = 1500;
 const TIMEOUT_MS = 120_000;
 const NOT_DERIVED = new Set(['enumeration', 'refset', 'expression']);
@@ -52,6 +54,7 @@ function parseArgs(argv) {
     else throw new Error(`Unknown or incomplete argument: ${a}`);
   }
   args.maxSize = Number(args.maxSize);
+  if (!Number.isInteger(args.maxSize) || args.maxSize < 1) throw new Error('--max-size must be a positive integer');
   if (!args.out) throw new Error('--out is required');
   if (!args.summary && (!args.sets || !args.version)) throw new Error('--sets and --version are required');
   return args;
@@ -59,7 +62,11 @@ function parseArgs(argv) {
 
 /** Rows of a DMWB export, keyed by ID, with the DESCRIPTION and SCTRULE columns. */
 function readSets(file) {
-  const lines = fs.readFileSync(file, 'latin1').split(/\r?\n/).filter(Boolean);
+  // DMWB exports are Latin-1; one starting with a UTF-8 byte-order mark is UTF-8.
+  const bytes = fs.readFileSync(file);
+  const utf8 = bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf;
+  const lines = (utf8 ? bytes.subarray(3).toString('utf8') : bytes.toString('latin1')).split(/\r?\n/).filter(Boolean);
+  if (lines.length === 0) throw new Error(`${file} is empty`);
   const header = lines[0].split('\t');
   const col = (name) => {
     const i = header.indexOf(name);
@@ -82,6 +89,13 @@ function readResults(file) {
     .split('\n')
     .filter(Boolean)
     .map((l) => JSON.parse(l));
+}
+
+/** The last row for each set: a resumed run appends a fresh row after an error row. */
+function latestResults(file) {
+  const latest = new Map();
+  for (const r of readResults(file)) latest.set(r.refset, r);
+  return [...latest.values()];
 }
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -143,7 +157,8 @@ async function run(args) {
   const ctx = { deriveEcl, countClauses, fhir, expandCompose, reference, options, counted: () => requests };
   for (const set of todo) {
     let rec;
-    for (let attempt = 0; attempt < 2 && !rec?.top; attempt++) {
+    // A set with no candidates gets none on a retry either.
+    for (let attempt = 0; attempt < 2 && !rec?.top && !rec?.error?.startsWith(NO_CANDIDATES); attempt++) {
       if (attempt) await sleep(RETRY_MS);
       requests = 0;
       rec = await deriveOne(ctx, set);
@@ -171,6 +186,7 @@ async function deriveOne(ctx, { refset, name, codes }) {
     rec.ms = Date.now() - t;
     rec.requests = ctx.counted();
     rec.members = r.input.members;
+    if (r.candidates.length === 0) throw new Error(`${NO_CANDIDATES}: ${r.notes.join(' ') || 'none returned'}`);
     rec.top = pick(r.candidates[0]);
     rec.topDerived = pick(r.candidates.find((c) => !NOT_DERIVED.has(c.construction.kind)));
     const exact = r.candidates.filter((c) => c.exact);
@@ -231,7 +247,7 @@ function median(xs) {
 }
 
 function summary(args) {
-  const rows = readResults(args.out);
+  const rows = latestResults(args.out);
   const ok = rows.filter((r) => !r.error && r.top);
   const errors = rows.filter((r) => r.error);
   console.log(`sets: ${rows.length}  scored: ${ok.length}  errors: ${errors.length}`);
@@ -266,11 +282,14 @@ function summary(args) {
   const kinds = {};
   for (const r of ok) kinds[r.top.kind] = (kinds[r.top.kind] ?? 0) + 1;
   console.log('kind of top candidate:', kinds);
-  const ms = ok.map((r) => r.ms);
-  console.log(
-    `deriveEcl time: median ${(median(ms) / 1000).toFixed(1)} s  max ${(Math.max(...ms) / 1000).toFixed(1)} s`,
-  );
-  console.log(`requests: median ${median(ok.map((r) => r.requests))}  max ${Math.max(...ok.map((r) => r.requests))}`);
+  if (ok.length > 0) {
+    const ms = ok.map((r) => r.ms);
+    const requests = ok.map((r) => r.requests);
+    console.log(
+      `deriveEcl time: median ${(median(ms) / 1000).toFixed(1)} s  max ${(Math.max(...ms) / 1000).toFixed(1)} s`,
+    );
+    console.log(`requests: median ${median(requests)}  max ${Math.max(...requests)}`);
+  }
   for (const r of errors) console.log('error', r.refset, r.error.slice(0, 150));
   for (const r of ok.filter((x) => x.reference?.error)) {
     console.log('reference not judged', r.refset, r.reference.error.slice(0, 150));

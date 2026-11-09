@@ -12,6 +12,38 @@ export interface Comment {
   trailingWhitespace?: string; // Whitespace after this comment (before next comment or code)
 }
 
+/** A comment in the text, from {@link commentSpans}. */
+export interface CommentSpan {
+  start: number;
+  end: number;
+  content: string;
+  type: 'block' | 'line';
+}
+
+/**
+ * The comments in `text`, in order, from one left-to-right scan: whichever
+ * starts first wins, so a comment marker inside a display term or quoted
+ * string (`|see http://x|`, `"a /* b *\/"`) is text, and a block marker inside
+ * a line comment is part of that comment. The formatter splits expressions at
+ * the `/* ECL-END *\/` comments found here, and only here.
+ */
+export function commentSpans(text: string): CommentSpan[] {
+  const spans: CommentSpan[] = [];
+  const tokens = /\/\/[^\n]*|\/\*[\s\S]*?\*\/|"(?:[^"\\]|\\.)*"|\|[^|]*\|/g;
+  let match: RegExpExecArray | null;
+  while ((match = tokens.exec(text)) !== null) {
+    if (match[0].startsWith('/')) {
+      spans.push({
+        start: match.index,
+        end: tokens.lastIndex,
+        content: match[0],
+        type: match[0].startsWith('//') ? 'line' : 'block',
+      });
+    }
+  }
+  return spans;
+}
+
 // Task 5.1: Identify block comments (/* */) and line comments (//) in input document
 // eslint-disable-next-line sonarjs/cognitive-complexity -- char-by-char comment parser with nested state tracking
 export function extractComments(text: string): { comments: Comment[]; textWithoutComments: string } {
@@ -20,22 +52,7 @@ export function extractComments(text: string): { comments: Comment[]; textWithou
   // One left-to-right scan: whichever starts first wins, so a comment marker
   // inside a display term or quoted string (`|see http://x|`, `"a /* b */"`) is
   // text, and a block marker inside a line comment is part of that comment.
-  const allComments: { start: number; end: number; content: string; type: 'block' | 'line' }[] = [];
-  const tokens = /\/\/[^\n]*|\/\*[\s\S]*?\*\/|"(?:[^"\\]|\\.)*"|\|[^|]*\|/g;
-  let match: RegExpExecArray | null;
-  while ((match = tokens.exec(text)) !== null) {
-    if (match[0].startsWith('/')) {
-      allComments.push({
-        start: match.index,
-        end: tokens.lastIndex,
-        content: match[0],
-        type: match[0].startsWith('//') ? 'line' : 'block',
-      });
-    }
-  }
-
-  // Sort by start position
-  allComments.sort((a, b) => a.start - b.start);
+  const allComments = commentSpans(text);
 
   // Build text without comments and collect comment info
   const parts: string[] = [];

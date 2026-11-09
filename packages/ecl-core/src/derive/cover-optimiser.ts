@@ -174,9 +174,10 @@ class Heap<T> {
     const xs = this.items;
     for (let i = 0; ;) {
       let first = i;
-      for (const child of [2 * i + 1, 2 * i + 2]) {
-        if (child < xs.length && this.before(xs[child], xs[first])) first = child;
-      }
+      const left = 2 * i + 1;
+      const right = left + 1;
+      if (left < xs.length && this.before(xs[left], xs[first])) first = left;
+      if (right < xs.length && this.before(xs[right], xs[first])) first = right;
       if (first === i) return;
       [xs[i], xs[first]] = [xs[first], xs[i]];
       i = first;

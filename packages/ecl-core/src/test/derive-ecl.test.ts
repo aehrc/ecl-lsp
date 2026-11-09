@@ -630,6 +630,29 @@ describe('deriveEcl', () => {
       assert.deepStrictEqual(result.critique?.inactive, [id.RETIRED]);
     });
 
+    it('judges a reference set by the best form derived from it, not by `^ refset`', async () => {
+      const mock = fixture().addRefset(id.REFSET, [id.A1a, id.B2, id.P1]);
+      const result = await deriveEcl({ refsetId: id.REFSET }, mock, { omitTerms: true, critique: { maxClauses: 2 } });
+      assert.deepStrictEqual(result.critique?.clauses, { best: 3, limit: 2, exceeded: true });
+    });
+
+    it('keeps the result when a near-miss count fails', async () => {
+      const mock = fixture();
+      const expand = mock.expandCompose.bind(mock);
+      mock.expandCompose = async (compose, options) => {
+        const ecl = compose.include.map((x) => ('ecl' in x ? x.ecl : '')).join();
+        if (ecl === `<< ${id.A}` && compose.exclude?.length) throw new Error('429 Too Many Requests');
+        return expand(compose, options);
+      };
+      const result = await deriveEcl({ conceptIds: NEARLY_A }, mock, {
+        omitTerms: true,
+        critique: { nearMissShare: 0.85 },
+      });
+      assert.ok(result.candidates.length > 0);
+      assert.deepStrictEqual(result.critique?.nearMisses, []);
+      assert.match(result.notes.join('\n'), new RegExp(`near miss << ${id.A} was not counted: 429`, 'i'));
+    });
+
     describe('implied inactive codes', () => {
       const OLD = sctid(1060);
       const withHistory = () => fixture().add(OLD, 'Old', [id.A], false).associate(OLD, id.A2);

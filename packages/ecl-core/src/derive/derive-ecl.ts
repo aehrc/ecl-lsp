@@ -503,7 +503,12 @@ async function buildCritique(
   opts: Required<DeriveOptions>,
 ): Promise<CodelistCritique> {
   const { result, members, graph, scored } = found;
-  const best = Math.min(...scored.filter((s) => s.exact).map((s) => s.clauses));
+  // CHK16 judges the ECL induced from the list: `^ refset` or the expression given
+  // say nothing about that, and listing the members is always exact.
+  const induced = scored.filter(
+    (s) => s.exact && s.construction.kind !== 'refset' && s.construction.kind !== 'expression',
+  );
+  const best = Math.min(members.size, ...induced.map((s) => s.clauses));
   const { hierarchies } = result;
   const critique: CodelistCritique = {
     clauses: { best, limit: limits.maxClauses, exceeded: best > limits.maxClauses },
@@ -545,16 +550,19 @@ async function nearMisses(
     return [];
   }
   const local = findNearMisses(graph, limits.nearMissShare, limits.nearMissMinSize, limits.maxNearMisses);
-  const counted = await Promise.all(
-    local.map(async (n) => {
-      const missing = await q.sample(
-        { include: [{ ecl: `<< ${n.conceptId}` }], exclude: [members.clause] },
-        opts.sampleSize,
-      );
-      return { conceptId: n.conceptId, descendants: n.listed + missing.count, listed: n.listed, missing };
-    }),
+  // Advisory: a failed count drops that near miss, never the result.
+  const counted = await Promise.allSettled(
+    local.map((n) => q.sample({ include: [{ ecl: `<< ${n.conceptId}` }], exclude: [members.clause] }, opts.sampleSize)),
   );
-  const found: NearMiss[] = counted.filter((n) => n.missing.count > 0);
+  const found: NearMiss[] = [];
+  counted.forEach((r, i) => {
+    const { conceptId, listed } = local[i];
+    if (r.status === 'rejected') {
+      notes.push(`Near miss << ${conceptId} was not counted: ${errorMessage(r.reason)}.`);
+    } else if (r.value.count > 0) {
+      found.push({ conceptId, descendants: listed + r.value.count, listed, missing: r.value });
+    }
+  });
   if (!opts.omitTerms && found.length > 0) {
     try {
       const info = await terminology.validateConcepts(found.map((n) => n.conceptId));

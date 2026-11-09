@@ -636,6 +636,53 @@ describe('deriveEcl', () => {
       assert.deepStrictEqual(result.critique?.inactive, [id.RETIRED]);
     });
 
+    it('lists the inactive members of a reference set', async () => {
+      const mock = fixture().addRefset(id.REFSET, [id.A1a, id.B2, id.RETIRED]);
+      const result = await deriveEcl({ refsetId: id.REFSET }, mock, { omitTerms: true, critique: true });
+      assert.deepStrictEqual(result.critique?.inactive, [id.RETIRED]);
+      assert.match(formatDeriveReport(result), new RegExp(`^ {3}Inactive members: 1: ${id.RETIRED}\\.$`, 'm'));
+    });
+
+    it('says why near misses were skipped', async () => {
+      const off = await deriveEcl({ conceptIds: NEARLY_A }, fixture(), {
+        omitTerms: true,
+        useGraph: false,
+        critique: true,
+      });
+      assert.match(off.notes.join('\n'), /near misses need the IS-A subgraph, which useGraph: false turns off/i);
+      const mock = fixture();
+      mock.returnsParents = false;
+      const failed = await deriveEcl({ conceptIds: NEARLY_A }, mock, { omitTerms: true, critique: true });
+      assert.match(failed.notes.join('\n'), /near misses need the IS-A subgraph, which was not loaded/i);
+    });
+
+    it('drops a near miss the server count puts below the share', async () => {
+      const mock = fixture();
+      const expand = mock.expandCompose.bind(mock);
+      mock.expandCompose = async (compose, options) => {
+        const ecl = compose.include.map((x) => ('ecl' in x ? x.ecl : '')).join();
+        const r = await expand(compose, options);
+        // The server finds 4 more concepts under A than the graph did: 8 of 13 is below 0.85.
+        return ecl === `<< ${id.A}` && compose.exclude?.length ? { ...r, total: r.total + 4 } : r;
+      };
+      const result = await deriveEcl({ conceptIds: NEARLY_A }, mock, {
+        omitTerms: true,
+        critique: { nearMissShare: 0.85 },
+      });
+      assert.deepStrictEqual(result.critique?.nearMisses, []);
+    });
+
+    it('leaves the hierarchy summary out of the result when it was turned off', async () => {
+      const result = await deriveEcl({ conceptIds: [id.A1a, id.P1] }, fixture(), {
+        omitTerms: true,
+        hierarchySummary: false,
+        critique: true,
+      });
+      assert.deepStrictEqual(result.hierarchies, []);
+      assert.strictEqual(result.critique?.hierarchies.length, 2);
+      assert.doesNotMatch(formatDeriveReport(result), /^Hierarchies:/m);
+    });
+
     it('judges a reference set by the best form derived from it, not by `^ refset`', async () => {
       const mock = fixture().addRefset(id.REFSET, [id.A1a, id.B2, id.P1]);
       const result = await deriveEcl({ refsetId: id.REFSET }, mock, { omitTerms: true, critique: { maxClauses: 2 } });
@@ -1024,7 +1071,7 @@ describe('formatDeriveReport', () => {
     const result = await deriveEcl({ conceptIds: [id.A1a, id.P1, id.RETIRED] }, fixture(), { critique: true });
     const report = formatDeriveReport(result);
     assert.match(report, /^ {3}Spans 2 top-level hierarchies: Finding 1, Procedure 1\.$/m);
-    assert.match(report, /^ {3}Inactive ids given: 1\.$/m);
+    assert.match(report, /^ {3}Inactive ids given: 1 \(left out, above\)\.$/m);
   });
 
   it('has no review section without a critique', async () => {

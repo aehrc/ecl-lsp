@@ -73,6 +73,8 @@ export class HierarchyMockService implements ITerminologyService {
   readonly refsets = new Map<string, Set<string>>();
   /** Inactive concepts by the active concept their historical association points to. */
   private readonly history = new Map<string, string[]>();
+  /** False while an expandCompose with `activeOnly: false` evaluates its ECL clauses. */
+  private activeOnly = true;
   /** Whether expandCompose honours `parents`; false acts as a server without `property=parent`. */
   returnsParents = true;
   /** Every expandCompose call, for asserting how much work an operation did. */
@@ -137,8 +139,13 @@ export class HierarchyMockService implements ITerminologyService {
     const clauseSet = (clause: ValueSetClause): Set<string> =>
       'ecl' in clause ? this.evaluate(clause.ecl) : new Set(clause.concepts.filter((id) => this.concepts.has(id)));
     const result = new Set<string>();
-    for (const clause of compose.include) for (const id of clauseSet(clause)) result.add(id);
-    for (const clause of compose.exclude ?? []) for (const id of clauseSet(clause)) result.delete(id);
+    this.activeOnly = activeOnly;
+    try {
+      for (const clause of compose.include) for (const id of clauseSet(clause)) result.add(id);
+      for (const clause of compose.exclude ?? []) for (const id of clauseSet(clause)) result.delete(id);
+    } finally {
+      this.activeOnly = true;
+    }
     const codes = [...result].filter((id) => !activeOnly || this.concepts.get(id)?.active);
     const page = this.page(codes, count, offset);
     if (options.parents && this.returnsParents) {
@@ -295,7 +302,7 @@ export class HierarchyMockService implements ITerminologyService {
           throw new Error(`HierarchyMockService: ${op} unsupported`);
       }
     }
-    const active = [...result].filter((id) => this.concepts.get(id)?.active);
+    const active = [...result].filter((id) => !this.activeOnly || this.concepts.get(id)?.active);
     // A history supplement adds the inactive concepts associated with the result, whatever the profile.
     const implied = node.historySupplement ? active.flatMap((id) => this.history.get(id) ?? []) : [];
     return new Set([...active, ...implied]);

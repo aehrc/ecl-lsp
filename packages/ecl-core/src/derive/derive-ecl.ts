@@ -369,9 +369,11 @@ export async function deriveEcl(
 
   const graph = opts.useGraph ? await loadGraph(members, q, opts, notes) : null;
   const critique = critiqueOptions(opts.critique);
+  let hierarchies: DeriveResult['hierarchies'] = [];
   if (opts.hierarchySummary || critique) {
-    result.hierarchies = graph ? await graphHierarchies(graph, terminology) : await hierarchyDistribution(members, q);
+    hierarchies = graph ? await graphHierarchies(graph, terminology) : await hierarchyDistribution(members, q);
   }
+  if (opts.hierarchySummary) result.hierarchies = hierarchies;
 
   const rootQuery = graph
     ? { codes: graph.roots().slice(0, opts.maxRoots + 1), total: graph.roots().length }
@@ -391,7 +393,7 @@ export async function deriveEcl(
   if (critique) {
     result.critique = await buildCritique(
       critique,
-      { result, members, graph, scored: scorer.scored },
+      { input, result, members, graph, hierarchies, scored: scorer.scored },
       q,
       terminology,
       opts,
@@ -498,25 +500,31 @@ function critiqueOptions(option: DeriveOptions['critique']): Required<CritiqueOp
 /** The critique of the list, from what deriving it found plus a query per near miss. */
 async function buildCritique(
   limits: Required<CritiqueOptions>,
-  found: { result: DeriveResult; members: MemberSet; graph: TaxonomyGraph | null; scored: Scored[] },
+  found: {
+    input: DeriveInput;
+    result: DeriveResult;
+    members: MemberSet;
+    graph: TaxonomyGraph | null;
+    hierarchies: DeriveResult['hierarchies'];
+    scored: Scored[];
+  },
   q: SetQueries,
   terminology: ITerminologyService,
   opts: Required<DeriveOptions>,
 ): Promise<CodelistCritique> {
-  const { result, members, graph, scored } = found;
+  const { input, result, members, graph, hierarchies, scored } = found;
   // CHK16 judges the ECL induced from the list: `^ refset` or the expression given
   // say nothing about that, and listing the members is always exact.
   const induced = scored.filter(
     (s) => s.exact && s.construction.kind !== 'refset' && s.construction.kind !== 'expression',
   );
   const best = Math.min(members.size, ...induced.map((s) => s.clauses));
-  const { hierarchies } = result;
   const critique: CodelistCritique = {
     clauses: { best, limit: limits.maxClauses, exceeded: best > limits.maxClauses },
     nearMisses: await nearMisses(limits, members, graph, q, terminology, opts, result.notes),
     hierarchies,
     spansHierarchies: hierarchies.length > 1,
-    inactive: [...result.input.inactive],
+    inactive: 'refsetId' in input ? await inactiveMembers(members, q, result.notes) : [...result.input.inactive],
   };
   if (limits.impliedInactive) {
     const profile = limits.impliedInactive === true ? 'HISTORY-MOD' : limits.impliedInactive;
@@ -547,7 +555,11 @@ async function nearMisses(
   notes: string[],
 ): Promise<NearMiss[]> {
   if (!graph) {
-    notes.push('Near misses need the IS-A subgraph, which was not loaded (see above).');
+    notes.push(
+      opts.useGraph
+        ? 'Near misses need the IS-A subgraph, which was not loaded (see the note on hierarchy candidates).'
+        : 'Near misses need the IS-A subgraph, which useGraph: false turns off.',
+    );
     return [];
   }
   const local = findNearMisses(graph, limits.nearMissShare, limits.nearMissMinSize, limits.maxNearMisses);
@@ -560,8 +572,12 @@ async function nearMisses(
     const { conceptId, listed } = local[i];
     if (r.status === 'rejected') {
       notes.push(`Near miss << ${conceptId} was not counted: ${errorMessage(r.reason)}.`);
-    } else if (r.value.count > 0) {
-      found.push({ conceptId, descendants: listed + r.value.count, listed, missing: r.value });
+    } else {
+      // The server's count is the truth: the graph may have missed concepts below.
+      const descendants = listed + r.value.count;
+      if (r.value.count > 0 && listed / descendants >= limits.nearMissShare) {
+        found.push({ conceptId, descendants, listed, missing: r.value });
+      }
     }
   });
   if (!opts.omitTerms && found.length > 0) {
@@ -576,6 +592,23 @@ async function nearMisses(
     }
   }
   return found;
+}
+
+/**
+ * A reference set's inactive members (CHK07). Its member set holds only the
+ * active ones, so one count says whether there are any, and two listings which.
+ */
+async function inactiveMembers(members: MemberSet, q: SetQueries, notes: string[]): Promise<string[]> {
+  const refset: ValueSetCompose = { include: [members.clause] };
+  try {
+    const all = await q.sample(refset, 0, false);
+    if (all.count <= members.size) return [];
+    const active = new Set((await q.codes(refset, members.size)).codes);
+    return (await q.codes(refset, all.count, false)).codes.filter((c) => !active.has(c));
+  } catch (error) {
+    notes.push(`Inactive reference set members were not checked: ${errorMessage(error)}.`);
+    return [];
+  }
 }
 
 function inputItself(
@@ -1421,7 +1454,11 @@ export function formatDeriveReport(result: DeriveResult): string {
   }
   lines.push(`Roots (members with no ancestor in the set): ${result.roots}`);
   for (const note of result.notes) lines.push(`Note: ${note}`);
-  if (result.critique) lines.push('', 'Review:', ...reviewLines(result.critique).map((l) => `   ${l}`));
+  if (result.critique) {
+    // A list's inactive ids are printed above; a reference set's inactive members are not.
+    const listedAbove = input.inactive.length > 0;
+    lines.push('', 'Review:', ...reviewLines(result.critique, listedAbove).map((l) => `   ${l}`));
+  }
 
   result.candidates.forEach((c, i) => {
     const status = c.exact ? 'exact' : `+${c.additions.count} added, -${c.misses.count} missed`;
@@ -1444,7 +1481,7 @@ function sampleLine(label: string, d: SetDifference): string {
 }
 
 /** The critique's flagged items, one line each (near misses take two). */
-function reviewLines(c: CodelistCritique): string[] {
+function reviewLines(c: CodelistCritique, inactiveListedAbove: boolean): string[] {
   const lines: string[] = [];
   if (c.clauses.exceeded) {
     lines.push(
@@ -1463,7 +1500,12 @@ function reviewLines(c: CodelistCritique): string[] {
     const counts = c.hierarchies.map((h) => `${h.display} ${h.count}`).join(', ');
     lines.push(`Spans ${c.hierarchies.length} top-level hierarchies: ${counts}.`);
   }
-  if (c.inactive.length > 0) lines.push(`Inactive ids given: ${c.inactive.length}.`);
+  if (c.inactive.length > 0 && inactiveListedAbove) {
+    lines.push(`Inactive ids given: ${c.inactive.length} (left out, above).`);
+  } else if (c.inactive.length > 0) {
+    const more = c.inactive.length > 20 ? ', …' : '';
+    lines.push(`Inactive members: ${c.inactive.length}: ${c.inactive.slice(0, 20).join(', ')}${more}.`);
+  }
   if (c.impliedInactive?.count) lines.push(sampleLine('Implied inactive codes not listed', c.impliedInactive));
   return lines.length > 0 ? lines : ['Nothing flagged.'];
 }

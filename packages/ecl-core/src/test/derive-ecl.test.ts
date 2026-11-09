@@ -554,6 +554,30 @@ describe('deriveEcl', () => {
       assertCountsHonest(mock, set, result);
     });
 
+    it('does not size a roots cover from a partial graph that lacks the roots descendants', async () => {
+      // M's subtree (C and its 25 children) is too large to load, so a count of what
+      // `<< M` adds would come from the few concepts that were loaded.
+      const [m, c, a] = [sctid(3000), sctid(3001), sctid(3002)];
+      const mock = new HierarchyMockService()
+        .add(ROOT, 'root')
+        .add(m, 'M', [ROOT])
+        .add(c, 'C', [m])
+        .add(a, 'A', [ROOT]);
+      for (let i = 0; i < 25; i++) mock.add(sctid(3010 + i), `C${i}`, [c]);
+      const leaves = Array.from({ length: 6 }, (_, i) => sctid(4010 + i));
+      for (const l of leaves) mock.add(l, 'leaf', [a]);
+      const result = await deriveEcl({ conceptIds: [m, ...leaves] }, mock, {
+        omitTerms: true,
+        refinements: 'never',
+        maxGraphConcepts: 20,
+        maxExclusions: 0,
+        maxResidualLiterals: 0,
+      });
+      const notes = result.notes.join('\n');
+      assert.match(notes, /partial/);
+      assert.doesNotMatch(notes, /non-members remain/);
+    });
+
     it('does not count on the server a graph candidate no cheaper than listing the members', async () => {
       // Two unrelated members: every hierarchy form is `<< A2 OR << P1`, 2 clauses.
       const mock = fixture();

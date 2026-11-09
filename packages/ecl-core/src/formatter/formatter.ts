@@ -14,27 +14,49 @@ import { extractComments, reinsertComments } from './comments';
 import { printAst } from './ast-printer';
 import { signatureOf, structuralSignature } from './semantic-guard';
 
+/** The index just past a quoted string or display term starting at `start` (it ends at the line's end at most). */
+function skipLiteral(text: string, start: number): number {
+  const close = text[start];
+  let i = start + 1;
+  while (i < text.length && text[i] !== close && text[i] !== '\n') {
+    i += close === '"' && text[i] === '\\' ? 2 : 1;
+  }
+  return Math.min(i + 1, text.length);
+}
+
+/**
+ * The index after the string, term, line comment or block comment starting at
+ * `i`, or `i + 1` when none starts there. Strings and terms come first, so
+ * `"http://x"` holds no line comment.
+ */
+function skipNonCode(text: string, i: number): number {
+  if (text[i] === '"' || text[i] === '|') return skipLiteral(text, i);
+  if (text.startsWith('//', i)) {
+    const end = text.indexOf('\n', i);
+    return end < 0 ? text.length : end;
+  }
+  if (text.startsWith('/*', i)) {
+    const end = text.indexOf('*/', i + 2);
+    return end < 0 ? text.length : end + 2;
+  }
+  return i + 1;
+}
+
 // Task 4.1-4.5: Split document by /* ECL-END */ delimiters
-// Ignores /* ECL-END */ that appears inside a line comment (//)
+// Ignores /* ECL-END */ inside a line comment (//), a quoted string or a display term
 function splitExpressions(text: string): { expressions: string[]; hasDelimiters: boolean } {
   const delimiter = '/* ECL-END */';
 
-  // Find all delimiter positions that are NOT inside line comments
+  // Find all delimiter positions that are NOT inside comments or literals
   const delimiterPositions: number[] = [];
   let i = 0;
   while (i < text.length) {
-    // Skip line comments (// ... \n)
-    if (text[i] === '/' && i + 1 < text.length && text[i + 1] === '/') {
-      while (i < text.length && text[i] !== '\n') i++;
-      continue;
-    }
-    // Check for ECL-END delimiter
     if (text.startsWith(delimiter, i)) {
       delimiterPositions.push(i);
       i += delimiter.length;
-      continue;
+    } else {
+      i = skipNonCode(text, i);
     }
-    i++;
   }
 
   if (delimiterPositions.length === 0) {

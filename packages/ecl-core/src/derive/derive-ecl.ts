@@ -83,7 +83,8 @@ export type DeriveInput = { conceptIds: string[] } | { refsetId: string } | { ec
 export interface DeriveOptions {
   /**
    * Per-query path: above this many roots, hierarchy candidates are skipped as
-   * not compact (on the graph path they cost no query per root). Default 200.
+   * not compact (on the graph path they cost no query per root). On either
+   * path, the most roots refinement candidates take as their basis. Default 200.
    */
   maxRoots?: number;
   /** Most `MINUS << x` subtree exclusions in an exact hierarchy cover. Default 32. */
@@ -903,6 +904,10 @@ function rootsCandidates(
   opts: Required<DeriveOptions>,
   notes: string[],
 ): { form: ClauseForm; construction: CandidateConstruction }[] {
+  // On a partial graph a root's subtree may not be loaded: neither the cover's
+  // exclusions nor what it adds can be counted, and the partial-graph note says
+  // that such forms were left out.
+  if (g.roots().some((r) => !g.hasDescendants(r))) return [];
   const exact = rootsCover(g);
   const roots = exact.includes.map((c) => c.conceptId);
   const candidate = (exclusions: string[], literals: string[]) => ({

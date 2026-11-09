@@ -155,8 +155,10 @@ ancestors, their children, and the descendants of the ancestors worth trying
 as groupers. Candidates are built and ranked on that graph without further
 requests, and only the best are counted again on the server, so every count
 reported comes from the server. A graph candidate that by its local counts
-costs at least as much as listing every member is not counted, with a note. The cost-based cover treats the set as a
-weighted set cover: a grouper costs its own clause plus the exclusions that
+costs at least as much as the input itself (listing every member, or the
+expression given) is not counted, with a note.
+
+The cost-based cover treats the set as a weighted set cover: a grouper costs its own clause plus the exclusions that
 make it exact, a listed member costs one clause, and groupers are taken while
 they cover more members per clause than listing them would. When the server
 does not return parents, or a fetch would hold more than `maxGraphConcepts`
@@ -164,8 +166,10 @@ concepts (default 200,000), the hierarchy candidates fall back to a query per
 count, with a note. Set `useGraph: false` to always use that path. When only
 the descendants of every root and grouper are too many, they are loaded for
 greedy grouping's groupers alone: the graph is partial, forms that need the
-others are left out, and a note says so. `maxRoots`, `maxAncestorRoots` and
-`maxAncestorCandidates` limit the per-query path only.
+others are left out, and a note says so. `maxAncestorRoots` and
+`maxAncestorCandidates` limit the per-query path only. `maxRoots` limits the
+per-query path's hierarchy candidates, and on either path how many roots are
+used for refinement candidates.
 
 The greedy grouping follows REFACTOR, the grouping algorithm in NHS England's
 DMWB (Jeremy Rogers). It scores every ancestor of the set by how much of it is

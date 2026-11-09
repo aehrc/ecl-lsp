@@ -191,7 +191,12 @@ value, a range with `>=` and `<=`, or `= *`) and cardinalities
 (`[2..*] attribute = *`). When no refinement is exact, a subtraction
 `(C) MINUS (D)` is also tried, with D describing what the refinement C adds.
 
-`deriveEcl({ ecl }, terminology)` takes the set an expression selects. To make
+`deriveEcl({ ecl }, terminology)` takes the set an expression selects. For
+pasted text, `deriveInputFromText(text)` picks the input: an OR list of bare
+concepts becomes `{ conceptIds }` (so inactive and unknown ids are reported),
+any other valid expression `{ ecl }`, and anything else (one id per line, CSV)
+is read by `parseConceptIdList`. The language server's derive request uses it.
+To make
 an expression shorter, use `compressExpression`. It compresses the expression's
 OR group, keeps what surrounds the group (`AND ^ refset`, a refinement) as
 written, and counts what the whole expression then adds and misses. The

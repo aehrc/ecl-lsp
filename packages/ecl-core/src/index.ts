@@ -104,7 +104,7 @@ export { computeSemanticTokens, eclTokenTypes, eclTokenModifiers } from './seman
 export type { SemanticToken } from './semantic-tokens';
 
 // Derive ECL from a concept list or refset (issue #147)
-export { deriveEcl, parseConceptIdList, formatDeriveReport } from './derive/derive-ecl';
+export { deriveEcl, deriveInputFromText, parseConceptIdList, formatDeriveReport } from './derive/derive-ecl';
 export { compressExpression, formatCompressReport } from './derive/compress-expression';
 export type { CompressResult, CompressCandidate } from './derive/compress-expression';
 export type { HierarchyClause } from './derive/hierarchy-clauses';

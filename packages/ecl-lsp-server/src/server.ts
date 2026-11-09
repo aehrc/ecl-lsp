@@ -63,9 +63,10 @@ import {
   isTerminologyTransportError,
   deriveEcl,
   formatDeriveReport,
+  deriveInputFromText,
+  type DeriveInput,
   compressExpression,
   formatCompressReport,
-  parseConceptIdList,
 } from '@aehrc/ecl-core';
 import type {
   ITerminologyService,
@@ -1275,15 +1276,18 @@ connection.onRequest('ecl/searchConcept', async (params: { query: string }) => {
 
 /**
  * Derive candidate ECL from a concept list or refset (issue #147). `text` is a
- * pasted code list in any common shape; `conceptIds` or `refsetId` give the set
- * directly. Returns a plain-text report plus the candidates for a picker.
+ * pasted code list in any common shape, or an ECL expression (see
+ * `deriveInputFromText`); `conceptIds` or `refsetId` give the set directly.
+ * Returns a plain-text report plus the candidates for a picker.
  */
 connection.onRequest('ecl/deriveEcl', async (params: { text?: string; conceptIds?: string[]; refsetId?: string }) => {
-  const conceptIds = params.conceptIds ?? parseConceptIdList(params.text ?? '');
-  if (!params.refsetId && conceptIds.length === 0) {
+  let input: DeriveInput;
+  if (params.refsetId) input = { refsetId: params.refsetId };
+  else if (params.conceptIds) input = { conceptIds: params.conceptIds };
+  else input = deriveInputFromText(params.text ?? '');
+  if ('conceptIds' in input && input.conceptIds.length === 0) {
     throw new Error('No SNOMED CT concept ids found');
   }
-  const input = params.refsetId ? { refsetId: params.refsetId } : { conceptIds };
   try {
     const result = await deriveEcl(input, terminologyService, { critique: true });
     return {

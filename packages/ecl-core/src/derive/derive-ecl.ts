@@ -49,6 +49,7 @@
 import { canonicalise } from '../canonical/comparator';
 import { formatDocument } from '../formatter/formatter';
 import { defaultFormattingOptions } from '../formatter/options';
+import { NodeType, parseECL, type ExpressionNode, type SubExpressionNode } from '../parser';
 import type { ConceptInfo, ITerminologyService, ValueSetCompose } from '../terminology/types';
 import { isValidConceptId } from '../terminology/verhoeff';
 import {
@@ -1363,6 +1364,40 @@ export function parseConceptIdList(text: string): string[] {
     if (first) ids.push(first[0]);
   }
   return ids;
+}
+
+/**
+ * The derive input for pasted text: an OR list of bare concepts (one line or
+ * formatted) as its concepts, so inactive and unknown ids are reported; any
+ * other valid expression (operators, MINUS, refinements) as `{ ecl }`, so it is
+ * derived from what it selects; anything else, such as a code list one per
+ * line or as CSV, by {@link parseConceptIdList}.
+ */
+export function deriveInputFromText(text: string): DeriveInput {
+  const parsed = parseECL(text);
+  if (!parsed.ast || parsed.errors.length > 0) return { conceptIds: parseConceptIdList(text) };
+  const ids = bareConcepts(parsed.ast);
+  return ids ? { conceptIds: ids } : { ecl: text };
+}
+
+/** The concepts of an expression that is only bare concepts joined by OR, else null. */
+function bareConcepts(node: ExpressionNode): string[] | null {
+  const e = node.expression;
+  if (e.type === NodeType.SubExpressionConstraint) return bareSub(e);
+  if (e.type !== NodeType.CompoundExpression || e.operator.operator !== 'OR') return null;
+  const ids: string[] = [];
+  for (const operand of e.operands) {
+    const sub = bareSub(operand);
+    if (!sub) return null;
+    ids.push(...sub);
+  }
+  return ids;
+}
+
+function bareSub(s: SubExpressionNode): string[] | null {
+  if (s.operator || s.memberOf || s.filters?.length || s.historySupplement) return null;
+  if (s.focus.type === NodeType.ConceptReference) return [s.focus.conceptId];
+  return s.focus.type === NodeType.ExpressionConstraint ? bareConcepts(s.focus) : null;
 }
 
 /** A plain-text report of a {@link DeriveResult}, for an output channel or a chat message. */

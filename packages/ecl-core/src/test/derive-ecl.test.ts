@@ -3,7 +3,13 @@
 
 import { describe, it } from 'node:test';
 import * as assert from 'node:assert';
-import { deriveEcl, formatDeriveReport, parseConceptIdList, type DeriveResult } from '../derive/derive-ecl';
+import {
+  deriveEcl,
+  deriveInputFromText,
+  formatDeriveReport,
+  parseConceptIdList,
+  type DeriveResult,
+} from '../derive/derive-ecl';
 import { HierarchyMockService, sctid } from './hierarchy-mock';
 import { MockTerminologyService } from '../terminology/mock-service';
 
@@ -923,6 +929,50 @@ describe('deriveEcl — attribute refinements (#149 Part 3)', () => {
     const set = [...mock.evaluate(`<< ${P.G1}`)];
     const result = await deriveEcl({ conceptIds: set }, mock, { omitTerms: true });
     assert.ok(result.candidates.every((c) => c.construction.kind !== 'refinement'));
+  });
+});
+
+describe('deriveInputFromText', () => {
+  it('reads every id of a one-line OR list of bare concepts', () => {
+    assert.deepStrictEqual(deriveInputFromText(`${id.A1a} |A1a| OR ${id.B2} |B2| OR ${id.P1}`), {
+      conceptIds: [id.A1a, id.B2, id.P1],
+    });
+  });
+
+  it('reads a formatted, nested OR list of bare concepts as concepts', () => {
+    const text = `(${id.A1a} |A1a|\n  OR ${id.B2})\n  OR /* procedures */ ${id.P1}`;
+    assert.deepStrictEqual(deriveInputFromText(text), { conceptIds: [id.A1a, id.B2, id.P1] });
+  });
+
+  it('reads a single bare concept as a list of one', () => {
+    assert.deepStrictEqual(deriveInputFromText(` ${id.A1} |A1| `), { conceptIds: [id.A1] });
+  });
+
+  it('keeps constraint operators as an expression', () => {
+    const text = `<< ${id.A1}\n  OR ${id.A2}`;
+    assert.deepStrictEqual(deriveInputFromText(text), { ecl: text });
+  });
+
+  it('keeps MINUS as an expression, so the excluded concept is not a member', () => {
+    const text = `(${id.A2} OR ${id.P1}) MINUS ${id.A3}`;
+    assert.deepStrictEqual(deriveInputFromText(text), { ecl: text });
+  });
+
+  it('keeps a refinement as an expression', () => {
+    const text = `${id.A1} : ${id.B} = ${id.B1}`;
+    assert.deepStrictEqual(deriveInputFromText(text), { ecl: text });
+  });
+
+  it('reads pasted code lists line by line', () => {
+    assert.deepStrictEqual(deriveInputFromText(`${id.A1}\n${id.A2}\n`), { conceptIds: [id.A1, id.A2] });
+    assert.deepStrictEqual(deriveInputFromText(`code,term\n${id.A1},A1\n${id.A2},A2`), {
+      conceptIds: [id.A1, id.A2],
+    });
+  });
+
+  it('derives from what the expression selects', async () => {
+    const result = await deriveEcl(deriveInputFromText(`<< ${id.A1} OR ${id.A2}`), fixture(), { omitTerms: true });
+    assert.strictEqual(result.input.members, 4);
   });
 });
 

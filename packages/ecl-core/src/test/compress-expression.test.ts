@@ -110,6 +110,53 @@ describe('compressExpression', () => {
     assertHonest(mock, original, result);
   });
 
+  it('says which candidates can stand as an operand without brackets', async () => {
+    const original = [id.X, `<< ${id.C1}`, id.C2, id.C3, id.C4, id.C5, id.C6, id.C7, id.C8].join(' OR ');
+    const result = await compressExpression(original, fixture(), { omitTerms: true });
+    const byEcl = new Map(result.candidates.map((c) => [c.ecl, c.standalone]));
+    assert.strictEqual(byEcl.get(`<< ${id.X}`), true);
+    assert.strictEqual(byEcl.get(original), false);
+  });
+
+  it('compresses a whole expression written in parentheses', async () => {
+    const mock = fixture();
+    const operands = [id.X, `<< ${id.C1}`, id.C2, id.C3, id.C4, id.C5, id.C6, id.C7, id.C8];
+    const original = `(${operands.join(' OR ')})`;
+    const result = await compressExpression(original, mock, { omitTerms: true });
+    assert.ok(
+      result.candidates.some((c) => c.source === 'derived' && c.exact && c.clauses === 1),
+      result.candidates.map((c) => `${c.source} ${c.ecl}`).join(' | '),
+    );
+    assert.doesNotMatch(result.notes.join('\n'), /No OR group/);
+    assertHonest(mock, original, result);
+  });
+
+  it('always keeps the original and the simplification, whatever maxCandidates', async () => {
+    const mock = fixture();
+    const original = `< ${id.C1} OR << ${id.C1} OR ${id.Y}`;
+    const result = await compressExpression(original, mock, { omitTerms: true, maxCandidates: 1 });
+    const sources = result.candidates.map((c) => c.source);
+    assert.ok(sources.includes('original'), sources.join());
+    assert.ok(sources.includes('simplified'), sources.join());
+  });
+
+  it('reuses the derive counts when the group is the whole expression', async () => {
+    const mock = fixture();
+    const original = [id.X, `<< ${id.C1}`, id.C2, id.C3, id.C4, id.C5, id.C6, id.C7, id.C8].join(' OR ');
+    const derivedOnly = await (
+      await import('../derive/derive-ecl')
+    ).deriveEcl({ ecl: original }, fixture(), {
+      omitTerms: true,
+    });
+    await compressExpression(original, mock, { omitTerms: true });
+    // Compress adds only the original's own count and the simplification check to what deriving costs.
+    assert.ok(mock.composeCalls.length <= derivedOnly.candidates.length + 40, String(mock.composeCalls.length));
+    const scored = mock.composeCalls.filter(
+      (c) => c.exclude?.some((x) => 'ecl' in x && x.ecl === original) && c.include.some((x) => 'ecl' in x),
+    );
+    assert.strictEqual(scored.length, 0, 'derived candidates were re-scored against the original');
+  });
+
   it('does not list a reordering of the original as a new candidate', async () => {
     const mock = fixture();
     const original = `<< ${id.Y} OR << ${id.C2}`;

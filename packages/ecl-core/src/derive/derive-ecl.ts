@@ -1412,8 +1412,14 @@ export function decorate(ecl: string, terms: Map<string, string>): string {
 export function parseConceptIdList(text: string): string[] {
   const ids: string[] = [];
   for (const line of text.split(/\r?\n/)) {
-    // Only the first id-like token on a line, so `code,term with 123456 in it` stays one concept.
-    const first = /(?<![\d.])\d{6,18}(?![\d.])/.exec(line.replace(/\|[^|]*\|/g, ''));
+    const bare = line.replace(/\|[^|]*\|/g, '');
+    // A line of only ids and separators (spaces, tabs, commas, a JSON array) gives
+    // every id; otherwise only the first, so `code,term with 123456 in it` stays one concept.
+    if (/^[\s\d,;"'[\]]*$/.test(bare)) {
+      ids.push(...(bare.match(/(?<![\d.])\d{6,18}(?![\d.])/g) ?? []));
+      continue;
+    }
+    const first = /(?<![\d.])\d{6,18}(?![\d.])/.exec(bare);
     if (first) ids.push(first[0]);
   }
   return ids;
@@ -1427,6 +1433,12 @@ export function parseConceptIdList(text: string): string[] {
  * line or as CSV, by {@link parseConceptIdList}.
  */
 export function deriveInputFromText(text: string): DeriveInput {
+  const expressions = text.split(/\/\*\s*ECL-END\s*\*\//).filter((part) => /\d/.test(part));
+  if (expressions.length > 1) {
+    throw new Error(
+      `The text holds ${expressions.length} ECL expressions (separated by /* ECL-END */); select the one to derive from.`,
+    );
+  }
   const parsed = parseECL(text);
   if (!parsed.ast || parsed.errors.length > 0) return { conceptIds: parseConceptIdList(text) };
   const ids = bareConcepts(parsed.ast);
@@ -1437,7 +1449,8 @@ export function deriveInputFromText(text: string): DeriveInput {
 function bareConcepts(node: ExpressionNode): string[] | null {
   const e = node.expression;
   if (e.type === NodeType.SubExpressionConstraint) return bareSub(e);
-  if (e.type !== NodeType.CompoundExpression || e.operator.operator !== 'OR') return null;
+  // A pasted `id, id, id` parses as a conjunction: a list either way, never an intersection.
+  if (e.type !== NodeType.CompoundExpression || e.operator.operator === 'MINUS') return null;
   const ids: string[] = [];
   for (const operand of e.operands) {
     const sub = bareSub(operand);

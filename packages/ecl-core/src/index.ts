@@ -108,6 +108,7 @@ export { deriveEcl, deriveInputFromText, parseConceptIdList, formatDeriveReport 
 export { compressExpression, formatCompressReport } from './derive/compress-expression';
 export type { CompressResult, CompressCandidate } from './derive/compress-expression';
 export type { HierarchyClause } from './derive/hierarchy-clauses';
+export type { RefinementClause } from './derive/refinements';
 export type {
   DeriveInput,
   DeriveOptions,

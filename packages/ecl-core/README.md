@@ -101,7 +101,7 @@ import { simplifyExpression } from '@aehrc/ecl-core';
 const result = await simplifyExpression('< 404684003 OR << 404684003', terminologyService);
 // result.expression  → '<< 404684003'
 // result.steps       → [{ technique: 'rankOperators', removed: ['< 404684003'], ... }]
-// result.subsumption → 'complete' | 'partial' | 'not-run'
+// result.subsumption → 'complete' | 'partial' | 'not-applicable' (no AND/OR left to check) | 'not-run' (no service)
 ```
 
 ### Terminology
@@ -192,10 +192,13 @@ value, a range with `>=` and `<=`, or `= *`) and cardinalities
 `(C) MINUS (D)` is also tried, with D describing what the refinement C adds.
 
 `deriveEcl({ ecl }, terminology)` takes the set an expression selects. For
-pasted text, `deriveInputFromText(text)` picks the input: an OR list of bare
-concepts becomes `{ conceptIds }` (so inactive and unknown ids are reported),
-any other valid expression `{ ecl }`, and anything else (one id per line, CSV)
-is read by `parseConceptIdList`. The language server's derive request uses it.
+pasted text, `deriveInputFromText(text)` picks the input: a list of bare
+concepts joined by OR, AND or commas becomes `{ conceptIds }` (so inactive and
+unknown ids are reported), any other valid expression `{ ecl }`, and anything
+else is read by `parseConceptIdList` (one id per line or CSV rows; a line of
+only ids, such as `id id id` or a JSON array, gives all of them). Text holding
+several expressions separated by `/* ECL-END */` is refused. The language
+server's derive request uses it.
 To make
 an expression shorter, use `compressExpression`. It compresses the expression's
 OR group, keeps what surrounds the group (`AND ^ refset`, a refinement) as

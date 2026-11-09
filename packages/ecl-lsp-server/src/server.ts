@@ -1316,6 +1316,17 @@ connection.onRequest('ecl/deriveEcl', async (params: { text?: string; conceptIds
 connection.onRequest('ecl/compressExpression', async (params: { expression?: string; uri?: string; line?: number }) => {
   let expression = params.expression;
   let range: CoreRange | undefined;
+  // A selection that is less than a whole expression takes compound candidates in brackets.
+  let wholeExpression = !params.expression;
+  if (params.expression && params.uri && params.line !== undefined) {
+    const document = documents.get(params.uri);
+    const line = params.line;
+    const match = document
+      ? groupIntoExpressions(document.getText()).find((e) => line >= e.startLine && line <= e.endLine)
+      : undefined;
+    const bare = (t: string) => t.replaceAll(/\/\*[\s\S]*?\*\//g, '').replaceAll(/\s+/g, '');
+    wholeExpression = match !== undefined && bare(match.text) === bare(params.expression);
+  }
   if (!expression && params.uri && params.line !== undefined) {
     const document = documents.get(params.uri);
     const line = params.line;
@@ -1334,9 +1345,11 @@ connection.onRequest('ecl/compressExpression', async (params: { expression?: str
     return {
       report: formatCompressReport(result),
       range,
+      wholeExpression,
       candidates: result.candidates.map((c) => ({
         expression: c.expression,
         ecl: c.ecl,
+        standalone: c.standalone,
         exact: c.exact,
         additions: c.additions.count,
         misses: c.misses.count,
@@ -1350,7 +1363,11 @@ connection.onRequest('ecl/compressExpression', async (params: { expression?: str
   }
 });
 
-/** The expression's exact extent on lines `startLine..endLine`, or undefined when comments are among them. */
+/**
+ * The expression's exact extent on lines `startLine..endLine`, or undefined
+ * when comments are among them. `//` comment lines before or after the
+ * expression are left outside the range.
+ */
 function replaceableRange(document: TextDocument, startLine: number, endLine: number): CoreRange | undefined {
   const lines = document
     .getText()
@@ -1358,6 +1375,10 @@ function replaceableRange(document: TextDocument, startLine: number, endLine: nu
     .slice(startLine, endLine + 1);
   if (lines.some((l) => l.includes('/*') || l.includes('*/'))) return undefined;
   const filled = lines.map((l, i) => ({ l, line: startLine + i })).filter(({ l }) => l.trim().length > 0);
+  const isLineComment = ({ l }: { l: string }) => l.trimStart().startsWith('//');
+  while (filled.length > 0 && isLineComment(filled[0])) filled.shift();
+  while (filled.length > 0 && isLineComment(filled.at(-1)!)) filled.pop();
+  if (filled.some(({ l }) => l.includes('//'))) return undefined;
   const first = filled.at(0);
   const last = filled.at(-1);
   if (!first || !last) return undefined;

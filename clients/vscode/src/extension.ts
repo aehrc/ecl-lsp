@@ -158,7 +158,11 @@ export function activate(context: ExtensionContext) {
   // Client options — middleware intercepts ecl.evaluateExpression to show results client-side
   // (the server also declares this command in executeCommandProvider for IntelliJ/Eclipse)
   const clientOptions: LanguageClientOptions = {
-    documentSelector: [{ scheme: 'file', language: 'ecl' }],
+    // Untitled ECL editors too: Derive and Suggest Shorter Forms open their results in them.
+    documentSelector: [
+      { scheme: 'file', language: 'ecl' },
+      { scheme: 'untitled', language: 'ecl' },
+    ],
     synchronize: {
       configurationSection: 'ecl',
       fileEvents: workspace.createFileSystemWatcher('**/*.ecl'),
@@ -588,6 +592,8 @@ interface CompressCandidateSummary extends DeriveCandidateSummary {
   /** One line, without terms: what goes into a non-ECL file. */
   ecl: string;
   source: 'original' | 'simplified' | 'derived';
+  /** Whether it can replace part of an expression without brackets. */
+  standalone: boolean;
 }
 
 /**
@@ -603,9 +609,12 @@ async function compressCurrentExpression(client: LanguageClient): Promise<void> 
     window.showErrorMessage('Select an ECL expression, or place the cursor in one in an .ecl file');
     return;
   }
-  const params = selected
-    ? { expression: selected }
-    : { uri: editor.document.uri.toString(), line: editor.selection.active.line };
+  // With a selection, the uri and line let the server tell whether it is a whole expression.
+  const params = {
+    ...(selected ? { expression: selected } : {}),
+    uri: editor.document.uri.toString(),
+    line: editor.selection.active.line,
+  };
 
   const response = await window.withProgress(
     { location: vscode.ProgressLocation.Notification, title: 'Looking for shorter forms...', cancellable: false },
@@ -614,6 +623,7 @@ async function compressCurrentExpression(client: LanguageClient): Promise<void> 
         return await client.sendRequest<{
           report: string;
           range?: { start: { line: number; character: number }; end: { line: number; character: number } };
+          wholeExpression?: boolean;
           candidates: CompressCandidateSummary[];
         }>('ecl/compressExpression', params);
       } catch (error: unknown) {
@@ -639,12 +649,15 @@ async function compressCurrentExpression(client: LanguageClient): Promise<void> 
   }
   // In a non-ECL file the expression may sit in a string, so it goes in as one line without terms.
   const inEclFile = editor.document.languageId === 'ecl';
+  // Replacing part of an expression: ECL does not mix AND, OR and MINUS without brackets.
+  const bracket = (c: CompressCandidateSummary, text: string) =>
+    selected && !response.wholeExpression && !c.standalone ? `(${text})` : text;
   const picked = await window.showQuickPick(
     shorter.map((c) => ({
       label: c.expression.replaceAll(/\s+/g, ' '),
       description: c.exact ? 'same result' : `+${c.additions} added, -${c.misses} missed`,
       detail: `${c.clauses} clauses; ${c.source}`,
-      expression: inEclFile ? c.expression : c.ecl,
+      expression: bracket(c, inEclFile ? c.expression : c.ecl),
     })),
     { placeHolder: 'Replace the expression with (details in the ECL Evaluation output)' },
   );

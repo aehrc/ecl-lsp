@@ -23,7 +23,14 @@ import { parseECL } from '../parser';
 import { NodeType, type SubExpressionNode, type ExpressionNode } from '../parser/ast';
 import { simplifyExpression } from '../refactoring/simplify-expression';
 import type { ITerminologyService } from '../terminology/types';
-import { decorate, deriveEcl, displayTerms, type CandidateConstruction, type DeriveOptions } from './derive-ecl';
+import {
+  decorate,
+  deriveEcl,
+  displayTerms,
+  type CandidateConstruction,
+  type DeriveCandidate,
+  type DeriveOptions,
+} from './derive-ecl';
 import { countClauses, stripTermsAndComments, type SetDifference } from './set-queries';
 
 export interface CompressCandidate {
@@ -38,6 +45,12 @@ export interface CompressCandidate {
   exact: boolean;
   /** Concept references in `ecl`. */
   clauses: number;
+  /**
+   * True when the form can stand as an operand of a larger expression as it is
+   * (one sub-expression); otherwise it needs brackets there, since ECL does not
+   * mix AND, OR and MINUS without them.
+   */
+  standalone: boolean;
   /**
    * - `original`: the expression as given
    * - `simplified`: the exact simplification (`simplifyExpression`)
@@ -86,9 +99,7 @@ export async function compressExpression(
   const expand = terminology.expandCompose.bind(terminology);
   result.members = (await expand({ include: [{ ecl: original }] })).total;
 
-  const built: Omit<CompressCandidate, 'expression'>[] = [
-    { ecl: original, ...noDifference(original), source: 'original' },
-  ];
+  const built: Built[] = [{ ecl: original, ...noDifference(original), source: 'original' }];
   const sampleSize = options.sampleSize ?? 10;
   const scoreAgainstOriginal = async (candidate: string) => {
     const [additions, misses] = await Promise.all([
@@ -119,13 +130,7 @@ export async function compressExpression(
   if (group) {
     const derived = await deriveEcl({ ecl: group.text }, terminology, { ...options, omitTerms: true });
     result.notes.push(...derived.notes);
-    for (const c of derived.candidates) {
-      if (c.construction.kind === 'expression') continue;
-      const full = original.slice(0, group.start) + c.ecl + original.slice(group.end);
-      // A reordering of a form already listed is not a new candidate.
-      if (built.some((b) => sameForm(b.ecl, full))) continue;
-      built.push({ ecl: full, ...(await scoreAgainstOriginal(full)), source: 'derived', construction: c.construction });
-    }
+    built.push(...(await derivedInPlace(derived.candidates, group, original, built, scoreAgainstOriginal)));
   } else {
     result.notes.push('No OR group to compress: the expression is not a disjunction and has none in parentheses.');
   }
@@ -138,9 +143,46 @@ export async function compressExpression(
       a.ecl.length - b.ecl.length,
   );
   const top = built.slice(0, options.maxCandidates ?? 8);
+  // The original and its simplification stay choices whatever the limit, so no
+  // caller is left with only lossy forms.
+  for (const c of built) if (c.source !== 'derived' && !top.includes(c)) top.push(c);
   const terms = options.omitTerms ? new Map<string, string>() : await displayTerms(top, terminology);
-  result.candidates = top.map((c) => ({ expression: decorate(c.ecl, terms), ...c }));
+  result.candidates = top.map((c) => ({
+    expression: decorate(c.ecl, terms),
+    ...c,
+    standalone: parseECL(c.ecl).ast?.expression.type === NodeType.SubExpressionConstraint,
+  }));
   return result;
+}
+
+type Built = Omit<CompressCandidate, 'expression' | 'standalone'>;
+type Score = Pick<CompressCandidate, 'additions' | 'misses' | 'exact' | 'clauses'>;
+
+/**
+ * The group's derived candidates put back in place and scored against the
+ * original, leaving out forms already listed. When the group is the whole
+ * expression, deriving already counted each against the original's members.
+ */
+async function derivedInPlace(
+  candidates: DeriveCandidate[],
+  group: NonNullable<CompressResult['group']>,
+  original: string,
+  listed: Built[],
+  scoreAgainstOriginal: (candidate: string) => Promise<Score>,
+): Promise<Built[]> {
+  const isWhole = original.slice(0, group.start).trim() === '' && original.slice(group.end).trim() === '';
+  const fresh: { full: string; c: DeriveCandidate }[] = [];
+  for (const c of candidates) {
+    if (c.construction.kind === 'expression') continue;
+    const full = isWhole ? c.ecl : original.slice(0, group.start) + c.ecl + original.slice(group.end);
+    // A reordering of a form already listed is not a new candidate.
+    if (listed.some((b) => sameForm(b.ecl, full)) || fresh.some((f) => sameForm(f.full, full))) continue;
+    fresh.push({ full, c });
+  }
+  const scores: Score[] = isWhole
+    ? fresh.map(({ c }) => ({ additions: c.additions, misses: c.misses, exact: c.exact, clauses: c.clauses }))
+    : await Promise.all(fresh.map(({ full }) => scoreAgainstOriginal(full)));
+  return fresh.map(({ full, c }, i) => ({ ecl: full, ...scores[i], source: 'derived', construction: c.construction }));
 }
 
 /** On a tie, prefer a shorter form the reader has not seen over the original. */
@@ -186,6 +228,17 @@ async function sample(
 function findGroup(ast: ExpressionNode, text: string): CompressResult['group'] {
   const expr = ast.expression;
   const whole = { text, start: 0, end: text.length };
+  // `(A OR B …)` as a whole: look inside the brackets.
+  if (
+    expr.type === NodeType.SubExpressionConstraint &&
+    !expr.operator &&
+    !expr.memberOf &&
+    !expr.filters?.length &&
+    !expr.historySupplement &&
+    expr.focus.type === NodeType.ExpressionConstraint
+  ) {
+    return findGroup(expr.focus, text);
+  }
   if (expr.type === NodeType.CompoundExpression) {
     if (expr.operator.operator === 'OR') return whole;
     const groups = expr.operands

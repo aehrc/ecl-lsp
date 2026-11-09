@@ -852,6 +852,20 @@ describe('deriveEcl — attribute refinements (#149 Part 3)', () => {
     assertCountsHonest(mock, set, result);
   });
 
+  it('keeps deriving when some relationship lookups fail', async () => {
+    const mock = products3();
+    const set = [...mock.evaluate(`< ${P.PRODUCT} : ${P.FORM} = << ${P.TAB}`)];
+    const read = mock.getDefiningRelationships.bind(mock);
+    let calls = 0;
+    mock.getDefiningRelationships = async (conceptId: string) => {
+      if (++calls % 5 === 0) throw new Error('timed out');
+      return read(conceptId);
+    };
+    const result = await deriveEcl({ conceptIds: set }, mock, { omitTerms: true, refinements: 'always' });
+    assert.ok(result.candidates.length > 0);
+    assert.match(result.notes.join('\n'), /relationships of \d+ sampled members? could not be read: timed out/);
+  });
+
   it('uses the refset an ECL input is restricted to as the focus', async () => {
     const mock = products3();
     const ecl = `^ ${P.REFSET} : ${P.FORM} = << ${P.TAB}`;
@@ -1029,6 +1043,16 @@ describe('deriveInputFromText', () => {
     assert.deepStrictEqual(deriveInputFromText(text), { ecl: text });
   });
 
+  it('reads a comma-separated list of bare concepts as concepts, not as AND', () => {
+    assert.deepStrictEqual(deriveInputFromText(`${id.A1}, ${id.A2}, ${id.A3}`), {
+      conceptIds: [id.A1, id.A2, id.A3],
+    });
+  });
+
+  it('refuses text holding several expressions', () => {
+    assert.throws(() => deriveInputFromText(`<< ${id.A1}\n/* ECL-END */\n<< ${id.A2}`), /2 ECL expressions/);
+  });
+
   it('reads pasted code lists line by line', () => {
     assert.deepStrictEqual(deriveInputFromText(`${id.A1}\n${id.A2}\n`), { conceptIds: [id.A1, id.A2] });
     assert.deepStrictEqual(deriveInputFromText(`code,term\n${id.A1},A1\n${id.A2},A2`), {
@@ -1043,6 +1067,12 @@ describe('deriveInputFromText', () => {
 });
 
 describe('parseConceptIdList', () => {
+  it('reads every id on a line that holds only ids', () => {
+    assert.deepStrictEqual(parseConceptIdList(`${id.A1} ${id.A2}\t${id.A3}`), [id.A1, id.A2, id.A3]);
+    assert.deepStrictEqual(parseConceptIdList(`["${id.A1}", "${id.A2}"]`), [id.A1, id.A2]);
+    assert.deepStrictEqual(parseConceptIdList(`${id.A1},term with ${id.A2} in it`), [id.A1]);
+  });
+
   it('reads one id per line, CSV rows, terms and headers', () => {
     const text = [
       'code,display',

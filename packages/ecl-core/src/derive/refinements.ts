@@ -76,6 +76,32 @@ interface AttributeProfile {
 }
 
 /**
+ * The defining relationships of each sampled member. A failed lookup leaves
+ * that member out, with a note, rather than end the derive.
+ */
+async function readRelationships(
+  sample: string[],
+  getRelationships: (conceptId: string) => Promise<DefiningRelationship[] | null>,
+  notes: string[],
+): Promise<(DefiningRelationship[] | null)[]> {
+  const sampled: (DefiningRelationship[] | null)[] = [];
+  const failures: unknown[] = [];
+  for (let i = 0; i < sample.length; i += MAX_IN_FLIGHT) {
+    const batch = await Promise.allSettled(sample.slice(i, i + MAX_IN_FLIGHT).map((m) => getRelationships(m)));
+    for (const r of batch) {
+      if (r.status === 'fulfilled') sampled.push(r.value);
+      else failures.push(r.reason);
+    }
+  }
+  if (failures.length > 0) {
+    const reason = failures[0] instanceof Error ? failures[0].message : String(failures[0]);
+    const members = failures.length === 1 ? 'member' : 'members';
+    notes.push(`The relationships of ${failures.length} sampled ${members} could not be read: ${reason}.`);
+  }
+  return sampled;
+}
+
+/**
  * Refinement candidates for the set, likeliest first. `roots` are the set's
  * roots (all of them when `roots.total` fits); `givenFoci` come from the input
  * or the caller, and the most specific concept above every member is added
@@ -97,10 +123,7 @@ export async function refinementCandidates(
   }
 
   const sample = (await q.codes({ include: [members.clause] }, REFINEMENT_SAMPLE)).codes;
-  const sampled: (DefiningRelationship[] | null)[] = [];
-  for (let i = 0; i < sample.length; i += MAX_IN_FLIGHT) {
-    sampled.push(...(await Promise.all(sample.slice(i, i + MAX_IN_FLIGHT).map((m) => getRelationships(m)))));
-  }
+  const sampled = await readRelationships(sample, getRelationships, notes);
   const profiles = profileAttributes(sampled);
   if (profiles.length === 0) {
     notes.push('No attribute is shared by most members, so no refinement candidates were built.');

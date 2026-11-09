@@ -1378,20 +1378,51 @@ export function formatDeriveReport(result: DeriveResult): string {
   }
   lines.push(`Roots (members with no ancestor in the set): ${result.roots}`);
   for (const note of result.notes) lines.push(`Note: ${note}`);
+  if (result.critique) lines.push('', 'Review:', ...reviewLines(result.critique).map((l) => `   ${l}`));
 
   result.candidates.forEach((c, i) => {
     const status = c.exact ? 'exact' : `+${c.additions.count} added, -${c.misses.count} missed`;
     lines.push('', `${i + 1}. ${status}; ${plural(c.clauses, 'clause')}; ${c.construction.kind}`);
     lines.push(...c.expression.split('\n').map((l) => `   ${l}`));
-    const sample = (label: string, d: SetDifference) => {
-      if (d.count === 0) return;
-      const shown = d.sample.map((s) => `${s.code} |${s.display}|`).join(', ');
-      lines.push(`   ${label} (${d.count}): ${shown}${d.count > d.sample.length ? ', …' : ''}`);
-    };
-    sample('Adds', c.additions);
-    sample('Misses', c.misses);
+    for (const [label, d] of [
+      ['Adds', c.additions],
+      ['Misses', c.misses],
+    ] as const) {
+      if (d.count > 0) lines.push(`   ${sampleLine(label, d)}`);
+    }
   });
   return lines.join('\n');
+}
+
+/** `label (count): code |term|, …` */
+function sampleLine(label: string, d: SetDifference): string {
+  const shown = d.sample.map((s) => `${s.code} |${s.display}|`).join(', ');
+  return `${label} (${d.count}): ${shown}${d.count > d.sample.length ? ', …' : ''}`;
+}
+
+/** The critique's flagged items, one line each (near misses take two). */
+function reviewLines(c: CodelistCritique): string[] {
+  const lines: string[] = [];
+  if (c.clauses.exceeded) {
+    lines.push(
+      `Best exact form needs ${plural(c.clauses.best, 'clause')} (more than ${c.clauses.limit}); ` +
+        'consider fixing the list first.',
+    );
+  }
+  for (const n of c.nearMisses) {
+    const term = n.display ? ` |${n.display}|` : '';
+    lines.push(
+      `Nearly all of << ${n.conceptId}${term}: ${n.listed} of ${n.descendants} listed.`,
+      `   ${sampleLine('Missing', n.missing)}`,
+    );
+  }
+  if (c.spansHierarchies) {
+    const counts = c.hierarchies.map((h) => `${h.display} ${h.count}`).join(', ');
+    lines.push(`Spans ${c.hierarchies.length} top-level hierarchies: ${counts}.`);
+  }
+  if (c.inactive.length > 0) lines.push(`Inactive ids given: ${c.inactive.length}.`);
+  if (c.impliedInactive?.count) lines.push(sampleLine('Implied inactive codes not listed', c.impliedInactive));
+  return lines.length > 0 ? lines : ['Nothing flagged.'];
 }
 
 function errorMessage(error: unknown): string {

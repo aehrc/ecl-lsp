@@ -1285,7 +1285,7 @@ connection.onRequest('ecl/deriveEcl', async (params: { text?: string; conceptIds
   }
   const input = params.refsetId ? { refsetId: params.refsetId } : { conceptIds };
   try {
-    const result = await deriveEcl(input, terminologyService);
+    const result = await deriveEcl(input, terminologyService, { critique: true });
     return {
       report: formatDeriveReport(result),
       candidates: result.candidates.map((c) => ({

@@ -204,6 +204,32 @@ const { candidates } = await compressExpression('(<< 372594008 OR << 372767007 O
 // candidates[i]: { expression, ecl, additions, misses, exact, clauses, source: 'derived' | 'simplified' | 'original' }
 ```
 
+#### Critique of the list
+
+With `critique: true` (or an object of limits), `deriveEcl` also returns
+`result.critique`: structural checks that point to a list worth fixing before
+it is turned into ECL. They follow checks of the NHS ValueSet Management Tool
+(CHK numbers below), and all are advisory. `formatDeriveReport` prints them
+under "Review:". The checks:
+
+| Field              | Check | Flags                                                                                                                                                      | Limit (default)                                                   |
+| ------------------ | ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| `clauses`          | CHK16 | The best exact candidate needs more clauses than the limit                                                                                                 | `maxClauses` (35)                                                 |
+| `nearMisses`       | CHK12 | Concepts X where the list holds most, but not all, of `<< X`, with the missing concepts counted on the server. Only the outermost of nested ones is listed | `nearMissShare` (0.9), `nearMissMinSize` (5), `maxNearMisses` (5) |
+| `spansHierarchies` | CHK15 | Members in more than one top-level hierarchy (`hierarchies` gives the counts)                                                                              |                                                                   |
+| `inactive`         | CHK07 | Inactive ids in the input                                                                                                                                  |                                                                   |
+| `impliedInactive`  | CHK08 | Inactive concepts the members' history implies but the input leaves out. Off unless asked for; needs ECL history supplements on the server                 | `impliedInactive` (false; `true` is `'HISTORY-MOD'`)              |
+
+Near misses need the IS-A subgraph (see `useGraph`); without it they are
+skipped with a note. The other checks cost no extra request, near misses one
+per concept reported, and implied inactive codes one. The language server's
+derive request turns the critique on.
+
+```typescript
+const result = await deriveEcl({ conceptIds }, fhir, { critique: { maxClauses: 40, impliedInactive: true } });
+// result.critique: { clauses, nearMisses, hierarchies, spansHierarchies, inactive, impliedInactive? }
+```
+
 #### Benchmark
 
 `scripts/derive-benchmark.cjs` runs `deriveEcl` over a file of reference sets

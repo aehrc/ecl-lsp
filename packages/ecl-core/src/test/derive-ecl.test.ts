@@ -934,4 +934,33 @@ describe('formatDeriveReport', () => {
     assert.match(report, /^2\. \+2 added, -0 missed; 1 clause; ancestor-cover$/m);
     assert.match(report, new RegExp(`^   Adds \\(2\\): ${id.A5} \\|A5\\|, ${id.A5a} \\|A5a\\|$`, 'm'));
   });
+
+  it('prints a review section when there is a critique', async () => {
+    const set = [id.A, id.A1, id.A1a, id.A1b, id.A2, id.A3, id.A4, id.A5];
+    const result = await deriveEcl({ conceptIds: set }, fixture(), {
+      critique: { nearMissShare: 0.85, maxClauses: 0 },
+    });
+    const report = formatDeriveReport(result);
+    assert.match(report, /^Review:$/m);
+    assert.match(report, new RegExp(`^   Nearly all of << ${id.A} \\|A\\|: 8 of 9 listed\\.$`, 'm'));
+    assert.match(report, new RegExp(`^      Missing \\(1\\): ${id.A5a} \\|A5a\\|$`, 'm'));
+    assert.match(report, /^ {3}Best exact form needs \d+ clauses? \(more than 0\); consider fixing the list first\.$/m);
+  });
+
+  it('prints the hierarchy spread and the inactive input', async () => {
+    const result = await deriveEcl({ conceptIds: [id.A1a, id.P1, id.RETIRED] }, fixture(), { critique: true });
+    const report = formatDeriveReport(result);
+    assert.match(report, /^ {3}Spans 2 top-level hierarchies: Finding 1, Procedure 1\.$/m);
+    assert.match(report, /^ {3}Inactive ids given: 1\.$/m);
+  });
+
+  it('has no review section without a critique', async () => {
+    const result = await deriveEcl({ conceptIds: [id.A1a, id.P1] }, fixture());
+    assert.doesNotMatch(formatDeriveReport(result), /Review:/);
+  });
+
+  it('says so when nothing is flagged', async () => {
+    const result = await deriveEcl({ conceptIds: [id.A1, id.A1a, id.A1b] }, fixture(), { critique: true });
+    assert.match(formatDeriveReport(result), /^Review:\n {3}Nothing flagged\.$/m);
+  });
 });

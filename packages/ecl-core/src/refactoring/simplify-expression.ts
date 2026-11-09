@@ -61,6 +61,98 @@ function sliceText(text: string, node: { range: { start: { offset: number }; end
   return text.substring(node.range.start.offset, node.range.end.offset);
 }
 
+// ── Comments ─────────────────────────────────────────────────────────────
+//
+// Operands are cut from the text by their parse ranges, which leave out the
+// comments between them. So that Simplify never drops a comment, each operand
+// carries the comments next to it (before its operator: the operand before;
+// after it: the operand after), an operand a step removes hands its comments
+// to the nearest operand kept, and any comment still missing at the end is
+// put back after the result.
+
+/** Comments, terms and quoted strings: terms and strings may contain `/*`. */
+const COMMENT_OR_LITERAL = /"(?:[^"\\]|\\.)*"|\|[^|]*\||\/\*[\s\S]*?\*\//g;
+
+/** The comments in `text`, in order. */
+function commentsIn(text: string): string[] {
+  return [...text.matchAll(COMMENT_OR_LITERAL)].map((m) => m[0]).filter((m) => m.startsWith('/*'));
+}
+
+/** `text` without comments, for comparing operands and for server queries. */
+function withoutComments(text: string): string {
+  return text
+    .replaceAll(COMMENT_OR_LITERAL, (m) => (m.startsWith('/*') ? ' ' : m))
+    .replaceAll(/\s+/g, ' ')
+    .trim();
+}
+
+/** `text` split into its leading comments, the rest, and its trailing comments. */
+function peelComments(text: string): { before: string[]; core: string; after: string[] } {
+  const before: string[] = [];
+  const after: string[] = [];
+  let core = text.trim();
+  for (let m = /^\/\*[\s\S]*?\*\//.exec(core); m; m = /^\/\*[\s\S]*?\*\//.exec(core)) {
+    before.push(m[0]);
+    core = core.slice(m[0].length).trim();
+  }
+  for (let m = /\/\*(?:(?!\/\*)[\s\S])*?\*\/$/.exec(core); m && commentsIn(core).at(-1) === m[0];) {
+    after.unshift(m[0]);
+    core = core.slice(0, m.index).trim();
+    m = /\/\*(?:(?!\/\*)[\s\S])*?\*\/$/.exec(core);
+  }
+  return { before, core, after };
+}
+
+function withComments(before: string[], core: string, after: string[]): string {
+  return [...before, core, ...after].join(' ');
+}
+
+/**
+ * The comments in the text between two operands, split at the operator: those
+ * before it belong to the operand before, those after it to the operand after.
+ */
+function splitGap(gap: string): [string[], string[]] {
+  const blanked = gap.replaceAll(COMMENT_OR_LITERAL, (m) => ' '.repeat(m.length));
+  const op = /\b(?:AND|OR)\b|,/i.exec(blanked)?.index ?? gap.length;
+  return [commentsIn(gap.slice(0, op)), commentsIn(gap.slice(op))];
+}
+
+/**
+ * `kept`, an order-preserving subsequence of `operands`, with the comments of
+ * each removed operand added to the nearest kept operand (the one before it,
+ * or the first when none is before it).
+ */
+function carryComments(operands: string[], kept: string[]): string[] {
+  const result = [...kept];
+  let k = 0;
+  let lastKept = -1;
+  const orphans: string[] = [];
+  for (const operand of operands) {
+    if (k < kept.length && operand === kept[k]) {
+      lastKept = k++;
+      continue;
+    }
+    const comments = commentsIn(operand);
+    if (comments.length === 0) continue;
+    if (lastKept >= 0) result[lastKept] = `${result[lastKept]} ${comments.join(' ')}`;
+    else orphans.push(...comments);
+  }
+  if (orphans.length > 0 && result.length > 0) result[0] = `${orphans.join(' ')} ${result[0]}`;
+  return result;
+}
+
+/** `result` with every comment of `input` it lost put back after it. */
+function restoreComments(input: string, result: string): string {
+  const left = commentsIn(result);
+  const lost: string[] = [];
+  for (const c of commentsIn(input)) {
+    const i = left.indexOf(c);
+    if (i >= 0) left.splice(i, 1);
+    else lost.push(c);
+  }
+  return lost.length > 0 ? `${result} ${lost.join(' ')}` : result;
+}
+
 /** Check whether any AND/OR compound with 2+ operands exists in the AST. */
 function hasAnyCompound(ast: ExpressionNode): boolean {
   const expr = ast.expression;
@@ -89,15 +181,16 @@ function removeDuplicates(operandTexts: string[]): string[] | null {
   let changed = false;
 
   for (const t of operandTexts) {
-    if (seen.has(t)) {
+    const key = withoutComments(t);
+    if (seen.has(key)) {
       changed = true;
     } else {
-      seen.add(t);
+      seen.add(key);
       kept.push(t);
     }
   }
 
-  return changed ? kept : null;
+  return changed ? carryComments(operandTexts, kept) : null;
 }
 
 // ── Technique 2: Same-concept operator ranking ───────────────────────────
@@ -177,7 +270,10 @@ function rankOperands(operandTexts: string[], compoundOp: 'AND' | 'OR'): string[
   }
 
   if (removeSet.size === 0) return null;
-  return operandTexts.filter((_, i) => !removeSet.has(i));
+  return carryComments(
+    operandTexts,
+    operandTexts.filter((_, i) => !removeSet.has(i)),
+  );
 }
 
 // ── Technique 3: Factor common focus (OR) / Merge same-focus (AND) ───────
@@ -233,7 +329,8 @@ function bracketIfCompound(refinement: string): string {
 function factorOrMergeFocus(operandTexts: string[], compoundOp: 'AND' | 'OR'): string | null {
   if (operandTexts.length < 2) return null;
 
-  const parts = operandTexts.map((t) => getFocusKey(t));
+  const peeled = operandTexts.map((t) => peelComments(t));
+  const parts = peeled.map((p) => getFocusKey(p.core));
 
   // All operands must be parenthesized refined expressions
   if (parts.includes(null)) return null;
@@ -253,7 +350,8 @@ function factorOrMergeFocus(operandTexts: string[], compoundOp: 'AND' | 'OR'): s
   // on `a, b OR c`: Ontoserver reads it as `a, (b OR c)`.
   const joinedRefinements = validParts.map((p) => bracketIfCompound(p.refinementText)).join(joinSep);
 
-  return `${commonFocusText} : ${joinedRefinements}`;
+  const comments = peeled.flatMap((p) => [...p.before, ...p.after]);
+  return withComments([], `${commonFocusText} : ${joinedRefinements}`, comments);
 }
 
 // ── Technique 4: FHIR subsumption via MINUS ──────────────────────────────
@@ -267,6 +365,7 @@ async function fhirSubsumption(
 ): Promise<string[] | null> {
   const n = operandTexts.length;
   if (n < 2) return null;
+  const plain = operandTexts.map((t) => withoutComments(t));
   if (trace) trace.subsumptionRan = true;
 
   const removeSet = new Set<number>();
@@ -275,7 +374,7 @@ async function fhirSubsumption(
   const nonEmpty = new Set<number>();
   for (let i = 0; i < n; i++) {
     try {
-      const result = await terminologyService.evaluateEcl(operandTexts[i], 1);
+      const result = await terminologyService.evaluateEcl(plain[i], 1);
       if (result.total > 0) nonEmpty.add(i);
     } catch {
       // Can't evaluate → treat as non-removable
@@ -290,7 +389,7 @@ async function fhirSubsumption(
       if (removeSet.has(j) || !nonEmpty.has(j)) continue;
 
       try {
-        const aMinusB = await terminologyService.evaluateEcl(`(${operandTexts[i]}) MINUS (${operandTexts[j]})`, 1);
+        const aMinusB = await terminologyService.evaluateEcl(`(${plain[i]}) MINUS (${plain[j]})`, 1);
 
         if (aMinusB.total === 0) {
           if (compoundOp === 'AND') {
@@ -302,7 +401,7 @@ async function fhirSubsumption(
           continue;
         }
 
-        const bMinusA = await terminologyService.evaluateEcl(`(${operandTexts[j]}) MINUS (${operandTexts[i]})`, 1);
+        const bMinusA = await terminologyService.evaluateEcl(`(${plain[j]}) MINUS (${plain[i]})`, 1);
 
         if (bMinusA.total === 0) {
           if (compoundOp === 'AND') {
@@ -320,7 +419,10 @@ async function fhirSubsumption(
   }
 
   if (removeSet.size === 0) return null;
-  return operandTexts.filter((_, i) => !removeSet.has(i));
+  return carryComments(
+    operandTexts,
+    operandTexts.filter((_, i) => !removeSet.has(i)),
+  );
 }
 
 // ── Step recording ───────────────────────────────────────────────────────
@@ -398,7 +500,13 @@ function decomposeCompound(text: string): {
   if (op === 'MINUS') return null;
   if (compound.operands.length < 2) return null;
 
-  const operandTexts = compound.operands.map((o) => sliceText(text, o));
+  const ops = compound.operands;
+  const gaps = ops.slice(1).map((o, i) => splitGap(text.slice(ops[i].range.end.offset, o.range.start.offset)));
+  const operandTexts = ops.map((o, i) => {
+    const before = i === 0 ? commentsIn(text.slice(0, o.range.start.offset)) : gaps[i - 1][1];
+    const after = i === ops.length - 1 ? commentsIn(text.slice(o.range.end.offset)) : gaps[i][0];
+    return withComments(before, sliceText(text, o), after);
+  });
   return { compoundOp: op, operandTexts };
 }
 
@@ -411,8 +519,8 @@ async function simplifyOperand(
   terminologyService: ITerminologyService | null,
   trace: SimplifyTrace | null,
 ): Promise<string> {
-  // Check if this operand is a parenthesized expression
-  const trimmed = text.trim();
+  // Check if this operand is a parenthesized expression (comments around it aside)
+  const { before, core: trimmed, after } = peelComments(text);
   if (!trimmed.startsWith('(') || !trimmed.endsWith(')')) return text;
 
   // Extract inner text (strip outer parens)
@@ -427,9 +535,9 @@ async function simplifyOperand(
   // refinement left by factoring/merging a focus, cannot stand bare as an operand
   const innerParse = parseECL(simplified);
   if (innerParse.ast?.expression.type !== NodeType.SubExpressionConstraint) {
-    return `(${simplified})`;
+    return withComments(before, `(${simplified})`, after);
   }
-  return simplified;
+  return withComments(before, simplified, after);
 }
 
 /**
@@ -666,7 +774,7 @@ async function runSimplify(
     trace.steps = [];
     return { expression: text, trace };
   }
-  return { expression: simplified, trace };
+  return { expression: restoreComments(text, simplified), trace };
 }
 
 /**

@@ -829,6 +829,71 @@ describe('simplifyExpression', () => {
     assert.ok(result.errors.length > 0);
     assert.deepStrictEqual(result.steps, []);
   });
+
+  describe('comments', () => {
+    const cases: [string, string][] = [
+      ['<< 73211009 /* dm */ OR << 73211009', '<< 73211009 /* dm */'],
+      ['<< 73211009 OR /* again */ << 73211009', '<< 73211009 /* again */'],
+      ['<< 73211009 OR << 73211009 /* trailing */', '<< 73211009 /* trailing */'],
+      [
+        '/* header */\n<< 73211009 |Diabetes| OR\n  /* type 2 */ << 44054006 OR\n  << 73211009',
+        '/* header */ << 73211009 |Diabetes| OR /* type 2 */ << 44054006',
+      ],
+      ['< 404684003 AND /* x */ < 404684003 AND << 404684003', '< 404684003 /* x */'],
+      ['/* group */ (<< 73211009 OR << 73211009) OR << 44054006', '/* group */ << 73211009 OR << 44054006'],
+    ];
+
+    for (const [input, expected] of cases) {
+      it(`keeps the comments of ${JSON.stringify(input)}`, async () => {
+        const result = await simplifyExpression(input);
+        assert.strictEqual(result.expression, expected);
+        assert.deepStrictEqual(parseECL(result.expression).errors, []);
+      });
+    }
+
+    it('keeps a comment outside a factored operand', async () => {
+      const result = await simplifyExpression(
+        '/* lung */ (< 404684003 : 363698007 = << 39057004) OR (< 404684003 : 116676008 = << 79654002)',
+      );
+      assert.deepStrictEqual(
+        result.steps.map((s) => s.technique),
+        ['factorFocus'],
+      );
+      assert.ok(result.expression.includes('/* lung */'), result.expression);
+      assert.deepStrictEqual(parseECL(result.expression).errors, []);
+    });
+
+    it('keeps the comment of a subsumed operand, and sends the server no comments', async () => {
+      const mock = new SubsumptionMockService();
+      mock.addSubsumption('404684003', '19829001');
+      const sent: string[] = [];
+      const evaluate = mock.evaluateEcl.bind(mock);
+      mock.evaluateEcl = (ecl: string) => {
+        sent.push(ecl);
+        return evaluate(ecl);
+      };
+      const result = await simplifyExpression('< 404684003 OR /* lesions */ < 19829001', mock);
+      assert.strictEqual(result.expression, '< 404684003 /* lesions */');
+      assert.ok(sent.length > 0);
+      assert.ok(!sent.some((e) => e.includes('/*')), sent.join(' | '));
+    });
+
+    it('never loses a comment', async () => {
+      const inputs = [
+        '/* a */ < 404684003 /* b */ AND /* c */ < 404684003 /* d */',
+        '(< 404684003 /* e */ OR /* f */ < 404684003) AND /* g */ << 19829001 AND < 19829001',
+        '/* h */ (< 404684003 : 363698007 = << 39057004) /* i */ AND /* j */ (< 404684003 : 116676008 = << 79654002) /* k */',
+      ];
+      for (const input of inputs) {
+        const result = await simplifyExpression(input);
+        assert.ok(result.changed, input);
+        for (const c of input.match(/\/\*[^*]*\*\//g) ?? []) {
+          assert.ok(result.expression.includes(c), `${c} lost from ${result.expression}`);
+        }
+        assert.deepStrictEqual(parseECL(result.expression).errors, [], result.expression);
+      }
+    });
+  });
 });
 
 // ─── Add explicit parentheses ───────────────────────────────────────────────

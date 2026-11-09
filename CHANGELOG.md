@@ -5,6 +5,46 @@ All notable changes to the ECL Language Server will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.0] - 2026-11-10
+
+A minor release for new features: `ecl-core` can derive ECL from a list of codes, suggest shorter forms of an expression, and critique a code list. VS Code gets two new commands built on them. It also fixes formatter rewrites of display terms and search strings, one of which changed what a description filter searches for. Anyone formatting ECL with terms or filters should upgrade.
+
+### Added
+
+- **Derive ECL from a code list** (`ecl-core`, `ecl-lsp-server`, VS Code) ([#147](https://github.com/aehrc/ecl-lsp/issues/147)): `deriveEcl()` takes concept ids, a reference set or an ECL expression and returns candidate expressions that select the same concepts. The candidates are hierarchy covers with exclusions, greedy grouping (after REFACTOR), and attribute refinements, including concrete values, cardinality and subtractions, for AMT sets. Each candidate reports its exact additions and misses, counted on the terminology server, and candidates are ranked by cost. Hierarchy work is done locally on a subgraph fetched in a few `$expand` requests. `deriveInputFromText()` reads pasted text: an OR list or comma list of concepts, an expression, or a code list one per line or as CSV. In VS Code, **ECL: Derive ECL from Concept List** runs it on the selection or the document. `packages/ecl-core/scripts/derive-benchmark.cjs` compares results against a reference set of ECL definitions.
+- **Code list critique** (`ecl-core`) ([#149](https://github.com/aehrc/ecl-lsp/issues/149)): `deriveEcl({ critique: true })` reports structural problems with the list, after the checks of the NHS ValueSet Management Tool:
+  - inactive members (CHK07);
+  - inactive concepts the members' history implies but the list leaves out (CHK08, opt-in, needs ECL history supplements on the server);
+  - concepts where the list holds most, but not all, of `<< X` (CHK12);
+  - members spread across more than one top-level hierarchy (CHK15);
+  - a best exact expression with more clauses than a limit (CHK16).
+- **Suggest shorter forms of an expression** (`ecl-core`, `ecl-lsp-server`, VS Code) ([#149](https://github.com/aehrc/ecl-lsp/issues/149)): `compressExpression()` offers shorter expressions for an expression, or for part of one, each with its exact differences from the original. In VS Code, **ECL: Suggest Shorter Forms** runs it on the expression or the selection.
+- **`simplifyExpression()`** (`ecl-core`) ([#149](https://github.com/aehrc/ecl-lsp/issues/149)): the Simplify refactoring as a function. It returns the simplified text and the steps applied.
+
+### Fixed
+
+- **The formatter rewrote display terms and search strings** (`ecl-core`): spacing rules for `AND`/`OR`/`MINUS`, `:` and `=` also reached inside terms and quoted strings.
+  - `|Past MI diagnosed on ECG AND/OR other|` became `| … AND / OR other |`.
+  - `{{ D term = "fetus OR newborn" }}` gained extra spaces, which changes what the filter searches for.
+  - `//` or `/* */` inside a term or string (`|see http://x.org|`) was treated as a comment.
+  - A string holding `=` or `:` stopped the whole expression being formatted.
+
+  Term and string contents are now left as they are, apart from collapsing runs of whitespace in a term as before.
+
+- **`/* ECL-END */` delimiters lost or misplaced** (`ecl-core`):
+  - A delimiter after a search string containing `//`, after a term or string spanning two lines, or after an unclosed `|` could be deleted, merging two expressions into one.
+  - A delimiter inside a search string was treated as a split point.
+
+  The formatter and derive now find delimiters with the same scanner that finds comments.
+
+- **Simplify** (`ecl-core`) ([#149](https://github.com/aehrc/ecl-lsp/issues/149)):
+  - It dropped comments; they are now kept with what they annotate.
+  - Factoring or merging a focus could leave a refinement unbracketed.
+  - It could produce invalid output when nothing applied; the expression is now left untouched.
+- **Security advisories:**
+  - In the Slack bot's runtime dependencies: `undici` 7.30.2 and `body-parser` 2.4.0.
+  - Development-only: Storybook 10.6.6, `dompurify` 3.4.17 (by an override under `monaco-editor`, which pins 3.4.15), `vite` 8.3.7, `markdown-it` 14.3.3, `fast-uri` 3.1.9 and `@azure/msal-node` 7.2.1.
+
 ## [1.6.2] - 2026-10-06
 
 ### Fixed

@@ -119,9 +119,19 @@ describe('findDuplicateTerms', () => {
     ]);
   });
 
-  it('matches terms regardless of case and spacing', () => {
+  it('matches terms regardless of spacing and the case of the first letter', () => {
     assert.deepStrictEqual(findDuplicateTerms([c('1', 'Wound  dressing'), c('2', ' wound dressing')]), [
       { term: 'Wound  dressing', conceptIds: ['1', '2'] },
+    ]);
+  });
+
+  it('keeps case-significant differences after the first letter apart', () => {
+    assert.deepStrictEqual(findDuplicateTerms([c('1', 'MS'), c('2', 'Ms')]), []);
+  });
+
+  it("shows the term as the lowest id has it, whatever the server's order", () => {
+    assert.deepStrictEqual(findDuplicateTerms([c('2', 'wound dressing'), c('1', 'Wound dressing')]), [
+      { term: 'Wound dressing', conceptIds: ['1', '2'] },
     ]);
   });
 

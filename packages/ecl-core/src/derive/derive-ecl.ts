@@ -164,7 +164,10 @@ export interface CritiqueOptions {
    * Needs a server that supports ECL history supplements. Default false.
    */
   impliedInactive?: boolean | 'HISTORY-MIN' | 'HISTORY-MOD' | 'HISTORY-MAX';
-  /** CHK13: the most shared terms reported. Default 20. */
+  /**
+   * CHK13: the most shared terms reported (0 turns the check off). Default 20.
+   * Lists of more than `maxGraphConcepts` members are not checked.
+   */
   maxDuplicateTerms?: number;
 }
 
@@ -636,6 +639,15 @@ async function sharedTerms(
   opts: Required<DeriveOptions>,
   notes: string[],
 ): Promise<DuplicateTerm[]> {
+  const limit = Math.max(0, Math.floor(max));
+  if (limit === 0) return [];
+  if (members.size > opts.maxGraphConcepts) {
+    notes.push(
+      `Shared terms were not checked: the list has ${members.size} members, ` +
+        `more than ${opts.maxGraphConcepts} (maxGraphConcepts).`,
+    );
+    return [];
+  }
   let groups;
   try {
     groups = findDuplicateTerms((await q.concepts({ include: [members.clause] }, members.size)).concepts);
@@ -643,27 +655,32 @@ async function sharedTerms(
     notes.push(`Shared terms were not checked: ${errorMessage(error)}.`);
     return [];
   }
-  if (groups.length > max) {
+  if (groups.length > limit) {
     notes.push(
       `${plural(groups.length, 'term')} ${groups.length === 1 ? 'is' : 'are'} shared by more than one member; ` +
-        `the first ${max} ${max === 1 ? 'is' : 'are'} listed (maxDuplicateTerms).`,
+        `the first ${limit} ${limit === 1 ? 'is' : 'are'} listed (maxDuplicateTerms).`,
     );
   }
   const found: DuplicateTerm[] = groups
-    .slice(0, max)
+    .slice(0, limit)
     .map((g) => ({ term: g.term, concepts: g.conceptIds.map((conceptId) => ({ conceptId })) }));
-  if (!opts.omitTerms && found.length > 0) {
-    try {
-      const info = await terminology.validateConcepts(found.flatMap((d) => d.concepts.map((c) => c.conceptId)));
-      for (const c of found.flatMap((d) => d.concepts)) {
-        const fsn = info.get(c.conceptId)?.fsn;
-        if (fsn) c.fsn = fsn;
-      }
-    } catch {
-      // FSNs are a convenience; the ids stand on their own.
-    }
-  }
+  if (!opts.omitTerms && found.length > 0) await addFsns(found, terminology);
   return found;
+}
+
+/** Each concept's FSN, where it says more than the shared term. */
+async function addFsns(found: DuplicateTerm[], terminology: ITerminologyService): Promise<void> {
+  const concepts = found.flatMap((d) => d.concepts);
+  try {
+    const info = await terminology.validateConcepts(concepts.map((c) => c.conceptId));
+    for (const c of concepts) {
+      const concept = info.get(c.conceptId);
+      // A server without FSN designations gives the PT, which is the shared term: no help.
+      if (concept?.fsn && concept.fsn !== concept.pt) c.fsn = concept.fsn;
+    }
+  } catch {
+    // FSNs are a convenience; the ids stand on their own.
+  }
 }
 
 /**

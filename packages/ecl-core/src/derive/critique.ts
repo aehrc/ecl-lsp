@@ -60,27 +60,33 @@ export function findNearMisses(g: TaxonomyGraph, share: number, minSize: number,
 
 /** Different concepts of the list with the same preferred term (CHK13). */
 export interface LocalDuplicateTerm {
-  /** The term as the first of the concepts has it. */
+  /** The term as the lowest id has it. */
   term: string;
   /** Sorted. */
   conceptIds: string[];
 }
 
 /**
- * Groups of two or more concepts whose terms match, ignoring case and runs of
- * whitespace, ordered by term. Concepts without a term are left out.
+ * Groups of two or more concepts whose terms match, ordered by term. Runs of
+ * whitespace and the case of the first letter are ignored, as SNOMED CT
+ * terms are mostly case-insensitive only there. Concepts without a term are
+ * left out.
  */
 export function findDuplicateTerms(concepts: { code: string; display: string }[]): LocalDuplicateTerm[] {
-  const groups = new Map<string, { term: string; ids: Set<string> }>();
+  const groups = new Map<string, Map<string, string>>();
   for (const { code, display } of concepts) {
-    const key = display.trim().replaceAll(/\s+/g, ' ').toLowerCase();
-    if (!key) continue;
-    const group = groups.get(key) ?? { term: display.trim(), ids: new Set<string>() };
-    group.ids.add(code);
+    const term = display.trim().replaceAll(/\s+/g, ' ');
+    if (!term) continue;
+    const key = term.charAt(0).toLowerCase() + term.slice(1);
+    const group = groups.get(key) ?? new Map<string, string>();
+    group.set(code, display.trim());
     groups.set(key, group);
   }
   return [...groups]
-    .filter(([, g]) => g.ids.size > 1)
+    .filter(([, g]) => g.size > 1)
     .sort(([a], [b]) => a.localeCompare(b))
-    .map(([, g]) => ({ term: g.term, conceptIds: [...g.ids].sort(byId) }));
+    .map(([, g]) => {
+      const conceptIds = [...g.keys()].sort(byId);
+      return { term: g.get(conceptIds[0]) ?? '', conceptIds };
+    });
 }

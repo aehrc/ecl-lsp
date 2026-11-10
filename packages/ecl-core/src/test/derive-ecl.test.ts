@@ -737,6 +737,43 @@ describe('deriveEcl', () => {
         assert.match(result.notes.join('\n'), /2 terms are shared by more than one member; the first 1 is listed/);
       });
 
+      it('gives no FSN where the server has none but the shared term', async () => {
+        const mock = dressings().withFsn(DRESS_O, 'Dressing');
+        const result = await deriveEcl({ conceptIds: [DRESS_P, DRESS_O] }, mock, { critique: true });
+        const concepts = result.critique?.duplicateTerms[0]?.concepts ?? [];
+        assert.deepStrictEqual(
+          concepts.map((x) => x.fsn),
+          [DRESS_P, DRESS_O].sort().map((x) => (x === DRESS_P ? 'Dressing (procedure)' : undefined)),
+        );
+      });
+
+      it('skips the check, with no listing, when maxDuplicateTerms is 0 or less', async () => {
+        for (const maxDuplicateTerms of [0, -1]) {
+          const mock = dressings();
+          const result = await deriveEcl({ conceptIds: [DRESS_P, DRESS_O] }, mock, {
+            omitTerms: true,
+            critique: { maxDuplicateTerms },
+          });
+          assert.deepStrictEqual(result.critique?.duplicateTerms, []);
+          assert.doesNotMatch(result.notes.join('\n'), /maxDuplicateTerms/);
+          const listings = mock.composeCalls.filter((c) => 'concepts' in c.include[0] && !c.exclude?.length);
+          const baseline = dressings();
+          await deriveEcl({ conceptIds: [DRESS_P, DRESS_O] }, baseline, { omitTerms: true });
+          const before = baseline.composeCalls.filter((c) => 'concepts' in c.include[0] && !c.exclude?.length);
+          assert.strictEqual(listings.length, before.length);
+        }
+      });
+
+      it('skips the check, with a note, above maxGraphConcepts members', async () => {
+        const result = await deriveEcl({ conceptIds: [DRESS_P, DRESS_O, id.P1] }, dressings(), {
+          omitTerms: true,
+          maxGraphConcepts: 2,
+          critique: true,
+        });
+        assert.deepStrictEqual(result.critique?.duplicateTerms, []);
+        assert.match(result.notes.join('\n'), /Shared terms were not checked: the list has 3 members, more than 2/);
+      });
+
       it('notes a failed term lookup and keeps the rest of the critique', async () => {
         const mock = dressings();
         const expand = mock.expandCompose.bind(mock);

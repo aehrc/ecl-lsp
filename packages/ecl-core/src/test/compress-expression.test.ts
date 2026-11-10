@@ -6,6 +6,7 @@ import * as assert from 'node:assert';
 import { compressExpression, formatCompressReport, type CompressResult } from '../derive/compress-expression';
 import { HierarchyMockService, sctid } from './hierarchy-mock';
 import { parseECL } from '../parser';
+import { deriveEcl } from '../derive/derive-ecl';
 
 // Fixture: X has children C1..C8; C1 has two children; Y is a sibling of X.
 const ROOT = '138875005';
@@ -143,9 +144,7 @@ describe('compressExpression', () => {
   it('reuses the derive counts when the group is the whole expression', async () => {
     const mock = fixture();
     const original = [id.X, `<< ${id.C1}`, id.C2, id.C3, id.C4, id.C5, id.C6, id.C7, id.C8].join(' OR ');
-    const derivedOnly = await (
-      await import('../derive/derive-ecl')
-    ).deriveEcl({ ecl: original }, fixture(), {
+    const derivedOnly = await deriveEcl({ ecl: original }, fixture(), {
       omitTerms: true,
     });
     await compressExpression(original, mock, { omitTerms: true });

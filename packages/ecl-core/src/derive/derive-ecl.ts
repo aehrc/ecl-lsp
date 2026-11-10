@@ -64,7 +64,7 @@ import {
   type SetDifference,
 } from './set-queries';
 import { bestSingles, costCover, coverDescend, rootsCover } from './cover-optimiser';
-import { nearMissCandidates, outermost } from './critique';
+import { findDuplicateTerms, nearMissCandidates, outermost } from './critique';
 import { greedyGrouping, refactorDescend } from './greedy-grouping';
 import { localScore, render, type ClauseForm, type HierarchyClause } from './hierarchy-clauses';
 import { commentSpans } from '../formatter/comments';
@@ -164,6 +164,8 @@ export interface CritiqueOptions {
    * Needs a server that supports ECL history supplements. Default false.
    */
   impliedInactive?: boolean | 'HISTORY-MIN' | 'HISTORY-MOD' | 'HISTORY-MAX';
+  /** CHK13: the most shared terms reported. Default 20. */
+  maxDuplicateTerms?: number;
 }
 
 /** A concept the list holds most, but not all, of `<< conceptId` of (CHK12). */
@@ -176,6 +178,13 @@ export interface NearMiss {
   listed: number;
   /** `<< conceptId` concepts the list leaves out, counted on the server. */
   missing: SetDifference;
+}
+
+/** Different members with the same preferred term (CHK13), e.g. a procedure and an observable entity. */
+export interface DuplicateTerm {
+  term: string;
+  /** Sorted by id; `fsn` tells them apart, unless `omitTerms`. */
+  concepts: { conceptId: string; fsn?: string }[];
 }
 
 /**
@@ -192,6 +201,8 @@ export interface CodelistCritique {
   spansHierarchies: boolean;
   /** CHK07: inactive ids in the input. */
   inactive: string[];
+  /** CHK13: members that share a preferred term. */
+  duplicateTerms: DuplicateTerm[];
   /** CHK08: inactive concepts the history implies but the input leaves out (when asked for). */
   impliedInactive?: SetDifference;
 }
@@ -321,6 +332,7 @@ const CRITIQUE_DEFAULTS: Required<CritiqueOptions> = {
   nearMissMinSize: 5,
   maxNearMisses: 5,
   impliedInactive: false,
+  maxDuplicateTerms: 20,
 };
 
 /** Above this many concept references, candidates are not formatted or given terms. */
@@ -525,9 +537,10 @@ async function buildCritique(
     (s) => s.exact && s.construction.kind !== 'refset' && s.construction.kind !== 'expression',
   );
   const best = Math.min(members.size, ...induced.map((s) => s.clauses));
-  const [near, inactive] = await Promise.all([
+  const [near, inactive, duplicateTerms] = await Promise.all([
     nearMisses(limits, members, graph, q, terminology, opts, result.notes),
     'refsetId' in input ? inactiveMembers(members, graph, q, result.notes) : [...result.input.inactive],
+    sharedTerms(limits.maxDuplicateTerms, members, q, terminology, opts, result.notes),
   ]);
   const critique: CodelistCritique = {
     clauses: { best, limit: limits.maxClauses, exceeded: best > limits.maxClauses },
@@ -535,6 +548,7 @@ async function buildCritique(
     hierarchies,
     spansHierarchies: hierarchies.length > 1,
     inactive,
+    duplicateTerms,
   };
   if (limits.impliedInactive) {
     const profile = limits.impliedInactive === true ? 'HISTORY-MOD' : limits.impliedInactive;
@@ -605,6 +619,48 @@ async function nearMisses(
       }
     } catch {
       // Terms are a convenience; the ids stand on their own.
+    }
+  }
+  return found;
+}
+
+/**
+ * Members that share a preferred term (CHK13): one listing of the members with
+ * their terms, plus a lookup of the FSNs that tell each group apart.
+ */
+async function sharedTerms(
+  max: number,
+  members: MemberSet,
+  q: SetQueries,
+  terminology: ITerminologyService,
+  opts: Required<DeriveOptions>,
+  notes: string[],
+): Promise<DuplicateTerm[]> {
+  let groups;
+  try {
+    groups = findDuplicateTerms((await q.concepts({ include: [members.clause] }, members.size)).concepts);
+  } catch (error) {
+    notes.push(`Shared terms were not checked: ${errorMessage(error)}.`);
+    return [];
+  }
+  if (groups.length > max) {
+    notes.push(
+      `${plural(groups.length, 'term')} ${groups.length === 1 ? 'is' : 'are'} shared by more than one member; ` +
+        `the first ${max} ${max === 1 ? 'is' : 'are'} listed (maxDuplicateTerms).`,
+    );
+  }
+  const found: DuplicateTerm[] = groups
+    .slice(0, max)
+    .map((g) => ({ term: g.term, concepts: g.conceptIds.map((conceptId) => ({ conceptId })) }));
+  if (!opts.omitTerms && found.length > 0) {
+    try {
+      const info = await terminology.validateConcepts(found.flatMap((d) => d.concepts.map((c) => c.conceptId)));
+      for (const c of found.flatMap((d) => d.concepts)) {
+        const fsn = info.get(c.conceptId)?.fsn;
+        if (fsn) c.fsn = fsn;
+      }
+    } catch {
+      // FSNs are a convenience; the ids stand on their own.
     }
   }
   return found;
@@ -1582,6 +1638,10 @@ function reviewLines(c: CodelistCritique, inactiveListedAbove: boolean): string[
     lines.push(`Inactive members: ${c.inactive.length}: ${c.inactive.slice(0, 20).join(', ')}${more}.`);
   }
   if (c.impliedInactive?.count) lines.push(sampleLine('Implied inactive codes not listed', c.impliedInactive));
+  for (const d of c.duplicateTerms) {
+    const concepts = d.concepts.map((x) => (x.fsn ? `${x.conceptId} |${x.fsn}|` : x.conceptId));
+    lines.push(`Same term, different concepts: |${d.term}| is ${concepts.join(', ')}.`);
+  }
   return lines.length > 0 ? lines : ['Nothing flagged.'];
 }
 

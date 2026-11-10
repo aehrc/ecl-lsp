@@ -231,6 +231,7 @@ under "Review:". The checks:
 | `spansHierarchies` | CHK15 | Members in more than one top-level hierarchy (`hierarchies` gives the counts)                                                                              |                                                                   |
 | `inactive`         | CHK07 | Inactive ids in the input, or a reference set's inactive members                                                                                           |                                                                   |
 | `impliedInactive`  | CHK08 | Inactive concepts the members' history implies but the input leaves out. Off unless asked for; needs ECL history supplements on the server                 | `impliedInactive` (false; `true` is `'HISTORY-MOD'`)              |
+| `duplicateTerms`   | CHK13 | Different members with the same preferred term (e.g. a procedure and an observable entity), with FSNs to tell them apart                                   | `maxDuplicateTerms` (20)                                          |
 
 Near misses need the IS-A subgraph (see `useGraph`); without it they are
 skipped with a note. Only groupers whose subtree the subgraph loaded are judged:

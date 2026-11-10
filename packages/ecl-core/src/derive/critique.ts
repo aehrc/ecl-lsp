@@ -3,8 +3,9 @@
 
 // Code list critique (issue #149): structural checks that fall out of deriving
 // ECL from a list, after the checks of the NHS ValueSet Management Tool. This
-// module holds the local part of CHK12 (a list that holds most, but not all,
-// of `<< X`); deriveEcl counts what is missing on the server.
+// module holds the local parts: CHK12 (a list that holds most, but not all,
+// of `<< X`; deriveEcl counts what is missing on the server) and CHK13
+// (different concepts with the same term).
 
 import { byId } from './set-queries';
 import type { TaxonomyGraph } from './taxonomy-graph';
@@ -55,4 +56,31 @@ export function outermost<T extends { conceptId: string }>(g: TaxonomyGraph, ite
 /** The near misses on the graph alone: {@link nearMissCandidates}, outermost first, at most `max`. */
 export function findNearMisses(g: TaxonomyGraph, share: number, minSize: number, max: number): LocalNearMiss[] {
   return outermost(g, nearMissCandidates(g, share, minSize), max);
+}
+
+/** Different concepts of the list with the same preferred term (CHK13). */
+export interface LocalDuplicateTerm {
+  /** The term as the first of the concepts has it. */
+  term: string;
+  /** Sorted. */
+  conceptIds: string[];
+}
+
+/**
+ * Groups of two or more concepts whose terms match, ignoring case and runs of
+ * whitespace, ordered by term. Concepts without a term are left out.
+ */
+export function findDuplicateTerms(concepts: { code: string; display: string }[]): LocalDuplicateTerm[] {
+  const groups = new Map<string, { term: string; ids: Set<string> }>();
+  for (const { code, display } of concepts) {
+    const key = display.trim().replaceAll(/\s+/g, ' ').toLowerCase();
+    if (!key) continue;
+    const group = groups.get(key) ?? { term: display.trim(), ids: new Set<string>() };
+    group.ids.add(code);
+    groups.set(key, group);
+  }
+  return [...groups]
+    .filter(([, g]) => g.ids.size > 1)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([, g]) => ({ term: g.term, conceptIds: [...g.ids].sort(byId) }));
 }

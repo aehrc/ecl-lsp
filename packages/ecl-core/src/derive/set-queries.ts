@@ -90,18 +90,27 @@ export class SetQueries {
 
   /** Up to `max` codes of the set, sorted, plus the set's exact total. */
   async codes(compose: ValueSetCompose, max: number, activeOnly = true): Promise<{ codes: string[]; total: number }> {
-    const codes: string[] = [];
+    const { concepts, total } = await this.concepts(compose, max, activeOnly);
+    return { codes: concepts.map((c) => c.code).sort(byId), total };
+  }
+
+  /** Up to `max` concepts of the set with their terms, in the server's order, plus the set's exact total. */
+  async concepts(
+    compose: ValueSetCompose,
+    max: number,
+    activeOnly = true,
+  ): Promise<{ concepts: EvaluationConcept[]; total: number }> {
+    const concepts: EvaluationConcept[] = [];
     let total = 0;
-    for (let offset = 0; codes.length < max;) {
-      const r = await this.expand(compose, { count: Math.min(PAGE_SIZE, max - codes.length), offset, activeOnly });
+    for (let offset = 0; concepts.length < max;) {
+      const r = await this.expand(compose, { count: Math.min(PAGE_SIZE, max - concepts.length), offset, activeOnly });
       total = r.total;
       if (r.concepts.length === 0) break;
-      for (const c of r.concepts) codes.push(c.code);
+      for (const c of r.concepts) concepts.push(c);
       offset += r.concepts.length;
       if (offset >= total) break;
     }
-    codes.sort(byId);
-    return { codes, total };
+    return { concepts, total };
   }
 
   /**

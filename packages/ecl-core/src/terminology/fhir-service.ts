@@ -35,6 +35,7 @@ interface FhirParameterPart {
   valueDecimal?: number;
   valueInteger?: number;
   valueUri?: string;
+  valueCoding?: { system?: string; code?: string };
   part?: FhirParameterPart[];
 }
 
@@ -46,6 +47,9 @@ interface FhirParametersResponse {
   resourceType: string;
   parameter?: FhirParameter[];
 }
+
+/** SNOMED CT's description type for a fully specified name. */
+const FSN_TYPE = '900000000000003001';
 
 /** A single concept entry inside a ValueSet expansion. */
 interface FhirDesignation {
@@ -594,10 +598,14 @@ export class FhirTerminologyService implements ITerminologyService {
       }
     }
 
+    const fsn = params
+      .filter((p) => p.name === 'designation')
+      .find((p) => p.part?.some((q) => q.name === 'use' && q.valueCoding?.code === FSN_TYPE))
+      ?.part?.find((q) => q.name === 'value')?.valueString;
     const conceptInfo: ConceptInfo = {
       id: conceptId,
-      fsn: display,
-      pt: display, // Simplified - would need to parse designations
+      fsn: fsn ?? display,
+      pt: display,
       active,
     };
 
@@ -791,7 +799,7 @@ export class FhirTerminologyService implements ITerminologyService {
   }
 
   private async bulkExpand(conceptIds: string[]): Promise<Map<string, ConceptInfo>> {
-    const url = `${this.baseUrl}/ValueSet/$expand?property=inactive&activeOnly=false`;
+    const url = `${this.baseUrl}/ValueSet/$expand?property=inactive&activeOnly=false&includeDesignations=true`;
 
     const include: Record<string, unknown> = {
       system: 'http://snomed.info/sct',
@@ -849,7 +857,7 @@ export class FhirTerminologyService implements ITerminologyService {
 
       results.set(code, {
         id: code,
-        fsn: display,
+        fsn: entry.designation?.find((d) => d.use?.code === FSN_TYPE)?.value ?? display,
         pt: display,
         active,
       });
@@ -1255,7 +1263,7 @@ export class FhirTerminologyService implements ITerminologyService {
     const results: ConceptSearchResult[] = contains.slice(0, 20).map((item) => {
       const display = item.display ?? '';
       // Extract FSN from designations (use code 900000000000003001 = Fully Specified Name)
-      const fsnDesignation = item.designation?.find((d) => d.use?.code === '900000000000003001');
+      const fsnDesignation = item.designation?.find((d) => d.use?.code === FSN_TYPE);
       return {
         id: item.code ?? '',
         fsn: fsnDesignation?.value ?? display,

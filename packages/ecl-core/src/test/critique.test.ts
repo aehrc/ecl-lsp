@@ -3,7 +3,7 @@
 
 import { describe, it } from 'node:test';
 import * as assert from 'node:assert';
-import { findNearMisses } from '../derive/critique';
+import { findDuplicateTerms, findNearMisses } from '../derive/critique';
 import { loadTaxonomyGraph, type TaxonomyGraph } from '../derive/taxonomy-graph';
 import { orGroup, SetQueries } from '../derive/set-queries';
 import { HierarchyMockService, sctid } from './hierarchy-mock';
@@ -107,5 +107,43 @@ describe('findNearMisses', () => {
   it('caps the number reported', async () => {
     const g = await graphOf(NEARLY_A);
     assert.deepStrictEqual(findNearMisses(g, 0.85, 5, 0), []);
+  });
+});
+
+describe('findDuplicateTerms', () => {
+  const c = (code: string, display: string) => ({ code, display });
+
+  it('groups different concepts that share a term', () => {
+    assert.deepStrictEqual(findDuplicateTerms([c('3', 'Dressing'), c('1', 'Wound'), c('2', 'Dressing')]), [
+      { term: 'Dressing', conceptIds: ['2', '3'] },
+    ]);
+  });
+
+  it('matches terms regardless of spacing and the case of the first letter', () => {
+    assert.deepStrictEqual(findDuplicateTerms([c('1', 'Wound  dressing'), c('2', ' wound dressing')]), [
+      { term: 'Wound  dressing', conceptIds: ['1', '2'] },
+    ]);
+  });
+
+  it('keeps case-significant differences after the first letter apart', () => {
+    assert.deepStrictEqual(findDuplicateTerms([c('1', 'MS'), c('2', 'Ms')]), []);
+  });
+
+  it("shows the term as the lowest id has it, whatever the server's order", () => {
+    assert.deepStrictEqual(findDuplicateTerms([c('2', 'wound dressing'), c('1', 'Wound dressing')]), [
+      { term: 'Wound dressing', conceptIds: ['1', '2'] },
+    ]);
+  });
+
+  it('ignores a concept listed twice and concepts without a term', () => {
+    assert.deepStrictEqual(findDuplicateTerms([c('1', 'Dressing'), c('1', 'Dressing'), c('2', ''), c('3', '')]), []);
+  });
+
+  it('orders groups by term', () => {
+    const found = findDuplicateTerms([c('1', 'b'), c('2', 'a'), c('3', 'B'), c('4', 'A')]);
+    assert.deepStrictEqual(
+      found.map((d) => d.term),
+      ['a', 'b'],
+    );
   });
 });

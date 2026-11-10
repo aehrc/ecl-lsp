@@ -678,6 +678,120 @@ describe('deriveEcl', () => {
       assert.deepStrictEqual(result.critique?.inactive, [id.RETIRED]);
     });
 
+    describe('same term, different concepts (CHK13)', () => {
+      const DRESS_P = sctid(1060);
+      const DRESS_O = sctid(1061);
+      const dressings = () =>
+        fixture()
+          .add(DRESS_P, 'Dressing', [id.PROC])
+          .withFsn(DRESS_P, 'Dressing (procedure)')
+          .add(DRESS_O, 'Dressing', [id.FINDING])
+          .withFsn(DRESS_O, 'Dressing (observable entity)');
+
+      it('reports members that share a term, with their FSNs', async () => {
+        const result = await deriveEcl({ conceptIds: [DRESS_P, DRESS_O, id.P1] }, dressings(), { critique: true });
+        const [lo, hi] = [DRESS_P, DRESS_O].sort();
+        const fsn = { [DRESS_P]: 'Dressing (procedure)', [DRESS_O]: 'Dressing (observable entity)' };
+        assert.deepStrictEqual(result.critique?.duplicateTerms, [
+          {
+            term: 'Dressing',
+            concepts: [
+              { conceptId: lo, fsn: fsn[lo] },
+              { conceptId: hi, fsn: fsn[hi] },
+            ],
+          },
+        ]);
+        const report = formatDeriveReport(result);
+        assert.match(report, /^ {3}Same term, different concepts: \|Dressing\| is /m);
+        assert.match(report, new RegExp(`${DRESS_P} \\|Dressing \\(procedure\\)\\|`));
+      });
+
+      it('leaves out FSNs with omitTerms', async () => {
+        const result = await deriveEcl({ conceptIds: [DRESS_P, DRESS_O] }, dressings(), {
+          omitTerms: true,
+          critique: true,
+        });
+        assert.deepStrictEqual(result.critique?.duplicateTerms, [
+          { term: 'Dressing', concepts: [DRESS_P, DRESS_O].sort().map((conceptId) => ({ conceptId })) },
+        ]);
+      });
+
+      it('is empty when every term differs', async () => {
+        const result = await deriveEcl({ conceptIds: [id.A1a, id.B2, id.P1] }, fixture(), {
+          omitTerms: true,
+          critique: true,
+        });
+        assert.deepStrictEqual(result.critique?.duplicateTerms, []);
+      });
+
+      it('caps the groups reported, with a note', async () => {
+        const mock = dressings().add(sctid(1062), 'Wound', [id.PROC]).add(sctid(1063), 'Wound', [id.FINDING]);
+        const result = await deriveEcl({ conceptIds: [DRESS_P, DRESS_O, sctid(1062), sctid(1063)] }, mock, {
+          omitTerms: true,
+          critique: { maxDuplicateTerms: 1 },
+        });
+        assert.deepStrictEqual(
+          result.critique?.duplicateTerms.map((d) => d.term),
+          ['Dressing'],
+        );
+        assert.match(result.notes.join('\n'), /2 terms are shared by more than one member; the first 1 is listed/);
+      });
+
+      it('gives no FSN where the server has none but the shared term', async () => {
+        const mock = dressings().withFsn(DRESS_O, 'Dressing');
+        const result = await deriveEcl({ conceptIds: [DRESS_P, DRESS_O] }, mock, { critique: true });
+        const concepts = result.critique?.duplicateTerms[0]?.concepts ?? [];
+        assert.deepStrictEqual(
+          concepts.map((x) => x.fsn),
+          [DRESS_P, DRESS_O].sort().map((x) => (x === DRESS_P ? 'Dressing (procedure)' : undefined)),
+        );
+      });
+
+      it('skips the check, with no listing, when maxDuplicateTerms is 0 or less', async () => {
+        for (const maxDuplicateTerms of [0, -1]) {
+          const mock = dressings();
+          const result = await deriveEcl({ conceptIds: [DRESS_P, DRESS_O] }, mock, {
+            omitTerms: true,
+            critique: { maxDuplicateTerms },
+          });
+          assert.deepStrictEqual(result.critique?.duplicateTerms, []);
+          assert.doesNotMatch(result.notes.join('\n'), /maxDuplicateTerms/);
+          const listings = mock.composeCalls.filter((c) => 'concepts' in c.include[0] && !c.exclude?.length);
+          const baseline = dressings();
+          await deriveEcl({ conceptIds: [DRESS_P, DRESS_O] }, baseline, { omitTerms: true });
+          const before = baseline.composeCalls.filter((c) => 'concepts' in c.include[0] && !c.exclude?.length);
+          assert.strictEqual(listings.length, before.length);
+        }
+      });
+
+      it('skips the check, with a note, above maxGraphConcepts members', async () => {
+        const result = await deriveEcl({ conceptIds: [DRESS_P, DRESS_O, id.P1] }, dressings(), {
+          omitTerms: true,
+          maxGraphConcepts: 2,
+          critique: true,
+        });
+        assert.deepStrictEqual(result.critique?.duplicateTerms, []);
+        assert.match(result.notes.join('\n'), /Shared terms were not checked: the list has 3 members, more than 2/);
+      });
+
+      it('notes a failed term lookup and keeps the rest of the critique', async () => {
+        const mock = dressings();
+        const expand = mock.expandCompose.bind(mock);
+        let listings = 0;
+        mock.expandCompose = async (compose, options) => {
+          // Resolving the input lists the active members first; the term listing is the second such call.
+          const plain = compose.include.length === 1 && 'concepts' in compose.include[0] && !compose.exclude?.length;
+          const members = plain && options?.count === 2 && options.activeOnly && !options.parents;
+          if (members && ++listings === 2) throw new Error('boom');
+          return expand(compose, options);
+        };
+        const result = await deriveEcl({ conceptIds: [DRESS_P, DRESS_O] }, mock, { omitTerms: true, critique: true });
+        assert.deepStrictEqual(result.critique?.duplicateTerms, []);
+        assert.match(result.notes.join('\n'), /Shared terms were not checked: boom/);
+        assert.ok(result.critique?.clauses.best);
+      });
+    });
+
     it('lists the inactive members of a reference set', async () => {
       const mock = fixture().addRefset(id.REFSET, [id.A1a, id.B2, id.RETIRED]);
       const result = await deriveEcl({ refsetId: id.REFSET }, mock, { omitTerms: true, critique: true });

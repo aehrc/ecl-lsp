@@ -63,6 +63,7 @@ export function sctid(item: number): string {
 
 interface MockConcept {
   pt: string;
+  fsn?: string;
   parents: string[];
   active: boolean;
   relationships: DefiningRelationship[];
@@ -82,6 +83,13 @@ export class HierarchyMockService implements ITerminologyService {
 
   add(id: string, pt: string, parents: string[] = [], active = true): this {
     this.concepts.set(id, { pt, parents, active, relationships: [] });
+    return this;
+  }
+
+  /** Give `id` a fully specified name (by default its preferred term). */
+  withFsn(id: string, fsn: string): this {
+    const c = this.concepts.get(id);
+    if (c) c.fsn = fsn;
     return this;
   }
 
@@ -112,7 +120,7 @@ export class HierarchyMockService implements ITerminologyService {
 
   async getConceptInfo(conceptId: string): Promise<ConceptInfo | null> {
     const c = this.concepts.get(conceptId);
-    return c ? { id: conceptId, fsn: c.pt, pt: c.pt, active: c.active } : null;
+    return c ? { id: conceptId, fsn: c.fsn ?? c.pt, pt: c.pt, active: c.active } : null;
   }
 
   async validateConcepts(conceptIds: string[]): Promise<Map<string, ConceptInfo | null>> {

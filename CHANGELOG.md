@@ -5,6 +5,16 @@ All notable changes to the ECL Language Server will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- The code list critique flags different members with the same preferred term, such as a procedure and an observable entity both called "Dressing" (CHK13). Each group carries the members' FSNs to tell them apart; `maxDuplicateTerms` caps how many are reported (default 20).
+
+### Fixed
+
+- Concept lookups now return the real fully specified name, with its semantic tag, from the server's designations. Before, `fsn` was a copy of the preferred term, so hovers showed the preferred term twice. The Slack bot still writes preferred terms into ECL.
+
 ## [1.7.0] - 2026-11-10
 
 A minor release for new features: `ecl-core` can derive ECL from a list of codes, suggest shorter forms of an expression, and critique a code list. VS Code gets two new commands built on them. It also fixes formatter rewrites of display terms and search strings, one of which changed what a description filter searches for. Anyone formatting ECL with terms or filters should upgrade.

@@ -187,7 +187,7 @@ export async function processEcl(
       if (info) {
         const startOffset = ref.range.start.offset;
         const endOffset = ref.range.end.offset;
-        withTerms = withTerms.slice(0, startOffset) + `${ref.id} |${info.fsn}|` + withTerms.slice(endOffset);
+        withTerms = withTerms.slice(0, startOffset) + `${ref.id} |${info.pt || info.fsn}|` + withTerms.slice(endOffset);
       }
     }
   }

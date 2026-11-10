@@ -743,3 +743,68 @@ describe('FhirTerminologyService — resolved version extraction', () => {
     );
   });
 });
+
+describe('FhirTerminologyService — fully specified names', () => {
+  let mock: ReturnType<typeof createMockServer>;
+  let baseUrl: string;
+  const FSN_USE = { system: 'http://snomed.info/sct', code: '900000000000003001' };
+
+  beforeEach(async () => {
+    mock = createMockServer();
+    baseUrl = await mock.start();
+  });
+
+  afterEach(async () => {
+    await mock.stop();
+  });
+
+  it('takes the FSN from the bulk expansion designations', async () => {
+    const svc = new FhirTerminologyService({ baseUrl, timeout: 2000 });
+    mock.setResponse(200, {
+      resourceType: 'ValueSet',
+      expansion: {
+        total: 1,
+        contains: [
+          {
+            code: '129003000',
+            display: 'Dressing',
+            designation: [
+              { language: 'en', use: { code: 'preferredForLanguage' }, value: 'Dressing' },
+              { language: 'en', use: FSN_USE, value: 'Dressing (observable entity)' },
+            ],
+          },
+        ],
+      },
+    });
+    const info = (await svc.validateConcepts(['129003000'])).get('129003000');
+    assert.deepStrictEqual({ fsn: info?.fsn, pt: info?.pt }, { fsn: 'Dressing (observable entity)', pt: 'Dressing' });
+    assert.match(mock.requests.find((r) => r.method === 'POST')?.url ?? '', /includeDesignations=true/);
+  });
+
+  it('falls back to the display when the expansion has no FSN', async () => {
+    const svc = new FhirTerminologyService({ baseUrl, timeout: 2000 });
+    mock.setResponse(200, MOCK_EXPAND_RESPONSE);
+    const info = (await svc.validateConcepts(['404684003'])).get('404684003');
+    assert.strictEqual(info?.fsn, 'Clinical finding');
+  });
+
+  it('takes the FSN from the $lookup designations', async () => {
+    const svc = new FhirTerminologyService({ baseUrl, timeout: 2000 });
+    mock.setResponse(200, {
+      ...MOCK_LOOKUP_RESPONSE,
+      parameter: [
+        { name: 'display', valueString: 'Dressing' },
+        {
+          name: 'designation',
+          part: [
+            { name: 'language', valueCode: 'en' },
+            { name: 'use', valueCoding: FSN_USE },
+            { name: 'value', valueString: 'Dressing (observable entity)' },
+          ],
+        },
+      ],
+    });
+    const info = await svc.getConceptInfo('129003000');
+    assert.deepStrictEqual({ fsn: info?.fsn, pt: info?.pt }, { fsn: 'Dressing (observable entity)', pt: 'Dressing' });
+  });
+});

@@ -73,12 +73,12 @@ export function minifyExpression(expression: string, options: MinifyOptions = {}
 }
 
 function parseOrThrow(expression: string): ParserRuleContext {
-  const { ast, errors } = parseECL(expression);
-  const { tree } = parseConcreteTree(expression);
-  if (!ast || !tree || errors.length > 0) {
-    throw new MinifyError(`Cannot minify invalid ECL: ${errors[0]?.message ?? 'unknown error'}`, errors);
-  }
-  return tree;
+  const { tree, errors } = parseConcreteTree(expression);
+  if (tree && errors.length === 0) return tree;
+  // Only an invalid expression pays for a second parse, to get parseECL's clearer messages.
+  const friendly = parseECL(expression).errors;
+  const reported = friendly.length > 0 ? friendly : errors;
+  throw new MinifyError(`Cannot minify invalid ECL: ${reported[0]?.message ?? 'unknown error'}`, reported);
 }
 
 // Rules whose text is copied as written: a quoted search term's spaces are
@@ -97,9 +97,8 @@ const LINE_BREAK_OR_TAB = /[\t\r\n]/g;
 const WHITESPACE_CHAR_RULES = new Set([ECLParser.RULE_htab, ECLParser.RULE_cr, ECLParser.RULE_lf]);
 
 // Two of these either side of dropped whitespace would run together into one
-// word: `D term`, `R 363698007`. `.`, `-` and `#` appear inside identifiers
-// (`LOINC#54486-6`, `#2.5`), so they are kept apart from words too.
-const WORD_CHAR = /[\p{L}\p{N}_.\-#]/u;
+// word: `D term`, `R 363698007`.
+const WORD_CHAR = /[\p{L}\p{N}_]/u;
 
 // Character pairs that read as something else once the space between them is
 // gone: `< !!>` is not `<!` followed by `!>`, nor `{ {` a filter. `//` is not
@@ -134,6 +133,10 @@ class Minifier {
   // True when the source had whitespace or a comment here that was dropped, so
   // the next character may need a space to stay apart from the previous one.
   private brokenHere = false;
+  // True just after an unquoted alternate identifier code. Such a code may
+  // contain `.` (`ICD#A01.9`), so a following dotted attribute needs a space:
+  // `ICD#A01.363698007` would read the attribute as part of the code.
+  private afterUnquotedCode = false;
 
   constructor(private readonly removeComments: boolean) {}
 
@@ -176,15 +179,23 @@ class Minifier {
     const firstPipe = children.findIndex((c) => c instanceof TerminalNode && c.text === '|');
     if (firstPipe === -1) {
       for (const child of children) this.visit(child);
+      this.noteUnquotedCode(node);
       return;
     }
     // Everything before the `ws` that precedes the first pipe is the identifier.
     for (const child of children.slice(0, firstPipe - 1)) this.visit(child);
+    this.noteUnquotedCode(node);
     // The rest is `ws | ws term ws |`: drop the term, keep any comments.
     for (const child of children.slice(firstPipe - 1)) {
       if (child instanceof ParserRuleContext && child.ruleIndex === ECLParser.RULE_ws) this.visit(child);
     }
     this.brokenHere = true;
+  }
+
+  private noteUnquotedCode(node: ParserRuleContext): void {
+    const first = node.children?.[0];
+    const quoted = first instanceof ParserRuleContext && first.ruleIndex === ECLParser.RULE_qm;
+    this.afterUnquotedCode = node.ruleIndex === ECLParser.RULE_altidentifier && !quoted;
   }
 
   /** Optional (`ws`) or mandatory (`mws`) whitespace, which may hold comments. */
@@ -212,11 +223,13 @@ class Minifier {
   private append(text: string): void {
     if (text.length === 0) return;
     const last = this.out.at(-1);
-    if (this.brokenHere && last !== undefined && needsSpace(last, text[0])) {
+    const keepApart = needsSpace(last ?? '', text[0]) || (this.afterUnquotedCode && text.startsWith('.'));
+    if (this.brokenHere && last !== undefined && keepApart) {
       this.out += ' ';
     }
     this.out += text;
     this.brokenHere = false;
+    this.afterUnquotedCode = false;
   }
 }
 

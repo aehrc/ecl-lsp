@@ -67,8 +67,19 @@ describe('minifyExpression — whitespace', () => {
     assert.strictEqual(minifyExpression('< 404684003 : R 363698007 = 39057004'), '<404684003:R 363698007=39057004');
   });
 
-  it('keeps a space either side of a dot between concept ids', () => {
-    assert.strictEqual(minifyExpression('< 19829001 . 363698007'), '<19829001 . 363698007');
+  it('attaches a dotted attribute', () => {
+    assert.strictEqual(minifyExpression('< 19829001 . 363698007'), '<19829001.363698007');
+    assert.strictEqual(
+      minifyExpression('<< 404684003 |Clinical finding| . 363698007 |Finding site| . < 272741003'),
+      '<<404684003.363698007.<272741003',
+    );
+    assert.strictEqual(minifyExpression('(< 125605004) . 363698007'), '(<125605004).363698007');
+    assert.strictEqual(minifyExpression('"LOINC#54486-6" . 363698007'), '"LOINC#54486-6".363698007');
+  });
+
+  it('keeps a space before a dot after an unquoted alternate identifier, whose code may contain dots', () => {
+    assert.strictEqual(minifyExpression('ICD#A01 . 363698007'), 'ICD#A01 .363698007');
+    assert.strictEqual(minifyExpression('LOINC#54486-6 |Some term| . 363698007'), 'LOINC#54486-6 .363698007');
   });
 });
 

@@ -50,6 +50,31 @@ const formatted = formatDocument('<<404684003:246075003=<<19829001', {
 
 Range formatting is also supported via `expandToExpressionBoundaries`, `getExpressionsInRange`, and `formatRangeExpressions`.
 
+### Minifying
+
+```typescript
+import { minifyExpression } from '@aehrc/ecl-core';
+
+minifyExpression(`/* Lung findings */
+(<< 404684003 |Clinical finding| :
+    363698007 |Finding site| = << 39057004 |Lung structure|)
+  OR << 71388002 |Procedure|`);
+// → '/* Lung findings */(<<404684003:363698007=<<39057004)OR <<71388002'
+
+minifyExpression('<< 404684003 /* any */ {{ D term = "heart  attack" }}', { removeComments: true });
+// → '<<404684003{{D term="heart  attack"}}'
+```
+
+Returns the shortest text that parses to the same expression, for storing ECL where size and RF2 safety matter, such as the query field of a query specification reference set:
+
+- display terms are removed;
+- whitespace is removed wherever the grammar makes it optional, and is one space where it is mandatory: after `AND`, `OR` and `MINUS`, and between the items of a set such as `(en-au (prefer) en-gb)`;
+- a space is kept where removing it would join two words (`D term`, `R 363698007`) or two characters into a different operator;
+- quoted strings are kept as written, except that a tab or line break in one becomes a space;
+- block comments are kept, with their whitespace collapsed, unless `removeComments` is set.
+
+The result has no tab, carriage return or line feed. Operand order, brackets and refinement groups are never changed. Before returning, the result is re-parsed and its structure compared with the input's. Throws `MinifyError` for unparseable input. Pure, synchronous, zero-network-dependency.
+
 ### Validation
 
 ```typescript

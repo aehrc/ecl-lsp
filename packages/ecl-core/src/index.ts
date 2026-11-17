@@ -126,6 +126,10 @@ export type {
 export { canonicalise, compareExpressions, CanonicaliseError } from './canonical/comparator';
 export type { ComparisonResult } from './canonical/comparator';
 
+// Minification
+export { minifyExpression, MinifyError } from './minify/minify';
+export type { MinifyOptions } from './minify/minify';
+
 // Knowledge
 export {
   allArticles,

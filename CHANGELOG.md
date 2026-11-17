@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Minify an expression** (`ecl-core`): `minifyExpression()` returns the shortest text that parses to the same expression, for storing ECL where size and RF2 safety matter, such as the query field of a query specification reference set. It removes display terms and every space the grammar does not need, keeps quoted strings as written, and keeps block comments unless `removeComments` is set. The result has no tabs or line breaks. Nothing is reordered or regrouped, and the result is re-parsed and compared with the input before it is returned. Throws `MinifyError` for invalid ECL. `parseConcreteTree()` in the parser module exposes the ANTLR parse tree it walks.
 - The code list critique flags different members with the same preferred term, such as a procedure and an observable entity both called "Dressing" (CHK13). Each group carries the members' FSNs to tell them apart; `maxDuplicateTerms` caps how many are reported (default 20).
 
 ### Fixed

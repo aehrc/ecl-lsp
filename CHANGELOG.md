@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-11-17
+
+A minor release. `ecl-core` can minify an expression for storage, such as in a query specification reference set, and the code list critique flags members that share a preferred term. Hovers now show the real fully specified name. It also patches security advisories in the VS Code extension's and the Slack bot's dependencies.
+
 ### Added
 
 - **Minify an expression** (`ecl-core`): `minifyExpression()` returns the shortest text that parses to the same expression, for storing ECL where size and RF2 safety matter, such as the query field of a query specification reference set. It removes display terms and every space the grammar does not need, keeps quoted strings as written, and keeps block comments unless `removeComments` is set. The result has no tabs or line breaks. Nothing is reordered or regrouped, and the result is re-parsed and compared with the input before it is returned. Throws `MinifyError` for invalid ECL. `parseConcreteTree()` in the parser module exposes the ANTLR parse tree it walks.
@@ -15,6 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Concept lookups now return the real fully specified name, with its semantic tag, from the server's designations. Before, `fsn` was a copy of the preferred term, so hovers showed the preferred term twice. The Slack bot still writes preferred terms into ECL.
+- **Security advisories** ([#154](https://github.com/aehrc/ecl-lsp/pull/154)):
+  - In runtime dependencies: `minimatch` 11.0.5 in the VS Code extension (glob pattern denial of service), and `qs` 6.17.1 in the Slack bot (denial of service in `stringify`).
+  - Development-only: `serialize-javascript` 7.1.3 (XSS, through mocha).
 
 ## [1.7.0] - 2026-11-10
 

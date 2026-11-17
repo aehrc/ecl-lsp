@@ -106,7 +106,8 @@ export interface DeriveOptions {
   /**
    * Attribute refinement candidates (`focus : attribute = value`):
    * `'auto'` builds them when the set cuts across the IS-A hierarchy: more than
-   * 20 roots, or more than 3 with no exact IS-A candidate of 3 clauses or fewer.
+   * 20 roots, or more than 3 with no exact IS-A candidate of 3 clauses or fewer;
+   * never when an exact cover within a reference set was found (see `restrictTo`).
    * Default `'auto'`. Needs `getDefiningRelationships`.
    */
   refinements?: 'auto' | 'always' | 'never';
@@ -557,6 +558,9 @@ async function subtractions(
 function wantRefinements(mode: DeriveOptions['refinements'], roots: number, scored: Scored[]): boolean {
   if (mode === 'always') return true;
   if (mode === 'never') return false;
+  // An exact cover within a reference set has explained the set; the search
+  // costs a few hundred requests, minutes on a rate-limited server.
+  if (scored.some((c) => c.exact && c.construction.kind === 'restricted-cover')) return false;
   if (roots > REFINEMENT_ROOTS) return true;
   return roots > 3 && !scored.some((c) => c.exact && c.clauses <= 3);
 }

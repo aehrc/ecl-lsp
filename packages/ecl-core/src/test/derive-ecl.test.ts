@@ -1253,7 +1253,7 @@ describe('deriveEcl — a cover within a reference set', () => {
       for (let m = 0; m < 3; m++) {
         const mp = sctid(next++);
         mock.add(mp, `${key} MP ${m}`, [cls]);
-        for (let u = 0; u < 2; u++) {
+        for (let u = 0; u < 4; u++) {
           const mpuu = sctid(next++);
           mock.add(mpuu, `${key} MPUU ${m}.${u}`, [mp]);
           mpuus[key].push(mpuu);
@@ -1266,7 +1266,8 @@ describe('deriveEcl — a cover within a reference set', () => {
   it('recovers `(<< A OR << B) AND ^ refset` for a list at one AMT level, found by itself', async () => {
     const mock = amtLike();
     const set = [...mock.evaluate(`(<< ${C.A} OR << ${C.B}) AND ^ ${MPUU_REFSET}`)];
-    assert.strictEqual(set.length, 18);
+    // 36 roots: past the 20 at which 'auto' would otherwise always look for refinements.
+    assert.strictEqual(set.length, 36);
     const result = await deriveEcl({ conceptIds: set }, mock, { omitTerms: true });
     const top = result.candidates[0];
     assert.strictEqual(top.ecl, `(<< ${C.A} OR << ${C.B}) AND ^ ${MPUU_REFSET}`);
@@ -1322,6 +1323,24 @@ describe('deriveEcl — a cover within a reference set', () => {
     };
     await deriveEcl({ conceptIds: membersOf(mock, `<< ${id.A1} OR ${id.B1}`) }, mock, { omitTerms: true });
     assert.ok(queries.every((q) => !q.includes(MPUU_REFSET)));
+  });
+
+  it('skips the refinement search once an exact cover within the refset is found (auto)', async () => {
+    // Live, the search was about 260 of a 270-request derive: 8 minutes at
+    // tx.ontoserver.csiro.au's rate limit, after the cover was ready in 3 s.
+    const mock = amtLike();
+    const set = [...mock.evaluate(`(<< ${C.A} OR << ${C.B}) AND ^ ${MPUU_REFSET}`)];
+    let lookups = 0;
+    const read = mock.getDefiningRelationships.bind(mock);
+    mock.getDefiningRelationships = (conceptId: string) => {
+      lookups++;
+      return read(conceptId);
+    };
+    const auto = await deriveEcl({ conceptIds: set }, mock, { omitTerms: true });
+    assert.strictEqual(auto.candidates[0].construction.kind, 'restricted-cover');
+    assert.strictEqual(lookups, 0);
+    await deriveEcl({ conceptIds: set }, mock, { omitTerms: true, refinements: 'always' });
+    assert.ok(lookups > 0, "'always' still searches");
   });
 
   it('can be turned off', async () => {

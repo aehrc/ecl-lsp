@@ -12,6 +12,7 @@ import {
 } from '../derive/derive-ecl';
 import { HierarchyMockService, sctid } from './hierarchy-mock';
 import { MockTerminologyService } from '../terminology/mock-service';
+import { TerminologyTransportError } from '../terminology/errors';
 
 // Fixture hierarchy (ids are generated, Verhoeff-valid SCTIDs):
 //
@@ -331,6 +332,34 @@ describe('deriveEcl', () => {
       assert.ok(result.candidates.every((c) => c.ecl !== failing));
       assert.ok(result.candidates.some((c) => c.exact));
       assert.match(result.notes.join('\n'), new RegExp(`Could not score < ${id.A}: timed out`));
+      assert.strictEqual(result.failures, 1);
+    });
+
+    it('counts failed server queries, so a degraded result is not mistaken for a complete one', async () => {
+      // Seen live: with every count rate-limited, a 1,208-member set whose
+      // definition is two clauses came back as its 1,208-clause enumeration,
+      // with the failures only in `notes`.
+      const mock = fixture();
+      const expand = mock.expandCompose.bind(mock);
+      mock.expandCompose = (compose, options) =>
+        // The set and its graph load; every comparison with the set fails.
+        compose.exclude
+          ? Promise.reject(new TerminologyTransportError('FHIR request rate-limited after 3 attempts'))
+          : expand(compose, options);
+      const set = membersOf(mock, `<< ${id.A} MINUS << ${id.A1}`);
+      const result = await deriveEcl({ conceptIds: set }, mock, { omitTerms: true, critique: true });
+      assert.ok(result.failures > 0, `failures = ${result.failures}`);
+      // What was left: the enumeration, not the 2-clause definition.
+      assert.strictEqual(result.candidates[0].construction.kind, 'enumeration');
+      assert.match(formatDeriveReport(result), /^Incomplete: \d+ server quer(y|ies) failed/);
+    });
+
+    it('reports no failures when every query succeeds', async () => {
+      const mock = fixture();
+      const set = membersOf(mock, `<< ${id.A} MINUS << ${id.A1}`);
+      const result = await deriveEcl({ conceptIds: set }, mock, { omitTerms: true, critique: true });
+      assert.strictEqual(result.failures, 0);
+      assert.doesNotMatch(formatDeriveReport(result), /Incomplete/);
     });
 
     it('needs a service with expandCompose', async () => {
@@ -1142,6 +1171,30 @@ describe('deriveEcl — attribute refinements (#149 Part 3)', () => {
       assert.match(top.ecl, new RegExp(`\\[2\\.\\.\\*\\] ${ING} = `));
     });
 
+    it('never offers a candidate that selects none of the set', async () => {
+      // Seen live on an AMT list: `(C) MINUS (< 763158003 |Medicinal product|)`,
+      // where D, judged only within C, was everything C selects. It missed all
+      // 263 members and ranked above C on cost.
+      const mock = richer();
+      let rnd = 7;
+      const next = () => {
+        rnd = (rnd * 1103515245 + 12345) & 0x7fffffff;
+        return rnd / 0x7fffffff;
+      };
+      for (let trial = 0; trial < 40; trial++) {
+        const set = products.filter(() => next() < 0.3).map((p) => p.id);
+        if (set.length < 2) continue;
+        const result = await deriveEcl({ conceptIds: set }, mock, {
+          omitTerms: true,
+          refinements: 'always',
+          refinementFocus: `^ ${P.REFSET}`,
+        });
+        for (const c of result.candidates) {
+          assert.ok(c.covered > 0, `trial ${trial}: ${c.construction.kind} ${c.ecl} selects no member`);
+        }
+      }
+    });
+
     it('recovers one refinement minus another as a subtraction', async () => {
       const mock = richer();
       const ecl = `(^ ${P.REFSET} : ${ING} = << ${PARA}) MINUS (^ ${P.REFSET} : ${P.FORM} = << ${P.CAP})`;
@@ -1165,6 +1218,117 @@ describe('deriveEcl — attribute refinements (#149 Part 3)', () => {
     const set = [...mock.evaluate(`<< ${P.G1}`)];
     const result = await deriveEcl({ conceptIds: set }, mock, { omitTerms: true });
     assert.ok(result.candidates.every((c) => c.construction.kind !== 'refinement'));
+  });
+});
+
+describe('deriveEcl — a cover within a reference set', () => {
+  // An AMT-shaped hierarchy: class groupers over medicinal products (MPs), each
+  // MP over its unit-of-use products (MPUUs); only MPUUs are in the MPUU
+  // refset. A list of every MPUU under two classes is
+  // `(<< CLASS_A OR << CLASS_B) AND ^ MPUU_REFSET`: the groupers alone add the
+  // MPs, and the MPUUs have no common ancestor short of the product root.
+  // Seen live: ecl-060, 263 diabetes MPUUs under 10 class groupers, came back
+  // as its 263-id enumeration.
+  const MEDICINAL_PRODUCT = '763158003';
+  const MPUU_REFSET = '929360071000036103';
+  const C = {
+    A: sctid(3001),
+    B: sctid(3002),
+    OTHER: sctid(3003),
+    A_SUB: sctid(3004),
+  };
+  const mpuus: Record<string, string[]> = { A: [], B: [], OTHER: [], A_SUB: [] };
+
+  function amtLike(): HierarchyMockService {
+    const mock = new HierarchyMockService()
+      .add(ROOT, 'root')
+      .add(MEDICINAL_PRODUCT, 'Medicinal product', [ROOT])
+      .add(C.A, 'Class A', [MEDICINAL_PRODUCT])
+      .add(C.B, 'Class B', [MEDICINAL_PRODUCT])
+      .add(C.OTHER, 'Other class', [MEDICINAL_PRODUCT])
+      .add(C.A_SUB, 'Class A subclass', [C.A]);
+    let next = 3100;
+    for (const [key, cls] of Object.entries(C)) {
+      mpuus[key] = [];
+      for (let m = 0; m < 3; m++) {
+        const mp = sctid(next++);
+        mock.add(mp, `${key} MP ${m}`, [cls]);
+        for (let u = 0; u < 2; u++) {
+          const mpuu = sctid(next++);
+          mock.add(mpuu, `${key} MPUU ${m}.${u}`, [mp]);
+          mpuus[key].push(mpuu);
+        }
+      }
+    }
+    return mock.addRefset(MPUU_REFSET, Object.values(mpuus).flat());
+  }
+
+  it('recovers `(<< A OR << B) AND ^ refset` for a list at one AMT level, found by itself', async () => {
+    const mock = amtLike();
+    const set = [...mock.evaluate(`(<< ${C.A} OR << ${C.B}) AND ^ ${MPUU_REFSET}`)];
+    assert.strictEqual(set.length, 18);
+    const result = await deriveEcl({ conceptIds: set }, mock, { omitTerms: true });
+    const top = result.candidates[0];
+    assert.strictEqual(top.ecl, `(<< ${C.A} OR << ${C.B}) AND ^ ${MPUU_REFSET}`);
+    assert.strictEqual(top.exact, true);
+    assert.deepStrictEqual(top.construction, {
+      kind: 'restricted-cover',
+      restrictTo: `^ ${MPUU_REFSET}`,
+      includes: [
+        { conceptId: C.A, operator: '<<' },
+        { conceptId: C.B, operator: '<<' },
+      ],
+    });
+    assertCountsHonest(mock, set, result);
+  });
+
+  it('names a member that has a non-member below it on its own', async () => {
+    const mock = amtLike();
+    // An MPUU in the set with an MPUU child that is not: `<< it` would add the child.
+    const parent = mpuus.B[0];
+    const child = sctid(3900);
+    mock.add(child, 'B MPUU child', [parent]);
+    mock.refsets.get(MPUU_REFSET)?.add(child);
+    const set = [...mock.evaluate(`(<< ${C.A} AND ^ ${MPUU_REFSET}) OR ${parent}`)];
+    const result = await deriveEcl({ conceptIds: set }, mock, { omitTerms: true });
+    const cover = result.candidates.find((c) => c.construction.kind === 'restricted-cover');
+    assert.ok(cover, result.candidates.map((c) => c.ecl).join(' | '));
+    assert.strictEqual(cover.ecl, `(<< ${C.A} OR ${parent}) AND ^ ${MPUU_REFSET}`);
+    assert.strictEqual(cover.exact, true);
+    assertCountsHonest(mock, set, result);
+  });
+
+  it('uses the restriction it is given, for any reference set', async () => {
+    const mock = fixture();
+    const REF = sctid(1060);
+    // The list is the refset's members under A; B1 is a member elsewhere.
+    mock.addRefset(REF, [id.A1a, id.A1b, id.A2, id.A3, id.A4, id.B1]);
+    const set = [id.A1a, id.A1b, id.A2, id.A3, id.A4];
+    const result = await deriveEcl({ conceptIds: set }, mock, { omitTerms: true, restrictTo: `^ ${REF}` });
+    const cover = result.candidates.find((c) => c.construction.kind === 'restricted-cover');
+    assert.ok(cover, result.candidates.map((c) => c.ecl).join(' | '));
+    assert.strictEqual(cover.ecl, `<< ${id.A} AND ^ ${REF}`);
+    assert.strictEqual(cover.exact, true);
+    assertCountsHonest(mock, set, result);
+  });
+
+  it('does not look for AMT reference sets when the members are not medicinal products', async () => {
+    const mock = fixture();
+    const queries: string[] = [];
+    const expand = mock.expandCompose.bind(mock);
+    mock.expandCompose = (compose, options) => {
+      queries.push(JSON.stringify(compose));
+      return expand(compose, options);
+    };
+    await deriveEcl({ conceptIds: membersOf(mock, `<< ${id.A1} OR ${id.B1}`) }, mock, { omitTerms: true });
+    assert.ok(queries.every((q) => !q.includes(MPUU_REFSET)));
+  });
+
+  it('can be turned off', async () => {
+    const mock = amtLike();
+    const set = [...mock.evaluate(`(<< ${C.A} OR << ${C.B}) AND ^ ${MPUU_REFSET}`)];
+    const result = await deriveEcl({ conceptIds: set }, mock, { omitTerms: true, restrictTo: '' });
+    assert.ok(result.candidates.every((c) => c.construction.kind !== 'restricted-cover'));
   });
 });
 

@@ -101,6 +101,26 @@ async function readRelationships(
   return sampled;
 }
 
+/** The sample's relationships in one batch request; null (read one by one) when the batch fails. */
+async function readMany(
+  sample: string[],
+  many: (ids: string[]) => Promise<(DefiningRelationship[] | null | Error)[]>,
+  notes: string[],
+): Promise<(DefiningRelationship[] | null)[] | null> {
+  let answers: (DefiningRelationship[] | null | Error)[];
+  try {
+    answers = await many(sample);
+  } catch {
+    return null;
+  }
+  const failed = answers.filter((a) => a instanceof Error);
+  if (failed.length > 0) {
+    const members = failed.length === 1 ? 'member' : 'members';
+    notes.push(`The relationships of ${failed.length} sampled ${members} could not be read: ${failed[0].message}.`);
+  }
+  return answers.filter((a): a is DefiningRelationship[] | null => !(a instanceof Error));
+}
+
 /**
  * Refinement candidates for the set, likeliest first. `roots` are the set's
  * roots (all of them when `roots.total` fits); `givenFoci` come from the input
@@ -115,6 +135,7 @@ export async function refinementCandidates(
   q: SetQueries,
   terminology: ITerminologyService,
   notes: string[],
+  batch = false,
 ): Promise<{ focus: string; clauses: RefinementClause[] }[]> {
   const getRelationships = terminology.getDefiningRelationships?.bind(terminology);
   if (!getRelationships) {
@@ -123,7 +144,9 @@ export async function refinementCandidates(
   }
 
   const sample = (await q.codes({ include: [members.clause] }, REFINEMENT_SAMPLE)).codes;
-  const sampled = await readRelationships(sample, getRelationships, notes);
+  const many = batch ? terminology.getDefiningRelationshipsMany?.bind(terminology) : undefined;
+  const sampled =
+    (many && (await readMany(sample, many, notes))) ?? (await readRelationships(sample, getRelationships, notes));
   const profiles = profileAttributes(sampled);
   if (profiles.length === 0) {
     notes.push('No attribute is shared by most members, so no refinement candidates were built.');

@@ -76,6 +76,9 @@ export class HierarchyMockService implements ITerminologyService {
   private readonly history = new Map<string, string[]>();
   /** False while an expandCompose with `activeOnly: false` evaluates its ECL clauses. */
   private activeOnly = true;
+  /** Whether expandCompose honours `children`; false acts as a server without `property=child`. */
+  returnsChildren = true;
+
   /** Whether expandCompose honours `parents`; false acts as a server without `property=parent`. */
   returnsParents = true;
   /** Every expandCompose call, for asserting how much work an operation did. */
@@ -133,6 +136,14 @@ export class HierarchyMockService implements ITerminologyService {
     return this.concepts.get(conceptId)?.relationships ?? null;
   }
 
+  async getDefiningRelationshipsMany(conceptIds: string[]): Promise<(DefiningRelationship[] | null | Error)[]> {
+    this.batchLookups++;
+    return Promise.all(conceptIds.map((id) => this.getDefiningRelationships(id)));
+  }
+
+  /** Calls to getDefiningRelationshipsMany. */
+  batchLookups = 0;
+
   async searchConcepts(): Promise<SearchResponse> {
     return { results: [], hasMore: false };
   }
@@ -159,6 +170,15 @@ export class HierarchyMockService implements ITerminologyService {
     if (options.parents && this.returnsParents) {
       for (const c of page.concepts) c.parents = [...(this.concepts.get(c.code)?.parents ?? [])];
     }
+    if (options.children && this.returnsParents && this.returnsChildren) {
+      for (const c of page.concepts) {
+        c.children = [...this.concepts]
+          .filter(([, info]) => info.active && info.parents.includes(c.code))
+          .map(([code]) => code);
+      }
+    }
+    // As Ontoserver does, flag inactive concepts when they may be returned.
+    if (!activeOnly) for (const c of page.concepts) if (!this.concepts.get(c.code)?.active) c.inactive = true;
     return page;
   }
 

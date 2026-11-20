@@ -50,7 +50,7 @@ import { canonicalise } from '../canonical/comparator';
 import { formatDocument } from '../formatter/formatter';
 import { defaultFormattingOptions } from '../formatter/options';
 import { NodeType, parseECL, type ExpressionNode, type SubExpressionNode } from '../parser';
-import type { ConceptInfo, ITerminologyService, ValueSetCompose } from '../terminology/types';
+import type { ConceptInfo, EvaluationConcept, ITerminologyService, ValueSetCompose } from '../terminology/types';
 import { isValidConceptId } from '../terminology/verhoeff';
 import {
   byId,
@@ -67,7 +67,7 @@ import {
 import { bestSingles, costCover, coverDescend, rootsCover } from './cover-optimiser';
 import { findDuplicateTerms, nearMissCandidates, outermost } from './critique';
 import { greedyGrouping, refactorDescend } from './greedy-grouping';
-import { localScore, render, type ClauseForm, type HierarchyClause } from './hierarchy-clauses';
+import { evaluate, localScore, render, type ClauseForm, type HierarchyClause } from './hierarchy-clauses';
 import { commentSpans } from '../formatter/comments';
 import { loadTaxonomyGraph, type TaxonomyGraph } from './taxonomy-graph';
 import { asFocus, refinementCandidates, refinementText, refsetFoci, type RefinementClause } from './refinements';
@@ -158,6 +158,31 @@ export interface DeriveOptions {
    * only. Default `'auto'`.
    */
   restrictTo?: string;
+  /** Fetch the later pages of a multi-page expansion concurrently. Default true. */
+  parallelPages?: boolean;
+  /**
+   * Take graph candidates' counts from the graph instead of the server, and
+   * check only the best candidate on the server (falling back to server counts
+   * for all when its count differs). Default false.
+   */
+  localScoring?: boolean;
+  /**
+   * When counting what a grouper adds (near misses), exclude only the members
+   * below it, which the graph knows, not the whole set. Default true.
+   */
+  scopedExclusions?: boolean;
+  /**
+   * Resolve a list by looking its codes up in chunks, with parents and
+   * children, and build the IS-A graph by walking from there instead of with
+   * queries that carry the list as ECL. Falls back to those queries on a
+   * server that does not return `property=child`. Default true.
+   */
+  walkGraph?: boolean;
+  /**
+   * Read the refinement sample's relationships in one FHIR batch request,
+   * falling back to one lookup each when the server refuses it. Default true.
+   */
+  batchLookups?: boolean;
 }
 
 /** Limits for {@link CodelistCritique}. */
@@ -355,6 +380,11 @@ const DEFAULTS: Required<DeriveOptions> = {
   maxGraphConcepts: 200_000,
   critique: false,
   restrictTo: 'auto',
+  parallelPages: true,
+  localScoring: false,
+  scopedExclusions: true,
+  walkGraph: true,
+  batchLookups: true,
 };
 
 const CRITIQUE_DEFAULTS: Required<CritiqueOptions> = {
@@ -414,10 +444,13 @@ async function derive(
   if (!terminology.expandCompose) throw new Error('unreachable: checked by deriveEcl');
   const opts = { ...DEFAULTS, ...options };
   const expandCompose = terminology.expandCompose.bind(terminology);
-  const q = new SetQueries((compose, o) => expandCompose(compose, { timeoutMs: opts.queryTimeoutMs, ...o }));
+  const q = new SetQueries(
+    (compose, o) => expandCompose(compose, { timeoutMs: opts.queryTimeoutMs, ...o }),
+    opts.parallelPages,
+  );
   const notes: string[] = [];
 
-  const { report, members } = await resolveInput(input, q, terminology, notes);
+  const { report, members } = await resolveInput(input, q, terminology, notes, opts.walkGraph);
   const result: DeriveResult = { input: report, hierarchies: [], roots: 0, candidates: [], notes, failures: 0 };
   if (!members) {
     if (notes.length === 0) {
@@ -441,8 +474,11 @@ async function derive(
 
   const scorer = new Scorer(members, q, opts, notes);
   // On the graph path only the best by local counts are counted on the server.
+  // localScoring: graph candidates counted on the graph; the best is checked on the server below.
+  const countedLocally = new Set<string>();
   if (graph) {
-    await scorer.score(worthCounting(graphCandidates(graph, opts, notes), inputCost(input, members), opts, notes));
+    const worth = worthCounting(graphCandidates(graph, opts, notes), inputCost(input, members), opts, notes);
+    await scorer.score(countOnGraph(worth, graph, opts, countedLocally));
     await scorer.score(await restrictedCovers(graph, members, q, opts, notes));
   } else await scorer.score(await hierarchyCandidates(rootQuery.codes, result.roots, members, q, opts, notes));
   if (wantRefinements(opts.refinements, result.roots, scorer.scored)) {
@@ -464,6 +500,7 @@ async function derive(
   const useful = scorer.scored.filter((s) => s.covered > 0);
   useful.sort((a, b) => byRank(rankOf(a), rankOf(b)));
   const top = useful.slice(0, opts.maxCandidates);
+  await checkLocalCounts(top, countedLocally, members, q, opts, notes);
 
   const terms = opts.omitTerms ? new Map<string, string>() : await displayTerms(top, terminology);
   result.candidates = top.map((s) => ({ expression: decorate(s.ecl, terms), ...s }));
@@ -491,6 +528,7 @@ async function scoreRefinements(
     q,
     terminology,
     notes,
+    opts.batchLookups,
   );
   const refinements = found.map(({ focus, clauses }) => ({
     ecl: refinementText(focus, clauses),
@@ -648,9 +686,19 @@ async function nearMisses(
     limits.maxNearMisses * NEAR_MISS_CANDIDATES_PER_REPORTED,
   );
   // Advisory: a failed count drops that near miss, never the result.
-  const counted = await Promise.allSettled(
-    local.map((n) => q.sample({ include: [{ ecl: `<< ${n.conceptId}` }], exclude: [members.clause] }, opts.sampleSize)),
-  );
+  const counted =
+    (await nearMissesOnGraph(local, graph, opts.sampleSize)) ??
+    (await Promise.allSettled(
+      local.map((n) =>
+        q.sample(
+          {
+            include: [{ ecl: `<< ${n.conceptId}` }],
+            exclude: [opts.scopedExclusions ? { concepts: graph.membersBelow(n.conceptId) } : members.clause],
+          },
+          opts.sampleSize,
+        ),
+      ),
+    ));
   const confirmed: NearMiss[] = [];
   counted.forEach((r, i) => {
     const { conceptId, listed } = local[i];
@@ -680,6 +728,33 @@ async function nearMisses(
 }
 
 /**
+ * What each near-miss candidate adds, counted on a walked graph
+ * after walking down below the candidates whose descendants are not loaded;
+ * null when the graph cannot (not walked, or too many), and the server counts.
+ */
+async function nearMissesOnGraph(
+  local: { conceptId: string }[],
+  graph: TaxonomyGraph,
+  sampleSize: number,
+): Promise<PromiseSettledResult<SetDifference>[] | null> {
+  if (!graph.loadBelow || local.length === 0) return null;
+  const need = local.map((n) => n.conceptId).filter((id) => !graph.hasDescendants(id));
+  try {
+    if (need.length > 0 && !(await graph.loadBelow(need))) return null;
+  } catch {
+    return null;
+  }
+  return local.map((n) => {
+    const missing = graph
+      .descendants(n.conceptId)
+      .filter((x) => !graph.members.has(x))
+      .sort(byId);
+    const sample = missing.slice(0, sampleSize).map((code) => ({ code, display: graph.term?.(code) ?? '' }));
+    return { status: 'fulfilled' as const, value: { count: missing.length, sample } };
+  });
+}
+
+/**
  * Members that share a preferred term (CHK13): one listing of the members with
  * their terms, plus a lookup of the FSNs that tell each group apart.
  */
@@ -702,7 +777,9 @@ async function sharedTerms(
   }
   let groups;
   try {
-    groups = findDuplicateTerms((await q.concepts({ include: [members.clause] }, members.size)).concepts);
+    groups = findDuplicateTerms(
+      members.concepts ?? (await q.concepts({ include: [members.clause] }, members.size)).concepts,
+    );
   } catch (error) {
     notes.push(`Shared terms were not checked: ${errorMessage(error)}.`);
     return [];
@@ -787,6 +864,7 @@ async function resolveInput(
   q: SetQueries,
   terminology: ITerminologyService,
   notes: string[],
+  lookUp = false,
 ): Promise<{ report: DeriveInputReport; members: MemberSet | null }> {
   if ('refsetId' in input) return resolveRefset(input.refsetId.trim(), q, terminology, notes);
   if ('ecl' in input) {
@@ -819,14 +897,34 @@ async function resolveInput(
   // Unknown codes are dropped silently by $expand, and inactive ones kept unless
   // activeOnly, so ask twice and difference the answers.
   const listed: ValueSetCompose = { include: [{ concepts: wellFormed }] };
-  const active = (await q.codes(listed, wellFormed.length, true)).codes;
-  const known = new Set((await q.codes(listed, wellFormed.length, false)).codes);
+  let activeConcepts: { concepts: EvaluationConcept[] };
+  let knownConcepts: { concepts: EvaluationConcept[] };
+  if (lookUp) {
+    // One chunked lookup gives activity, terms, parents and children (for walkGraph).
+    knownConcepts = { concepts: await q.lookup(wellFormed, { activeOnly: false, parents: true, children: true }) };
+    activeConcepts = { concepts: knownConcepts.concepts.filter((c) => !c.inactive) };
+  } else {
+    [activeConcepts, knownConcepts] = await Promise.all([
+      q.conceptsUpTo(listed, wellFormed.length, true),
+      q.conceptsUpTo(listed, wellFormed.length, false),
+    ]);
+  }
+  const active = activeConcepts.concepts.map((c) => c.code).sort(byId);
+  const known = new Set(knownConcepts.concepts.map((c) => c.code));
   const activeSet = new Set(active);
   report.inactive = wellFormed.filter((id) => known.has(id) && !activeSet.has(id));
   report.unknown = wellFormed.filter((id) => !known.has(id));
   report.members = active.length;
   if (active.length === 0) return { report, members: null };
-  return { report, members: { clause: { concepts: active }, ecl: orGroup(active), size: active.length } };
+  return {
+    report,
+    members: {
+      clause: { concepts: active },
+      ecl: orGroup(active),
+      size: active.length,
+      concepts: activeConcepts.concepts,
+    },
+  };
 }
 
 async function resolveRefset(
@@ -907,6 +1005,9 @@ async function loadGraph(
       maxConcepts: opts.maxGraphConcepts,
       descend: (id, g) => coverDescend(id, g) || refactorDescend(id, g),
       fallbackDescend: refactorDescend,
+      walk: opts.walkGraph,
+      ...(members.concepts ? { memberConcepts: members.concepts } : {}),
+      ...('concepts' in members.clause ? { memberCodes: members.clause.concepts } : {}),
     });
     if (!('unavailable' in graph)) {
       if (graph.partial) {
@@ -969,7 +1070,7 @@ function graphCandidates(
     if (seen.has(key)) continue;
     seen.add(key);
     const local = localScore(form, g) ?? (opts.within ? withinOnlyScore(form, g) : null);
-    if (local) candidates.push({ ecl, construction, local });
+    if (local) candidates.push({ ecl, construction, local, form });
   }
   return candidates.sort((a, b) =>
     byRank({ ecl: a.ecl, inputItself: false, ...a.local }, { ecl: b.ecl, inputItself: false, ...b.local }),
@@ -1449,6 +1550,8 @@ interface Built {
   construction: CandidateConstruction;
   known?: Omit<Scored, 'ecl' | 'construction'>;
   local?: LocalCounts;
+  /** The hierarchy form the candidate renders, when it came from the graph. */
+  form?: ClauseForm;
 }
 
 interface LocalCounts {
@@ -1577,6 +1680,97 @@ function exactScore(size: number): Omit<Scored, 'ecl' | 'construction'> {
     exact: true,
     clauses: 0,
   };
+}
+
+/**
+ * localScoring: the candidates with their counts taken from the
+ * graph, when it is complete and nothing restricts what additions count;
+ * `countedLocally` collects those so counted.
+ */
+function countOnGraph(
+  candidates: Built[],
+  graph: TaxonomyGraph,
+  opts: Required<DeriveOptions>,
+  countedLocally: Set<string>,
+): Built[] {
+  if (!opts.localScoring || graph.partial || opts.within) return candidates;
+  return candidates.map((b) => {
+    const known = b.form ? graphScore(b.form, graph, opts.sampleSize) : null;
+    if (!known) return b;
+    countedLocally.add(b.ecl);
+    return { ...b, known: { ...known, clauses: countClauses(b.ecl) } };
+  });
+}
+
+/** Additions and misses of a form counted on the graph, with sample codes (no terms yet). */
+function graphScore(
+  form: ClauseForm,
+  g: TaxonomyGraph,
+  sampleSize: number,
+): Omit<Scored, 'ecl' | 'construction' | 'clauses'> | null {
+  const selected = evaluate(form, g);
+  if (!selected) return null;
+  const additions = [...selected].filter((x) => !g.members.has(x)).sort(byId);
+  const misses = [...g.members].filter((m) => !selected.has(m)).sort(byId);
+  const sample = (ids: string[]) => ids.slice(0, sampleSize).map((code) => ({ code, display: '' }));
+  return {
+    covered: g.members.size - misses.length,
+    additions: { count: additions.length, sample: sample(additions) },
+    misses: { count: misses.length, sample: sample(misses) },
+    exact: additions.length === 0 && misses.length === 0,
+  };
+}
+
+/**
+ * The best candidate, when counted on the graph, is counted again
+ * on the server (the server's counts replace the graph's), and the samples of
+ * the others counted on the graph get their terms in one lookup.
+ */
+async function checkLocalCounts(
+  top: Scored[],
+  countedLocally: Set<string>,
+  members: MemberSet,
+  q: SetQueries,
+  opts: Required<DeriveOptions>,
+  notes: string[],
+): Promise<void> {
+  if (countedLocally.size === 0) return;
+  const best = top.length > 0 ? top[0] : undefined;
+  if (best && countedLocally.has(best.ecl)) {
+    try {
+      // The graph's selection is right if the server selects as many: one count, with no list in it.
+      if ((await q.countEcl(best.ecl)) === best.covered + best.additions.count) {
+        await fillTerms(top, countedLocally, q);
+        return;
+      }
+      const server = await compare(best.ecl, members, q, opts.sampleSize, opts.within);
+      if (server.additions.count !== best.additions.count || server.misses.count !== best.misses.count) {
+        notes.push(
+          `Graph counts for ${best.ecl.slice(0, 120)} differed from the server's ` +
+            `(+${best.additions.count} -${best.misses.count} on the graph, +${server.additions.count} -${server.misses.count} on the server).`,
+        );
+      }
+      Object.assign(best, server);
+    } catch (error) {
+      notes.push(`Could not check ${best.ecl.slice(0, 120)} on the server: ${errorMessage(error)}`);
+    }
+  }
+  await fillTerms(top, countedLocally, q);
+}
+
+/** Terms for the samples of the candidates counted on the graph, in one lookup. */
+async function fillTerms(top: Scored[], countedLocally: Set<string>, q: SetQueries): Promise<void> {
+  const codes = new Set<string>();
+  for (const s of top) {
+    if (!countedLocally.has(s.ecl)) continue;
+    for (const c of [...s.additions.sample, ...s.misses.sample]) if (!c.display) codes.add(c.code);
+  }
+  if (codes.size === 0) return;
+  const found = await q.concepts({ include: [{ concepts: [...codes] }] }, codes.size, false);
+  const terms = new Map(found.concepts.map((c) => [c.code, c.display]));
+  for (const s of top) {
+    for (const c of [...s.additions.sample, ...s.misses.sample]) if (!c.display) c.display = terms.get(c.code) ?? '';
+  }
 }
 
 /** Additions and misses of `ecl` against the set, counted and sampled by the server. */

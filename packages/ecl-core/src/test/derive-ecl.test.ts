@@ -13,6 +13,7 @@ import {
 import { HierarchyMockService, sctid } from './hierarchy-mock';
 import { MockTerminologyService } from '../terminology/mock-service';
 import { TerminologyTransportError } from '../terminology/errors';
+import type { ValueSetCompose } from '../terminology/types';
 
 // Fixture hierarchy (ids are generated, Verhoeff-valid SCTIDs):
 //
@@ -498,6 +499,32 @@ describe('deriveEcl', () => {
       assertCountsHonest(mock, listed(), result);
     });
 
+    it('walks the graph to the same result, and loads it by ECL when the server gives no children', async () => {
+      const plain = await deriveEcl({ conceptIds: listed() }, fixture(), { omitTerms: true, critique: true });
+      const walking = fixture();
+      const walked = await deriveEcl({ conceptIds: listed() }, walking, {
+        omitTerms: true,
+        critique: true,
+        walkGraph: true,
+      });
+      assert.deepStrictEqual(walked.candidates, plain.candidates);
+      assert.deepStrictEqual(walked.critique?.nearMisses, plain.critique?.nearMisses);
+      // No query carries the list as ECL.
+      const asEcl = (c: ValueSetCompose) =>
+        [...c.include, ...(c.exclude ?? [])].some((x) => 'ecl' in x && x.ecl.includes(`>> (`));
+      assert.ok(!walking.composeCalls.some(asEcl));
+
+      const childless = fixture();
+      childless.returnsChildren = false;
+      const fallback = await deriveEcl({ conceptIds: listed() }, childless, {
+        omitTerms: true,
+        critique: true,
+        walkGraph: true,
+      });
+      assert.deepStrictEqual(fallback.candidates, plain.candidates);
+      assert.ok(childless.composeCalls.some(asEcl));
+    });
+
     it('falls back to per-query covers without parents', async () => {
       const mock = fixture();
       mock.returnsParents = false;
@@ -806,18 +833,27 @@ describe('deriveEcl', () => {
       it('notes a failed term lookup and keeps the rest of the critique', async () => {
         const mock = dressings();
         const expand = mock.expandCompose.bind(mock);
-        let listings = 0;
         mock.expandCompose = async (compose, options) => {
-          // Resolving the input lists the active members first; the term listing is the second such call.
-          const plain = compose.include.length === 1 && 'concepts' in compose.include[0] && !compose.exclude?.length;
-          const members = plain && options?.count === 2 && options.activeOnly && !options.parents;
-          if (members && ++listings === 2) throw new Error('boom');
+          // An expression's members are listed with their terms only for the shared-term check.
+          const plain = compose.include.length === 1 && 'ecl' in compose.include[0] && !compose.exclude?.length;
+          if (plain && options?.count === 2 && options.activeOnly && !options.parents) throw new Error('boom');
           return expand(compose, options);
         };
-        const result = await deriveEcl({ conceptIds: [DRESS_P, DRESS_O] }, mock, { omitTerms: true, critique: true });
+        const result = await deriveEcl({ ecl: `${DRESS_P} OR ${DRESS_O}` }, mock, { omitTerms: true, critique: true });
         assert.deepStrictEqual(result.critique?.duplicateTerms, []);
         assert.match(result.notes.join('\n'), /Shared terms were not checked: boom/);
         assert.ok(result.critique?.clauses.best);
+      });
+
+      it('reuses the terms listed when resolving a list, so its members are listed once', async () => {
+        const mock = dressings();
+        const result = await deriveEcl({ conceptIds: [DRESS_P, DRESS_O] }, mock, { omitTerms: true, critique: true });
+        assert.strictEqual(result.critique?.duplicateTerms.length, 1);
+        // Resolving asks for the active members and for every known one (or both at once); nothing lists them again.
+        const listings = mock.composeCalls.filter(
+          (c) => 'concepts' in c.include[0] && c.include[0].concepts.includes(DRESS_P) && !c.exclude?.length,
+        );
+        assert.ok(listings.length <= 2, `${listings.length} listings`);
       });
     });
 
@@ -852,6 +888,7 @@ describe('deriveEcl', () => {
       };
       const result = await deriveEcl({ conceptIds: NEARLY_A }, mock, {
         omitTerms: true,
+        walkGraph: false, // the near-miss counts under test are the server's
         critique: { nearMissShare: 0.85 },
       });
       assert.deepStrictEqual(result.critique?.nearMisses, []);
@@ -868,6 +905,7 @@ describe('deriveEcl', () => {
       };
       const result = await deriveEcl({ conceptIds: NEARLY_A }, mock, {
         omitTerms: true,
+        walkGraph: false, // the near-miss counts under test are the server's
         critique: { nearMissShare: 0.5 },
       });
       assert.deepStrictEqual(
@@ -903,6 +941,7 @@ describe('deriveEcl', () => {
       };
       const result = await deriveEcl({ conceptIds: NEARLY_A }, mock, {
         omitTerms: true,
+        walkGraph: false, // the near-miss counts under test are the server's
         critique: { nearMissShare: 0.85 },
       });
       assert.ok(result.candidates.length > 0);
@@ -1035,6 +1074,45 @@ describe('deriveEcl — attribute refinements (#149 Part 3)', () => {
     assert.strictEqual(top.exact, true);
     assert.deepStrictEqual(mock.evaluate(top.ecl), new Set(set));
     assertCountsHonest(mock, set, result);
+  });
+
+  it('reads the sample in one batch with batchLookups, to the same result', async () => {
+    const mock = products3();
+    const set = [...mock.evaluate(`< ${P.PRODUCT} : ${P.FORM} = << ${P.TAB}`)];
+    const plain = await deriveEcl({ conceptIds: set }, products3(), { omitTerms: true, refinements: 'always' });
+    const read = mock.getDefiningRelationships.bind(mock);
+    let singles = 0;
+    mock.getDefiningRelationships = async (conceptId: string) => {
+      singles++;
+      return read(conceptId);
+    };
+    const batched = await deriveEcl({ conceptIds: set }, mock, {
+      omitTerms: true,
+      refinements: 'always',
+      batchLookups: true,
+    });
+    assert.strictEqual(mock.batchLookups, 1);
+    assert.strictEqual(singles, 18); // the mock's batch reads one by one; derive itself made no single call
+    assert.deepStrictEqual(
+      batched.candidates.map((c) => c.ecl),
+      plain.candidates.map((c) => c.ecl),
+    );
+  });
+
+  it('reads the sample one by one when the server refuses a batch', async () => {
+    const mock = products3();
+    const set = [...mock.evaluate(`< ${P.PRODUCT} : ${P.FORM} = << ${P.TAB}`)];
+    const plain = await deriveEcl({ conceptIds: set }, products3(), { omitTerms: true, refinements: 'always' });
+    mock.getDefiningRelationshipsMany = () => Promise.reject(new Error('batch not supported'));
+    const batched = await deriveEcl({ conceptIds: set }, mock, {
+      omitTerms: true,
+      refinements: 'always',
+      batchLookups: true,
+    });
+    assert.deepStrictEqual(
+      batched.candidates.map((c) => c.ecl),
+      plain.candidates.map((c) => c.ecl),
+    );
   });
 
   it('keeps deriving when some relationship lookups fail', async () => {

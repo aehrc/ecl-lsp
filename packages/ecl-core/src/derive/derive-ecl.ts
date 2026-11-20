@@ -69,7 +69,7 @@ import { findDuplicateTerms, nearMissCandidates, outermost } from './critique';
 import { greedyGrouping, refactorDescend } from './greedy-grouping';
 import { evaluate, localScore, render, type ClauseForm, type HierarchyClause } from './hierarchy-clauses';
 import { commentSpans } from '../formatter/comments';
-import { loadTaxonomyGraph, type TaxonomyGraph } from './taxonomy-graph';
+import { loadTaxonomyGraph, Walk, type TaxonomyGraph } from './taxonomy-graph';
 import { asFocus, refinementCandidates, refinementText, refsetFoci, type RefinementClause } from './refinements';
 
 // ── Public types ─────────────────────────────────────────────────────────
@@ -899,10 +899,12 @@ async function resolveInput(
   const listed: ValueSetCompose = { include: [{ concepts: wellFormed }] };
   let activeConcepts: { concepts: EvaluationConcept[] };
   let knownConcepts: { concepts: EvaluationConcept[] };
+  let walk: Walk | undefined;
   if (lookUp) {
-    // One chunked lookup gives activity, terms, parents and children (for walkGraph).
-    knownConcepts = { concepts: await q.lookup(wellFormed, { activeOnly: false, parents: true, children: true }) };
-    activeConcepts = { concepts: knownConcepts.concepts.filter((c) => !c.inactive) };
+    const looked = await lookUpList(wellFormed, q);
+    knownConcepts = { concepts: looked.concepts };
+    activeConcepts = { concepts: looked.concepts.filter((c) => !c.inactive) };
+    walk = looked.walk;
   } else {
     [activeConcepts, knownConcepts] = await Promise.all([
       q.conceptsUpTo(listed, wellFormed.length, true),
@@ -923,8 +925,27 @@ async function resolveInput(
       ecl: orGroup(active),
       size: active.length,
       concepts: activeConcepts.concepts,
+      ...(walk ? { walk } : {}),
     },
   };
+}
+
+/**
+ * One chunked lookup of a list, for activity, terms, parents and children (for
+ * walkGraph). Each chunk is cut down as it arrives: the terms kept, the active
+ * concepts' parents and children numbered into a walk (none when the server
+ * left them out).
+ */
+async function lookUpList(codes: string[], q: SetQueries): Promise<{ concepts: EvaluationConcept[]; walk?: Walk }> {
+  const seed = new Walk();
+  const chunks = await q.lookupEach(codes, { activeOnly: false, parents: true, children: true }, (concepts) => ({
+    terms: concepts.map(({ code, display, inactive }) => (inactive ? { code, display, inactive } : { code, display })),
+    nodes: seed.nodesFor(concepts.filter((c) => !c.inactive)),
+  }));
+  const concepts = chunks.flatMap((c) => c.terms);
+  if (chunks.some((c) => c.nodes === null)) return { concepts };
+  for (const c of chunks) if (c.nodes) seed.add(c.nodes);
+  return { concepts, walk: seed };
 }
 
 async function resolveRefset(
@@ -1006,9 +1027,11 @@ async function loadGraph(
       descend: (id, g) => coverDescend(id, g) || refactorDescend(id, g),
       fallbackDescend: refactorDescend,
       walk: opts.walkGraph,
-      ...(members.concepts ? { memberConcepts: members.concepts } : {}),
+      ...(members.walk ? { seed: members.walk } : {}),
       ...('concepts' in members.clause ? { memberCodes: members.clause.concepts } : {}),
     });
+    // The graph holds what it needs of the walk.
+    delete members.walk;
     if (!('unavailable' in graph)) {
       if (graph.partial) {
         notes.push(

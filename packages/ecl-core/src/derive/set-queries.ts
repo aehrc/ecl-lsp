@@ -6,6 +6,7 @@
 
 import { isTerminologyHttpError } from '../terminology/errors';
 import type { EvaluationConcept, ITerminologyService, ValueSetClause, ValueSetCompose } from '../terminology/types';
+import type { Walk } from './taxonomy-graph';
 
 export interface SetDifference {
   count: number;
@@ -96,6 +97,8 @@ export interface MemberSet {
   size: number;
   /** The members with their terms, when resolving the input already listed them. */
   concepts?: EvaluationConcept[];
+  /** The members looked up with their parents and children, when resolving the input did that, for the graph. */
+  walk?: Walk;
 }
 
 /**
@@ -183,17 +186,30 @@ export class SetQueries {
     codes: readonly string[],
     options: { activeOnly?: boolean; parents?: boolean; children?: boolean } = {},
   ): Promise<EvaluationConcept[]> {
+    return (await this.lookupEach(codes, options, (concepts) => concepts)).flat();
+  }
+
+  /**
+   * {@link lookup}, with each chunk's answer passed through `each` as it
+   * arrives, so a caller that keeps less than the server sends need not hold
+   * every answer at once. The results are in chunk order.
+   */
+  async lookupEach<T>(
+    codes: readonly string[],
+    options: { activeOnly?: boolean; parents?: boolean; children?: boolean },
+    each: (concepts: EvaluationConcept[]) => T,
+  ): Promise<T[]> {
     const chunks: string[][] = [];
     for (let i = 0; i < codes.length; i += LOOKUP_CHUNK) chunks.push(codes.slice(i, i + LOOKUP_CHUNK));
-    const pages = await Promise.all(
-      chunks.map((chunk) =>
-        this.expand(
+    return Promise.all(
+      chunks.map(async (chunk) => {
+        const page = await this.expand(
           { include: [{ concepts: chunk }] },
           { count: chunk.length, offset: 0, activeOnly: options.activeOnly ?? true, ...options },
-        ),
-      ),
+        );
+        return each(page.concepts);
+      }),
     );
-    return pages.flatMap((p) => p.concepts);
   }
 
   /**

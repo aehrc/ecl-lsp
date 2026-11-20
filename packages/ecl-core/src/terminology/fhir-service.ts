@@ -133,6 +133,18 @@ type RelationshipAnswer = DefiningRelationship[] | null | Error;
 
 // ── Module-level constants ──────────────────────────────────────────────
 
+const conceptListCache = new WeakMap<readonly string[], string>();
+
+/** `[{"code": ...}, ...]` for a compose's `concept`, cached for the life of the list. */
+function conceptListJson(codes: readonly string[]): string {
+  let json = conceptListCache.get(codes);
+  if (json === undefined) {
+    json = '[' + codes.map((code) => '{"code":' + JSON.stringify(code) + '}').join(',') + ']';
+    conceptListCache.set(codes, json);
+  }
+  return json;
+}
+
 const DEFAULT_USER_AGENT = 'ecl-lsp/1.0.0';
 
 /** True when running in a browser environment. */
@@ -1311,20 +1323,16 @@ export class FhirTerminologyService implements ITerminologyService {
    */
   async expandCompose(compose: ValueSetCompose, options: ExpandComposeOptions = {}): Promise<EvaluationResponse> {
     const { count = 0, offset = 0, activeOnly = true, timeoutMs = 60_000, parents = false, children = false } = options;
-    const toInclude = (clause: ValueSetClause): Record<string, unknown> => ({
-      system: 'http://snomed.info/sct',
-      ...(this.snomedVersion ? { version: this.snomedVersion } : {}),
-      ...('ecl' in clause
-        ? { filter: [{ property: 'constraint', op: '=', value: clause.ecl }] }
-        : { concept: clause.concepts.map((code) => ({ code })) }),
-    });
-    const body = {
-      resourceType: 'ValueSet',
-      compose: {
-        include: compose.include.map(toInclude),
-        ...(compose.exclude?.length ? { exclude: compose.exclude.map(toInclude) } : {}),
-      },
-    };
+    // A concept list is spliced in as text, serialised once per list: a derive
+    // sends the same list of up to hundreds of thousands of codes in many
+    // requests at once.
+    const system = { system: 'http://snomed.info/sct', ...(this.snomedVersion ? { version: this.snomedVersion } : {}) };
+    const toInclude = (clause: ValueSetClause): string =>
+      'ecl' in clause
+        ? JSON.stringify({ ...system, filter: [{ property: 'constraint', op: '=', value: clause.ecl }] })
+        : `${JSON.stringify(system).slice(0, -1)},"concept":${conceptListJson(clause.concepts)}}`;
+    const exclude = compose.exclude?.length ? `,"exclude":[${compose.exclude.map(toInclude).join(',')}]` : '';
+    const body = `{"resourceType":"ValueSet","compose":{"include":[${compose.include.map(toInclude).join(',')}]${exclude}}}`;
 
     const property = (parents ? '&property=parent' : '') + (children ? '&property=child' : '');
     const url = `${this.baseUrl}/ValueSet/$expand?count=${count}&offset=${offset}&activeOnly=${activeOnly}${property}`;
@@ -1332,7 +1340,7 @@ export class FhirTerminologyService implements ITerminologyService {
     const response = await this.request(url, timeoutMs, operation, {
       method: 'POST',
       headers: { 'Content-Type': 'application/fhir+json', Accept: 'application/fhir+json' },
-      body: JSON.stringify(body),
+      body,
     });
     if (!response.ok) {
       const { detail } = await FhirTerminologyService.readErrorBody(response);

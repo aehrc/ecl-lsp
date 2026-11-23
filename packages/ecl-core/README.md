@@ -242,9 +242,10 @@ These options keep large lists cheap for the server and for memory. All but
 | `parallelPages`    | `true`  | Ask for the later pages of a multi-page expansion at once                                             |
 | `localScoring`     | `false` | Count graph candidates on the graph and check only the best on the server                             |
 
-Measured on `tx.ontoserver.csiro.au` with an 87,000-code list: 14 s, 2.5 MB
-uploaded and 40 s of server time, against 207 s, 69 MB and 517 s before these
-options. In a 512 MiB container (`node:20-alpine`) that list peaks at 136 MB of
+Measured on `tx.ontoserver.csiro.au` with an 87,000-code list, all to the same
+result: with the defaults, 32–40 s, 37 requests and 22 MB uploaded (most of it
+the list, sent with each candidate's server count); with `localScoring` on,
+11–13 s, 29 requests and 2.5 MB; before these options, 207 s and 69 MB. In a 512 MiB container (`node:20-alpine`) that list peaks at 136 MB of
 heap and a 195,000-code list at 164 MB. Above `maxGraphConcepts` (200,000)
 derive falls back to a query per count, which is slow.
 

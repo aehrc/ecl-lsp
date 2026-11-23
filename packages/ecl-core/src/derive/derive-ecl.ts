@@ -954,22 +954,27 @@ async function resolveInput(
 /**
  * The list looked up once, with each concept's activity, parents and children:
  * its concepts, and the walk they seed (absent, with `walkable` false, when
- * the server gave no parents or children). Null when activity cannot be read
- * from this lookup, because no concept came back flagged inactive and a count
- * of the active ones disagrees: the server does not flag inactive concepts in
- * an expansion, so the caller must ask twice and difference the answers.
+ * the server gave no parents or children). Activity is asked for explicitly
+ * (`property=inactive`), so a server that states it (Ontoserver) answers with
+ * nothing more. On one that does not, a list with no concept flagged inactive
+ * is checked with one count per chunk; null when that count disagrees: the
+ * server does not flag inactive concepts, so the caller must ask twice and
+ * difference the answers.
  */
 async function lookUpList(
   codes: string[],
   q: SetQueries,
 ): Promise<{ concepts: EvaluationConcept[]; walk?: Walk; walkable: boolean } | null> {
   const seed = new Walk();
-  const chunks = await q.lookupEach(codes, { activeOnly: false, parents: true, children: true }, (concepts) => ({
+  const lookup = { activeOnly: false, parents: true, children: true, activity: true };
+  const chunks = await q.lookupEach(codes, lookup, (concepts) => ({
     terms: concepts.map(({ code, display, inactive }) => (inactive ? { code, display, inactive } : { code, display })),
     nodes: seed.nodesFor(concepts.filter((c) => !c.inactive)),
+    stated: concepts.every((c) => c.inactive !== undefined),
   }));
   const concepts = chunks.flatMap((c) => c.terms);
-  if (!concepts.some((c) => c.inactive) && (await activeCount(codes, q)) !== concepts.length) return null;
+  const unstated = chunks.some((c) => !c.stated);
+  if (unstated && !concepts.some((c) => c.inactive) && (await activeCount(codes, q)) !== concepts.length) return null;
   if (chunks.some((c) => c.nodes === null)) return { concepts, walkable: false };
   for (const c of chunks) if (c.nodes) seed.add(c.nodes);
   return { concepts, walk: seed, walkable: true };

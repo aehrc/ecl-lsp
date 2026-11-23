@@ -66,7 +66,7 @@ interface FhirExpansionContains {
   property?: { code?: string; valueBoolean?: boolean; valueCode?: string }[];
   designation?: FhirDesignation[];
   /** R4 servers carry R5 `contains.property` as this extension. */
-  extension?: { url?: string; extension?: { url?: string; valueCode?: string }[] }[];
+  extension?: { url?: string; extension?: { url?: string; valueCode?: string; valueBoolean?: boolean }[] }[];
 }
 
 /** The expansion section of a ValueSet. */
@@ -106,6 +106,20 @@ const CONTAINS_PROPERTY_EXTENSION =
  */
 function parentCodes(item: FhirExpansionContains): string[] | undefined {
   return propertyCodes(item, 'parent');
+}
+
+/** One boolean property of an expansion entry, from R5 `property` or its R4 extension form; undefined when absent. */
+function propertyBoolean(item: FhirExpansionContains, code: string): boolean | undefined {
+  const direct = item.property?.find((p) => p.code === code && typeof p.valueBoolean === 'boolean');
+  if (direct) return direct.valueBoolean;
+  for (const ext of item.extension ?? []) {
+    if (ext.url !== CONTAINS_PROPERTY_EXTENSION) continue;
+    const parts = ext.extension ?? [];
+    if (parts.find((x) => x.url === 'code')?.valueCode !== code) continue;
+    const value = parts.find((x) => x.url === 'value')?.valueBoolean;
+    if (typeof value === 'boolean') return value;
+  }
+  return undefined;
 }
 
 /** The codes of one coded property of an expansion entry, or undefined when the entry has none. */
@@ -247,7 +261,9 @@ export interface FhirTerminologyServiceOptions {
    * fails, in milliseconds. While the server reports its limit spent
    * (`x-ratelimit-remaining: 0`, or any 429), every request of this service
    * waits for the reset it gives (`Retry-After` or `x-ratelimit-reset`).
-   * Default 60,000.
+   * The budget is checked after each 429, so time a request spends held
+   * behind others before its first attempt is not counted: with many
+   * requests queued, one can wait longer than this. Default 60,000.
    */
   rateLimitWaitMs?: number;
 }
@@ -1327,7 +1343,15 @@ export class FhirTerminologyService implements ITerminologyService {
    * @throws {TerminologyHttpError} when the server answered with an error status.
    */
   async expandCompose(compose: ValueSetCompose, options: ExpandComposeOptions = {}): Promise<EvaluationResponse> {
-    const { count = 0, offset = 0, activeOnly = true, timeoutMs = 60_000, parents = false, children = false } = options;
+    const {
+      count = 0,
+      offset = 0,
+      activeOnly = true,
+      timeoutMs = 60_000,
+      parents = false,
+      children = false,
+      activity = false,
+    } = options;
     // A concept list is spliced in as text, serialised once per list: a derive
     // sends the same list of up to hundreds of thousands of codes in many
     // requests at once.
@@ -1339,7 +1363,10 @@ export class FhirTerminologyService implements ITerminologyService {
     const exclude = compose.exclude?.length ? `,"exclude":[${compose.exclude.map(toInclude).join(',')}]` : '';
     const body = `{"resourceType":"ValueSet","compose":{"include":[${compose.include.map(toInclude).join(',')}]${exclude}}}`;
 
-    const property = (parents ? '&property=parent' : '') + (children ? '&property=child' : '');
+    const property =
+      (parents ? '&property=parent' : '') +
+      (children ? '&property=child' : '') +
+      (activity ? '&property=inactive' : '');
     const url = `${this.baseUrl}/ValueSet/$expand?count=${count}&offset=${offset}&activeOnly=${activeOnly}${property}`;
     const operation = 'POST ValueSet/$expand of an inline compose';
     const response = await this.request(url, timeoutMs, operation, {
@@ -1357,6 +1384,12 @@ export class FhirTerminologyService implements ITerminologyService {
       (data.expansion?.contains ?? []).forEach((item, i) => {
         const found = parentCodes(item);
         if (found) result.concepts[i].parents = found;
+      });
+    }
+    if (activity) {
+      (data.expansion?.contains ?? []).forEach((item, i) => {
+        const stated = item.inactive === true ? true : propertyBoolean(item, 'inactive');
+        if (stated !== undefined) result.concepts[i].inactive = stated;
       });
     }
     if (children) {

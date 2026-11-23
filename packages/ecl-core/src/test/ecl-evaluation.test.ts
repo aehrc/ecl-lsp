@@ -663,6 +663,42 @@ describe('expandCompose — inline compose (issue #147)', () => {
     );
   });
 
+  it('reads the activity each concept states when asked, and nothing when it is not stated', async () => {
+    const activity = (value: boolean) => ({
+      url: 'http://hl7.org/fhir/5.0/StructureDefinition/extension-ValueSet.expansion.contains.property',
+      extension: [
+        { url: 'code', valueCode: 'inactive' },
+        { url: 'value', valueBoolean: value },
+      ],
+    });
+    stub.setHandler(() => ({
+      status: 200,
+      body: {
+        resourceType: 'ValueSet',
+        expansion: {
+          total: 3,
+          contains: [
+            { code: '73211009', display: 'Diabetes', extension: [activity(false)] },
+            { code: '45518007', display: 'Thiazide', inactive: true, extension: [activity(true)] },
+            { code: '46635009', display: 'Type 1' },
+          ],
+        },
+      },
+    }));
+    const service = new FhirTerminologyService({ baseUrl, timeout: 2000 });
+
+    const result = await service.expandCompose(
+      { include: [{ concepts: ['73211009', '45518007', '46635009'] }] },
+      { count: 3, activeOnly: false, activity: true },
+    );
+
+    assert.match(stub.requests[0].url, /&property=inactive$/);
+    assert.deepStrictEqual(
+      result.concepts.map((c) => c.inactive),
+      [false, true, undefined],
+    );
+  });
+
   it('throws a typed HTTP error carrying the server diagnostics', async () => {
     stub.setHandler(() => ({ status: 422, body: outcome('invalid', 'Invalid concept: 1234') }));
     const service = new FhirTerminologyService({ baseUrl, timeout: 2000 });

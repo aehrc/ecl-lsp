@@ -28,7 +28,11 @@ export interface EvaluationConcept {
   parents?: string[];
   /** Direct IS-A children, when asked for with `ExpandComposeOptions.children`. */
   children?: string[];
-  /** True when the server flags the concept inactive (only possible with `activeOnly: false`). */
+  /**
+   * True when the server flags the concept inactive (only possible with
+   * `activeOnly: false`). False when the server stated it active, which it
+   * does when asked with `ExpandComposeOptions.activity`. Absent: not stated.
+   */
   inactive?: boolean;
 }
 
@@ -163,4 +167,11 @@ export interface ExpandComposeOptions {
    * Default false. Ontoserver supports it; a leaf comes back with `children: []`.
    */
   children?: boolean;
+  /**
+   * Ask for each concept's activity (`property=inactive`), so active concepts
+   * come back with `inactive: false` rather than nothing: then a missing flag
+   * means the server does not state activity, not that the concept is active.
+   * Default false. Ontoserver supports it.
+   */
+  activity?: boolean;
 }

@@ -91,7 +91,8 @@ export function countingFailures(terminology: ITerminologyService): {
   };
   const service = new Proxy(terminology, {
     get(target, prop, receiver) {
-      if (prop === UNCOUNTED) return target;
+      // Through every wrapper: a derive nested in another (compress, a subtraction) has two.
+      if (prop === UNCOUNTED) return uncounted(target);
       const value: unknown = Reflect.get(target, prop, receiver);
       if (typeof value !== 'function') return value;
       return (...args: unknown[]): unknown => {
@@ -222,7 +223,7 @@ export class SetQueries {
    */
   async lookup(
     codes: readonly string[],
-    options: { activeOnly?: boolean; parents?: boolean; children?: boolean } = {},
+    options: { activeOnly?: boolean; parents?: boolean; children?: boolean; activity?: boolean } = {},
   ): Promise<EvaluationConcept[]> {
     return (await this.lookupEach(codes, options, (concepts) => concepts)).flat();
   }
@@ -234,7 +235,7 @@ export class SetQueries {
    */
   async lookupEach<T>(
     codes: readonly string[],
-    options: { activeOnly?: boolean; parents?: boolean; children?: boolean },
+    options: { activeOnly?: boolean; parents?: boolean; children?: boolean; activity?: boolean },
     each: (concepts: EvaluationConcept[]) => T,
   ): Promise<T[]> {
     const chunks: string[][] = [];

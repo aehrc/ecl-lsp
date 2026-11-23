@@ -391,6 +391,23 @@ describe('deriveEcl', () => {
       assert.ok(result.candidates.every((c) => !c.ecl.includes(id.RETIRED)));
     });
 
+    it('needs no count to tell activity on a server that states it', async () => {
+      const mock = fixture();
+      const expand = mock.expandCompose.bind(mock);
+      mock.expandCompose = async (compose, options) => {
+        const r = await expand(compose, options);
+        if (!options?.activity) return r;
+        return { ...r, concepts: r.concepts.map((c) => ({ ...c, inactive: c.inactive === true })) };
+      };
+      const result = await deriveEcl({ conceptIds: [id.A1, id.A2] }, mock, { omitTerms: true });
+      assert.strictEqual(result.input.members, 2);
+      const listed = (c: ValueSetCompose) =>
+        !c.exclude && c.include.some((x) => 'concepts' in x && x.concepts.length === 2 && x.concepts.includes(id.A1));
+      const listCounts = mock.composeCalls.filter(listed);
+      // The lookup itself only: no count-only check of the list's activity.
+      assert.strictEqual(listCounts.length, 1, JSON.stringify(listCounts));
+    });
+
     it('looks the list up once on a server that gives no parents', async () => {
       const mock = fixture();
       const expand = mock.expandCompose.bind(mock);

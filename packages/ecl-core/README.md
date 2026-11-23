@@ -126,9 +126,11 @@ const results = await fhir.evaluateEcl('< 404684003');
 Rate limits: when the server says its allowance is spent (a 429, or
 `x-ratelimit-remaining: 0`), every request of the service waits for the reset
 it gives (`Retry-After` or `x-ratelimit-reset`), up to `rateLimitWaitMs` per
-request, rather than failing. This applies to every user of the service
-(hovers, diagnostics, derive), so a request can take up to that long on a
-rate-limited server.
+request, rather than failing. When the limit resets, held requests go oldest
+first, as many at a time as the server says it has room for. This applies to
+every user of the service (hovers, diagnostics, derive), so a request can take
+that long on a rate-limited server, or longer when many are queued: the budget
+is checked after each 429, not while a request waits its turn.
 
 ### Deriving ECL from a Concept List
 

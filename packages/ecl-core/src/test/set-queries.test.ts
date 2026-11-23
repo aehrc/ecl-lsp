@@ -3,7 +3,9 @@
 
 import { describe, it } from 'node:test';
 import * as assert from 'node:assert';
-import { SetQueries, type ExpandCompose } from '../derive/set-queries';
+import { countingFailures, SetQueries, uncounted, type ExpandCompose } from '../derive/set-queries';
+import { HierarchyMockService } from './hierarchy-mock';
+import { TerminologyTransportError } from '../terminology/errors';
 import type { EvaluationConcept } from '../terminology/types';
 
 const ALL = '<< 138875005';
@@ -62,4 +64,19 @@ describe('SetQueries paging on a server with a smaller page cap', () => {
       });
     });
   }
+});
+
+describe('uncounted', () => {
+  it('reaches the service through every counting wrapper, so a nested derive counts nothing', async () => {
+    const service = new HierarchyMockService();
+    service.validateConcepts = () => Promise.reject(new TerminologyTransportError('timed out'));
+    const outer = countingFailures(service);
+    const inner = countingFailures(outer.service);
+    await assert.rejects(uncounted(inner.service).validateConcepts(['1']));
+    assert.strictEqual(inner.failures(), 0);
+    assert.strictEqual(outer.failures(), 0);
+    await assert.rejects(inner.service.validateConcepts(['1']));
+    assert.strictEqual(inner.failures(), 1);
+    assert.strictEqual(outer.failures(), 1);
+  });
 });

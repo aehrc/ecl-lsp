@@ -285,6 +285,16 @@ describe('deriveEcl', () => {
       assert.deepStrictEqual(result.input.unknown, [sctid(7777)]);
     });
 
+    it('notes that it could not tell why a refset is empty when the lookup fails', async () => {
+      const mock = fixture();
+      mock.getConceptInfo = () => Promise.reject(new TerminologyTransportError('timed out after 2000ms'));
+      const result = await deriveEcl({ refsetId: sctid(7777) }, mock);
+      assert.deepStrictEqual(result.input.unknown, []);
+      assert.deepStrictEqual(result.input.inactive, []);
+      assert.match(result.notes.join('\n'), /has no active members; could not look it up to say why: timed out/);
+      assert.strictEqual(result.failures, 1);
+    });
+
     it('notes a known concept with no active members instead of calling it unknown', async () => {
       const mock = fixture();
       mock.addRefset(id.B, [id.RETIRED]);
@@ -353,6 +363,19 @@ describe('deriveEcl', () => {
       // What was left: the enumeration, not the 2-clause definition.
       assert.strictEqual(result.candidates[0].construction.kind, 'enumeration');
       assert.match(formatDeriveReport(result), /^Incomplete: \d+ server quer(y|ies) failed/);
+    });
+
+    it('returns its candidates without display terms when the term lookup fails', async () => {
+      // Seen live: a 241k-member derive finished, then threw because the 2 s
+      // term lookup for its best candidate's two ids timed out.
+      const mock = fixture();
+      mock.validateConcepts = () => Promise.reject(new TerminologyTransportError('timed out after 2000ms'));
+      const set = membersOf(mock, `<< ${id.A} MINUS << ${id.A1}`);
+      const result = await deriveEcl({ conceptIds: set }, mock, { critique: true });
+      assert.strictEqual(result.candidates[0].ecl, `<< ${id.A} MINUS << ${id.A1}`);
+      assert.strictEqual(result.candidates[0].expression, `<< ${id.A} MINUS << ${id.A1}`);
+      assert.match(result.notes.join('\n'), /Display terms could not be looked up: timed out after 2000ms/);
+      assert.ok(result.failures > 0, `failures = ${result.failures}`);
     });
 
     it('reports no failures when every query succeeds', async () => {

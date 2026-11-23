@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Derive offered a subtraction that selects nothing** (`ecl-core`): `C MINUS D` was built whenever D missed none of what C adds. D is judged only within C, though, so D could be all of C, and on an AMT list `(C) MINUS (< 763158003 |Medicinal product|)` missed all 263 members. D must now remove fewer members than C adds non-members, and no candidate that selects none of the set is returned.
+- **A finished derive could be lost to its display-term lookup** (`ecl-core`): the last step of `deriveEcl` and `compressExpression` looks up preferred terms for the candidates, and when that lookup failed (seen live as a 2 s timeout at the end of a 241k-member derive) the whole call threw. Candidates now come back with bare ids, a note says why, and the failure counts in `failures`. A refset whose status lookup fails likewise gets a note instead of throwing.
 - The `refinementFocus` documentation gave the MPP reference set (`929360081000036101`) as the focus for AMT MPUUs. The MPUU refset is `929360071000036103`.
 
 - Concept lookups now return the real fully specified name, with its semantic tag, from the server's designations. Before, `fsn` was a copy of the preferred term, so hovers showed the preferred term twice. The Slack bot still writes preferred terms into ECL.

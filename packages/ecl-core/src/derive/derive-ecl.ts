@@ -502,7 +502,7 @@ async function derive(
   const top = useful.slice(0, opts.maxCandidates);
   await checkLocalCounts(top, countedLocally, members, q, opts, notes);
 
-  const terms = opts.omitTerms ? new Map<string, string>() : await displayTerms(top, terminology);
+  const terms = opts.omitTerms ? new Map<string, string>() : await displayTerms(top, terminology, notes);
   result.candidates = top.map((s) => ({ expression: decorate(s.ecl, terms), ...s }));
   return result;
 }
@@ -966,7 +966,13 @@ async function resolveRefset(
   const ecl = `(^ ${refsetId})`;
   report.members = await q.countEcl(ecl);
   if (report.members === 0) {
-    const info = await terminology.getConceptInfo(refsetId);
+    let info: ConceptInfo | null;
+    try {
+      info = await terminology.getConceptInfo(refsetId);
+    } catch (error) {
+      notes.push(`${refsetId} has no active members; could not look it up to say why: ${errorMessage(error)}.`);
+      return { report, members: null };
+    }
     if (info === null) report.unknown.push(refsetId);
     else if (info.active) notes.push(`${refsetId} |${info.pt}| has no active members, or is not a reference set.`);
     else report.inactive.push(refsetId);
@@ -1821,9 +1827,16 @@ async function compare(
 
 // ── Presentation ─────────────────────────────────────────────────────────
 
+/**
+ * Preferred terms for the ids in the candidates worth decorating. Terms are
+ * decoration: when the lookup fails, the candidates go out with bare ids and,
+ * given `notes`, a note says why (the failure itself is counted by the caller's
+ * service), rather than losing a finished result.
+ */
 export async function displayTerms(
   candidates: { ecl: string; clauses: number }[],
   terminology: ITerminologyService,
+  notes?: string[],
 ): Promise<Map<string, string>> {
   const ids = new Set<string>();
   for (const c of candidates) {
@@ -1832,7 +1845,13 @@ export async function displayTerms(
   }
   const terms = new Map<string, string>();
   if (ids.size === 0) return terms;
-  const infos = await terminology.validateConcepts([...ids].sort(byId));
+  let infos: Map<string, ConceptInfo | null>;
+  try {
+    infos = await terminology.validateConcepts([...ids].sort(byId));
+  } catch (error) {
+    notes?.push(`Display terms could not be looked up: ${errorMessage(error)}.`);
+    return terms;
+  }
   for (const [id, info] of infos) if (info?.pt) terms.set(id, info.pt);
   return terms;
 }

@@ -5,7 +5,7 @@
 import { ANTLRInputStream, CommonTokenStream, Token } from 'antlr4ts';
 import { PredictionMode } from 'antlr4ts/atn/PredictionMode';
 import { ECLLexer } from './generated/grammar/ECLLexer';
-import { ECLParser } from './generated/grammar/ECLParser';
+import { ECLParser, ExpressionconstraintContext } from './generated/grammar/ECLParser';
 import { ECLASTVisitor } from './visitor';
 import { ECLErrorListener, ParseError } from './error-listener';
 import { ExpressionNode, Range } from './ast';
@@ -40,6 +40,8 @@ let lastResult: ParseResult | null = null;
 interface ParseAttempt {
   ast: ExpressionNode | null;
   errors: ParseError[];
+  /** The ANTLR parse tree, kept for code that needs the exact source structure (whitespace, comments). */
+  tree: ExpressionconstraintContext | null;
 }
 
 /**
@@ -64,8 +66,9 @@ function runParseAttempt(input: string, predictionMode: PredictionMode): ParseAt
 
   // Parse and build AST
   let ast: ExpressionNode | null = null;
+  let tree: ExpressionconstraintContext | null = null;
   try {
-    const tree = parser.expressionconstraint();
+    tree = parser.expressionconstraint();
     const visitor = new ECLASTVisitor();
     ast = visitor.visit(tree) as ExpressionNode | null;
 
@@ -92,7 +95,7 @@ function runParseAttempt(input: string, predictionMode: PredictionMode): ParseAt
     // Parser threw an exception — errors captured by error listener
   }
 
-  return { ast, errors: errorListener.getErrors() };
+  return { ast, errors: errorListener.getErrors(), tree };
 }
 
 /**
@@ -117,6 +120,23 @@ function parseWithFallback(input: string): ParseAttempt {
     return sll;
   }
   return runParseAttempt(input, PredictionMode.LL);
+}
+
+/**
+ * Parses `input` and returns the ANTLR parse tree, which keeps every character
+ * of the source: whitespace, comments and display terms included. The AST from
+ * `parseECL` drops these, so code that rewrites the source text exactly (such as
+ * the minifier) walks this tree instead.
+ *
+ * Uses the same SLL-then-LL strategy as `parseECL`. `errors` are ANTLR's raw
+ * messages; call `parseECL` for the clearer ones shown to users.
+ */
+export function parseConcreteTree(input: string): {
+  tree: ExpressionconstraintContext | null;
+  errors: ParseError[];
+} {
+  const { tree, errors } = parseWithFallback(input);
+  return { tree, errors };
 }
 
 // eslint-disable-next-line sonarjs/cognitive-complexity -- main parser orchestration with error recovery

@@ -9,7 +9,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- The code list critique flags different members with the same preferred term, such as a procedure and an observable entity both called "Dressing" (CHK13). Each group carries the members' FSNs to tell them apart; `maxDuplicateTerms` caps how many are reported (default 20).
 - **Derive finds a cover within a reference set** (`ecl-core`): `(<< A OR << B …) AND ^ R`, for a list that is one reference set's members under a few groupers, where the groupers alone add concepts outside the refset. This is the usual shape of an AMT list: one level (MPUU, MP, TPP …) under some drug classes. Before, derive offered only the enumeration for these. On the AU edition, a 263-MPUU diabetes list now comes back as 11 class groupers ANDed with the MPUU refset, exact. The new `restrictTo` option names the expression to cover within. Its default, `'auto'`, uses the AMT level refset holding every member when all of them are medicinal products, at a cost of at most seven counts and one query, and does nothing for other sets. The construction is `restricted-cover`. When it is exact, `refinements: 'auto'` no longer runs the attribute-refinement search, which costs a few hundred requests: the 263-MPUU list takes 14 requests and about 3 s, down from about 270 requests and 8 minutes on the public server.
 - **`failures` on derive and compress results** (`ecl-core`): the number of server requests that failed (unreachable, timed out, rate-limited, 5xx). Derive drops whatever a failed request was for and carries on, so a result with failures above 0 is incomplete, and its best candidate can be far worse than the best that exists. Seen live: with its counts rate-limited, a 1,208-member set whose definition is two clauses came back as its 1,208-clause enumeration. When `failures` is above 0, the reports start with an "Incomplete" line.
 
@@ -22,7 +21,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Derive offered a subtraction that selects nothing** (`ecl-core`): `C MINUS D` was built whenever D missed none of what C adds. D is judged only within C, though, so D could be all of C, and on an AMT list `(C) MINUS (< 763158003 |Medicinal product|)` missed all 263 members. D must now remove fewer members than C adds non-members, and no candidate that selects none of the set is returned.
 - The `refinementFocus` documentation gave the MPP reference set (`929360081000036101`) as the focus for AMT MPUUs. The MPUU refset is `929360071000036103`.
 
+## [1.8.0] - 2026-11-17
+
+A minor release. `ecl-core` can minify an expression for storage, such as in a query specification reference set, and the code list critique flags members that share a preferred term. Hovers now show the real fully specified name. It also patches security advisories in the VS Code extension's and the Slack bot's dependencies.
+
+### Added
+
+- **Minify an expression** (`ecl-core`): `minifyExpression()` returns the shortest text that parses to the same expression, for storing ECL where size and RF2 safety matter, such as the query field of a query specification reference set. It removes display terms and every space the grammar does not need, keeps quoted strings as written, and keeps block comments unless `removeComments` is set. The result has no tabs or line breaks. Nothing is reordered or regrouped, and the result is re-parsed and compared with the input before it is returned. Throws `MinifyError` for invalid ECL. `parseConcreteTree()` in the parser module exposes the ANTLR parse tree it walks.
+- The code list critique flags different members with the same preferred term, such as a procedure and an observable entity both called "Dressing" (CHK13). Each group carries the members' FSNs to tell them apart; `maxDuplicateTerms` caps how many are reported (default 20).
+
+### Fixed
+
 - Concept lookups now return the real fully specified name, with its semantic tag, from the server's designations. Before, `fsn` was a copy of the preferred term, so hovers showed the preferred term twice. The Slack bot still writes preferred terms into ECL.
+- **Security advisories** ([#154](https://github.com/aehrc/ecl-lsp/pull/154)):
+  - In runtime dependencies: `minimatch` 11.0.5 in the VS Code extension (glob pattern denial of service), and `qs` 6.17.1 in the Slack bot (denial of service in `stringify`).
+  - Development-only: `serialize-javascript` 7.1.3 (XSS, through mocha).
 
 ## [1.7.0] - 2026-11-10
 

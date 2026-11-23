@@ -595,6 +595,21 @@ describe('expandCompose — inline compose (issue #147)', () => {
     ]);
   });
 
+  it('sends the list as it is now when a caller reuses and changes the same array', async () => {
+    const service = new FhirTerminologyService({ baseUrl, timeout: 2000 });
+    const codes = ['46635009', '44054006'];
+    await service.expandCompose({ include: [{ concepts: codes }] });
+    codes.push('73211009');
+    await service.expandCompose({ include: [{ concepts: codes }] });
+
+    const body = JSON.parse(stub.requests[1].body ?? '{}') as { compose: { include: { concept: unknown }[] } };
+    assert.deepStrictEqual(body.compose.include[0].concept, [
+      { code: '46635009' },
+      { code: '44054006' },
+      { code: '73211009' },
+    ]);
+  });
+
   it('defaults to a count-only, active-only request and pins the configured version', async () => {
     const version = 'http://snomed.info/sct/32506021000036107/version/20260930';
     const service = new FhirTerminologyService({ baseUrl, timeout: 2000, snomedVersion: version });

@@ -66,6 +66,18 @@ export type ExpandCompose = NonNullable<ITerminologyService['expandCompose']>;
  * Derive drops what a failed request was for and goes on, so this count is
  * what tells a degraded result from a complete one.
  */
+const UNCOUNTED = Symbol('uncounted');
+
+/**
+ * The service behind a {@link countingFailures} wrapper (or `terminology`
+ * itself), for a request whose failure the caller recovers from by other
+ * requests, which are counted: a failure there loses nothing, so it must not
+ * mark the result incomplete.
+ */
+export function uncounted(terminology: ITerminologyService): ITerminologyService {
+  return (terminology as ITerminologyService & { [UNCOUNTED]?: ITerminologyService })[UNCOUNTED] ?? terminology;
+}
+
 export function countingFailures(terminology: ITerminologyService): {
   service: ITerminologyService;
   failures: () => number;
@@ -79,6 +91,7 @@ export function countingFailures(terminology: ITerminologyService): {
   };
   const service = new Proxy(terminology, {
     get(target, prop, receiver) {
+      if (prop === UNCOUNTED) return target;
       const value: unknown = Reflect.get(target, prop, receiver);
       if (typeof value !== 'function') return value;
       return (...args: unknown[]): unknown => {
@@ -99,6 +112,8 @@ export interface MemberSet {
   concepts?: EvaluationConcept[];
   /** The members looked up with their parents and children, when resolving the input did that, for the graph. */
   walk?: Walk;
+  /** Resolving the input found that the server gives no parents or children, so the graph cannot be walked. */
+  walkUnsupported?: boolean;
 }
 
 /**
@@ -115,23 +130,51 @@ export class SetQueries {
   ) {}
 
   /**
-   * The later pages of an expansion whose first page has been read, in order:
-   * concurrently when `parallelPages`, else one after another.
+   * The rest of an expansion whose first `first.length` concepts have been
+   * read, up to `until`, in order. Pages step by the first page's length, which
+   * is the server's page cap when it returned fewer than asked (Ontoserver
+   * caps at 50,000; other servers lower). With `parallelPages` those pages are
+   * asked for at once. Whatever is still missing after that (a server whose
+   * pages shrink) is read one page after another, advancing by what each page
+   * actually held, so a smaller cap never silently drops concepts.
    */
-  private async laterPages(
+  private async rest(
     compose: ValueSetCompose,
-    from: number,
+    first: EvaluationConcept[],
     until: number,
     options: Omit<Parameters<ExpandCompose>[1] & object, 'offset' | 'count'>,
-  ): Promise<EvaluationConcept[][]> {
+  ): Promise<EvaluationConcept[]> {
+    const concepts = [...first];
+    const step = first.length;
+    if (step === 0) return concepts;
+    const page = async (offset: number, count: number) =>
+      (await this.expand(compose, { ...options, count, offset })).concepts;
+    if (this.parallelPages) await this.pagesAtOnce(concepts, step, until, page);
+    while (concepts.length < until) {
+      const p = await page(concepts.length, Math.min(PAGE_SIZE, until - concepts.length));
+      if (p.length === 0) break;
+      for (const c of p) concepts.push(c);
+    }
+    return concepts;
+  }
+
+  /**
+   * Append the pages from `step` to `until`, `step` apart, asked for at once.
+   * Only the run of full pages is kept: after a short one the offsets no longer line up.
+   */
+  private async pagesAtOnce(
+    concepts: EvaluationConcept[],
+    step: number,
+    until: number,
+    page: (offset: number, count: number) => Promise<EvaluationConcept[]>,
+  ): Promise<void> {
     const offsets: number[] = [];
-    for (let o = from; o < until; o += PAGE_SIZE) offsets.push(o);
-    const page = async (offset: number) =>
-      (await this.expand(compose, { ...options, count: Math.min(PAGE_SIZE, until - offset), offset })).concepts;
-    if (this.parallelPages) return Promise.all(offsets.map(page));
-    const pages: EvaluationConcept[][] = [];
-    for (const o of offsets) pages.push(await page(o));
-    return pages;
+    for (let o = step; o < until; o += step) offsets.push(o);
+    const pages = await Promise.all(offsets.map((o) => page(o, Math.min(step, until - o))));
+    for (const p of pages) {
+      for (const c of p) concepts.push(c);
+      if (p.length < step) return;
+    }
   }
 
   private async expand(...args: Parameters<ExpandCompose>): ReturnType<ExpandCompose> {
@@ -168,12 +211,7 @@ export class SetQueries {
   ): Promise<{ concepts: EvaluationConcept[]; total: number }> {
     const first = await this.expand(compose, { count: Math.min(PAGE_SIZE, max), offset: 0, activeOnly });
     const total = first.total;
-    const concepts: EvaluationConcept[] = [...first.concepts];
-    if (first.concepts.length > 0 && concepts.length < Math.min(max, total)) {
-      for (const p of await this.laterPages(compose, concepts.length, Math.min(max, total), { activeOnly })) {
-        for (const c of p) concepts.push(c);
-      }
-    }
+    const concepts = await this.rest(compose, first.concepts, Math.min(max, total), { activeOnly });
     return { concepts, total };
   }
 
@@ -203,11 +241,12 @@ export class SetQueries {
     for (let i = 0; i < codes.length; i += LOOKUP_CHUNK) chunks.push(codes.slice(i, i + LOOKUP_CHUNK));
     return Promise.all(
       chunks.map(async (chunk) => {
-        const page = await this.expand(
-          { include: [{ concepts: chunk }] },
-          { count: chunk.length, offset: 0, activeOnly: options.activeOnly ?? true, ...options },
-        );
-        return each(page.concepts);
+        const compose = { include: [{ concepts: chunk }] };
+        const expandOptions = { activeOnly: options.activeOnly ?? true, ...options };
+        const page = await this.expand(compose, { ...expandOptions, count: chunk.length, offset: 0 });
+        // A server with a page cap below the chunk size answers in more than one page.
+        if (page.concepts.length >= page.total) return each(page.concepts);
+        return each(await this.rest(compose, page.concepts, page.total, expandOptions));
       }),
     );
   }
@@ -228,7 +267,11 @@ export class SetQueries {
     const pages = await Promise.all(
       offsets.map((offset) => this.expand(compose, { count: Math.min(PAGE_SIZE, max - offset), offset, activeOnly })),
     );
-    return { concepts: pages.flatMap((p) => p.concepts), total: pages[0].total };
+    const total = pages[0].total;
+    const concepts = pages.flatMap((p) => p.concepts);
+    // A server that caps pages below PAGE_SIZE leaves gaps between these offsets: read it in order instead.
+    if (concepts.length < Math.min(max, total)) return this.concepts(compose, max, activeOnly);
+    return { concepts, total };
   }
 
   /**
@@ -239,15 +282,9 @@ export class SetQueries {
     const graph = new Map<string, string[]>();
     const first = await this.expand(compose, { count: PAGE_SIZE, offset: 0, parents: true });
     if (first.total > max) return 'too-large';
-    const pages = [first.concepts];
-    if (first.concepts.length > 0 && first.concepts.length < first.total) {
-      pages.push(...(await this.laterPages(compose, first.concepts.length, first.total, { parents: true })));
-    }
-    for (const page of pages) {
-      for (const c of page) {
-        if (!c.parents && c.code !== SNOMED_ROOT) return 'no-parents';
-        graph.set(c.code, c.parents ?? []);
-      }
+    for (const c of await this.rest(compose, first.concepts, first.total, { parents: true })) {
+      if (!c.parents && c.code !== SNOMED_ROOT) return 'no-parents';
+      graph.set(c.code, c.parents ?? []);
     }
     return graph;
   }

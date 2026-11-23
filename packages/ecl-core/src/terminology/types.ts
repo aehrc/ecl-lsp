@@ -118,9 +118,9 @@ export interface ITerminologyService {
    */
   getDefiningRelationships?(conceptId: string): Promise<DefiningRelationship[] | null>;
   /**
-   * EXPERIMENT: {@link getDefiningRelationships} for many concepts in one
-   * request, aligned with `conceptIds`; an entry the server could not answer
-   * is an Error. Optional.
+   * {@link getDefiningRelationships} for many concepts in one request (a FHIR
+   * batch), aligned with `conceptIds`; an entry the server could not answer is
+   * an Error. Optional.
    */
   getDefiningRelationshipsMany?(conceptIds: string[]): Promise<(DefiningRelationship[] | null | Error)[]>;
 }

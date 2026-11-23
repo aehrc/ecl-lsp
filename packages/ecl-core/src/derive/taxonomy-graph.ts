@@ -71,6 +71,12 @@ export interface TaxonomyGraphOptions {
   walk?: boolean;
   /** The active members as already looked up, with parents and children, so they are not looked up again. */
   seed?: Walk;
+  /**
+   * Queries for `loadBelow` once the graph is built. Its caller falls back to
+   * server counts when it fails, so derive passes queries whose failures are
+   * not counted (see `uncounted`). Default: the graph's own.
+   */
+  belowQueries?: SetQueries;
 }
 
 export async function loadTaxonomyGraph(
@@ -261,7 +267,7 @@ async function walkedGraph(
   const loaded = await withDescendants(graph, options, (load) => walkDown(load, walk, q, max));
   if (!loaded || 'unavailable' in loaded) return loaded;
   graph.loadBelow = async (load: string[]) => {
-    const more = await walkDown(load, walk, q, max);
+    const more = await walkDown(load, walk, options.belowQueries ?? q, max);
     if (more === 'too-large' || more === null) return false;
     graph.addBelow(more);
     return true;

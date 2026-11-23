@@ -58,7 +58,9 @@ import {
   countClauses,
   countingFailures,
   orGroup,
+  LOOKUP_CHUNK,
   SetQueries,
+  uncounted,
   SNOMED_ROOT,
   stripTermsAndComments,
   type MemberSet,
@@ -175,7 +177,8 @@ export interface DeriveOptions {
    * Resolve a list by looking its codes up in chunks, with parents and
    * children, and build the IS-A graph by walking from there instead of with
    * queries that carry the list as ECL. Falls back to those queries on a
-   * server that does not return `property=child`. Default true.
+   * server that does not return `property=child`, or does not flag inactive
+   * concepts in an expansion. Default true.
    */
   walkGraph?: boolean;
   /**
@@ -448,6 +451,13 @@ async function derive(
     (compose, o) => expandCompose(compose, { timeoutMs: opts.queryTimeoutMs, ...o }),
     opts.parallelPages,
   );
+  // For requests whose failure derive recovers from with other, counted ones.
+  const quiet = uncounted(terminology);
+  const quietExpand = quiet.expandCompose?.bind(quiet) ?? expandCompose;
+  const belowQueries = new SetQueries(
+    (compose, o) => quietExpand(compose, { timeoutMs: opts.queryTimeoutMs, ...o }),
+    opts.parallelPages,
+  );
   const notes: string[] = [];
 
   const { report, members } = await resolveInput(input, q, terminology, notes, opts.walkGraph);
@@ -459,7 +469,7 @@ async function derive(
     return result;
   }
 
-  const graph = opts.useGraph ? await loadGraph(members, q, opts, notes) : null;
+  const graph = opts.useGraph ? await loadGraph(members, q, opts, notes, belowQueries) : null;
   const critique = critiqueOptions(opts.critique);
   let hierarchies: DeriveResult['hierarchies'] = [];
   if (opts.hierarchySummary || critique) {
@@ -900,11 +910,13 @@ async function resolveInput(
   let activeConcepts: { concepts: EvaluationConcept[] };
   let knownConcepts: { concepts: EvaluationConcept[] };
   let walk: Walk | undefined;
-  if (lookUp) {
-    const looked = await lookUpList(wellFormed, q);
+  let walkable = true;
+  const looked = lookUp ? await lookUpList(wellFormed, q) : null;
+  if (looked) {
     knownConcepts = { concepts: looked.concepts };
     activeConcepts = { concepts: looked.concepts.filter((c) => !c.inactive) };
     walk = looked.walk;
+    walkable = looked.walkable;
   } else {
     [activeConcepts, knownConcepts] = await Promise.all([
       q.conceptsUpTo(listed, wellFormed.length, true),
@@ -918,6 +930,8 @@ async function resolveInput(
   report.unknown = wellFormed.filter((id) => !known.has(id));
   report.members = active.length;
   if (active.length === 0) return { report, members: null };
+  // Frozen so the service can keep its request text for this list (it is sent with every comparison).
+  Object.freeze(active);
   return {
     report,
     members: {
@@ -926,6 +940,7 @@ async function resolveInput(
       size: active.length,
       concepts: activeConcepts.concepts,
       ...(walk ? { walk } : {}),
+      ...(walkable ? {} : { walkUnsupported: true }),
     },
   };
 }
@@ -936,16 +951,37 @@ async function resolveInput(
  * concepts' parents and children numbered into a walk (none when the server
  * left them out).
  */
-async function lookUpList(codes: string[], q: SetQueries): Promise<{ concepts: EvaluationConcept[]; walk?: Walk }> {
+/**
+ * The list looked up once, with each concept's activity, parents and children:
+ * its concepts, and the walk they seed (absent, with `walkable` false, when
+ * the server gave no parents or children). Null when activity cannot be read
+ * from this lookup, because no concept came back flagged inactive and a count
+ * of the active ones disagrees: the server does not flag inactive concepts in
+ * an expansion, so the caller must ask twice and difference the answers.
+ */
+async function lookUpList(
+  codes: string[],
+  q: SetQueries,
+): Promise<{ concepts: EvaluationConcept[]; walk?: Walk; walkable: boolean } | null> {
   const seed = new Walk();
   const chunks = await q.lookupEach(codes, { activeOnly: false, parents: true, children: true }, (concepts) => ({
     terms: concepts.map(({ code, display, inactive }) => (inactive ? { code, display, inactive } : { code, display })),
     nodes: seed.nodesFor(concepts.filter((c) => !c.inactive)),
   }));
   const concepts = chunks.flatMap((c) => c.terms);
-  if (chunks.some((c) => c.nodes === null)) return { concepts };
+  if (!concepts.some((c) => c.inactive) && (await activeCount(codes, q)) !== concepts.length) return null;
+  if (chunks.some((c) => c.nodes === null)) return { concepts, walkable: false };
   for (const c of chunks) if (c.nodes) seed.add(c.nodes);
-  return { concepts, walk: seed };
+  return { concepts, walk: seed, walkable: true };
+}
+
+/** How many of `codes` are active, one count per lookup chunk. */
+async function activeCount(codes: string[], q: SetQueries): Promise<number> {
+  const counts: Promise<number>[] = [];
+  for (let i = 0; i < codes.length; i += LOOKUP_CHUNK) {
+    counts.push(q.count({ include: [{ concepts: codes.slice(i, i + LOOKUP_CHUNK) }] }));
+  }
+  return (await Promise.all(counts)).reduce((a, b) => a + b, 0);
 }
 
 async function resolveRefset(
@@ -1025,6 +1061,7 @@ async function loadGraph(
   q: SetQueries,
   opts: Required<DeriveOptions>,
   notes: string[],
+  belowQueries: SetQueries,
 ): Promise<TaxonomyGraph | null> {
   let why: string;
   try {
@@ -1032,8 +1069,10 @@ async function loadGraph(
       maxConcepts: opts.maxGraphConcepts,
       descend: (id, g) => coverDescend(id, g) || refactorDescend(id, g),
       fallbackDescend: refactorDescend,
-      walk: opts.walkGraph,
+      // The input lookup already showed the server gives no parents or children.
+      walk: opts.walkGraph && !members.walkUnsupported,
       ...(members.walk ? { seed: members.walk } : {}),
+      belowQueries,
       ...('concepts' in members.clause ? { memberCodes: members.clause.concepts } : {}),
     });
     // The graph holds what it needs of the walk.

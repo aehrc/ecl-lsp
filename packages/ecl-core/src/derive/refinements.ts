@@ -31,6 +31,7 @@ import {
   stripTermsAndComments,
   type MemberSet,
   type SetQueries,
+  uncounted,
 } from './set-queries';
 
 /** One part of a refinement: `[cardinality] attribute comparison value`. */
@@ -101,10 +102,16 @@ async function readRelationships(
   return sampled;
 }
 
-/** The sample's relationships in one batch request; null (read one by one) when the batch fails. */
+/**
+ * The sample's relationships in one batch request; null (read one by one)
+ * when the batch fails. Entries the batch could not answer are read one by
+ * one. `many` is not counted as a failure (see `uncounted`): only the one-by-one
+ * reads, which lose what they cannot read, are.
+ */
 async function readMany(
   sample: string[],
   many: (ids: string[]) => Promise<(DefiningRelationship[] | null | Error)[]>,
+  getRelationships: (conceptId: string) => Promise<DefiningRelationship[] | null>,
   notes: string[],
 ): Promise<(DefiningRelationship[] | null)[] | null> {
   let answers: (DefiningRelationship[] | null | Error)[];
@@ -113,12 +120,10 @@ async function readMany(
   } catch {
     return null;
   }
-  const failed = answers.filter((a) => a instanceof Error);
-  if (failed.length > 0) {
-    const members = failed.length === 1 ? 'member' : 'members';
-    notes.push(`The relationships of ${failed.length} sampled ${members} could not be read: ${failed[0].message}.`);
-  }
-  return answers.filter((a): a is DefiningRelationship[] | null => !(a instanceof Error));
+  const answered = answers.filter((a): a is DefiningRelationship[] | null => !(a instanceof Error));
+  const retry = sample.filter((_, i) => answers[i] instanceof Error);
+  if (retry.length > 0) answered.push(...(await readRelationships(retry, getRelationships, notes)));
+  return answered;
 }
 
 /**
@@ -144,9 +149,11 @@ export async function refinementCandidates(
   }
 
   const sample = (await q.codes({ include: [members.clause] }, REFINEMENT_SAMPLE)).codes;
-  const many = batch ? terminology.getDefiningRelationshipsMany?.bind(terminology) : undefined;
+  const quiet = uncounted(terminology);
+  const many = batch ? quiet.getDefiningRelationshipsMany?.bind(quiet) : undefined;
   const sampled =
-    (many && (await readMany(sample, many, notes))) ?? (await readRelationships(sample, getRelationships, notes));
+    (many && (await readMany(sample, many, getRelationships, notes))) ??
+    (await readRelationships(sample, getRelationships, notes));
   const profiles = profileAttributes(sampled);
   if (profiles.length === 0) {
     notes.push('No attribute is shared by most members, so no refinement candidates were built.');

@@ -135,13 +135,17 @@ type RelationshipAnswer = DefiningRelationship[] | null | Error;
 
 const conceptListCache = new WeakMap<readonly string[], string>();
 
-/** `[{"code": ...}, ...]` for a compose's `concept`, cached for the life of the list. */
+/**
+ * `[{"code": ...}, ...]` for a compose's `concept`. Cached for the life of the
+ * list only when the array is frozen, so the text cannot go stale: derive
+ * freezes its member list, which it sends with every comparison, and any other
+ * caller's array is built afresh each time.
+ */
 function conceptListJson(codes: readonly string[]): string {
-  let json = conceptListCache.get(codes);
-  if (json === undefined) {
-    json = '[' + codes.map((code) => '{"code":' + JSON.stringify(code) + '}').join(',') + ']';
-    conceptListCache.set(codes, json);
-  }
+  const cached = conceptListCache.get(codes);
+  if (cached !== undefined) return cached;
+  const json = '[' + codes.map((code) => '{"code":' + JSON.stringify(code) + '}').join(',') + ']';
+  if (Object.isFrozen(codes)) conceptListCache.set(codes, json);
   return json;
 }
 
@@ -1240,7 +1244,8 @@ export class FhirTerminologyService implements ITerminologyService {
     };
     const operation = `batch $lookup of the relationships of ${conceptIds.length} concepts`;
     const url = this.baseUrl;
-    const response = await this.request(url, this.timeout, operation, {
+    // One request doing the work of many: allow each lookup its usual time.
+    const response = await this.request(url, this.timeout * Math.max(1, conceptIds.length), operation, {
       method: 'POST',
       headers: { 'Content-Type': 'application/fhir+json', Accept: 'application/fhir+json' },
       body: JSON.stringify(body),

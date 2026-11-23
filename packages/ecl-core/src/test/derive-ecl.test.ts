@@ -378,6 +378,34 @@ describe('deriveEcl', () => {
       assert.ok(result.failures > 0, `failures = ${result.failures}`);
     });
 
+    it('finds inactive codes on a server that does not flag them in an expansion', async () => {
+      const mock = fixture();
+      const expand = mock.expandCompose.bind(mock);
+      mock.expandCompose = async (compose, options) => {
+        const r = await expand(compose, options);
+        return { ...r, concepts: r.concepts.map(({ inactive: _, ...c }) => c) };
+      };
+      const result = await deriveEcl({ conceptIds: [id.A1, id.A2, id.RETIRED] }, mock, { omitTerms: true });
+      assert.deepStrictEqual(result.input.inactive, [id.RETIRED]);
+      assert.strictEqual(result.input.members, 2);
+      assert.ok(result.candidates.every((c) => !c.ecl.includes(id.RETIRED)));
+    });
+
+    it('looks the list up once on a server that gives no parents', async () => {
+      const mock = fixture();
+      const expand = mock.expandCompose.bind(mock);
+      let lookups = 0;
+      mock.expandCompose = async (compose, options) => {
+        const r = await expand(compose, options);
+        if (!options?.parents) return r;
+        if (compose.include.some((c) => 'concepts' in c && c.concepts.includes(id.A1))) lookups++;
+        return { ...r, concepts: r.concepts.map(({ parents: _, children: __, ...c }) => c) };
+      };
+      const result = await deriveEcl({ conceptIds: [id.A1, id.A2, id.A3] }, mock, { omitTerms: true });
+      assert.ok(result.candidates.some((c) => c.exact));
+      assert.strictEqual(lookups, 1);
+    });
+
     it('reports no failures when every query succeeds', async () => {
       const mock = fixture();
       const set = membersOf(mock, `<< ${id.A} MINUS << ${id.A1}`);
@@ -1136,6 +1164,49 @@ describe('deriveEcl — attribute refinements (#149 Part 3)', () => {
       batched.candidates.map((c) => c.ecl),
       plain.candidates.map((c) => c.ecl),
     );
+  });
+
+  it('counts a lost batch entry as a failure, and reads it one by one first', async () => {
+    const mock = products3();
+    const set = [...mock.evaluate(`< ${P.PRODUCT} : ${P.FORM} = << ${P.TAB}`)];
+    const many = mock.getDefiningRelationshipsMany.bind(mock);
+    const read = mock.getDefiningRelationships.bind(mock);
+    const lost = set[0];
+    mock.getDefiningRelationshipsMany = async (ids: string[]) =>
+      (await many(ids)).map((a, i) => (ids[i] === lost ? new Error('entry timed out') : a));
+    mock.getDefiningRelationships = (conceptId: string) =>
+      conceptId === lost ? Promise.reject(new TerminologyTransportError('timed out')) : read(conceptId);
+    const result = await deriveEcl({ conceptIds: set }, mock, {
+      omitTerms: true,
+      refinements: 'always',
+      batchLookups: true,
+    });
+    assert.strictEqual(result.failures, 1);
+    assert.match(result.notes.join('\n'), /relationships of 1 sampled member could not be read: timed out/);
+  });
+
+  it('does not count a failed batch the one-by-one reads make up for', async () => {
+    const mock = products3();
+    const set = [...mock.evaluate(`< ${P.PRODUCT} : ${P.FORM} = << ${P.TAB}`)];
+    const many = mock.getDefiningRelationshipsMany.bind(mock);
+    mock.getDefiningRelationshipsMany = async (ids: string[]) =>
+      (await many(ids)).map((a, i) => (i === 0 ? new Error('entry failed') : a));
+    const entryRetried = await deriveEcl({ conceptIds: set }, mock, {
+      omitTerms: true,
+      refinements: 'always',
+      batchLookups: true,
+    });
+    assert.strictEqual(entryRetried.failures, 0);
+    assert.doesNotMatch(entryRetried.notes.join('\n'), /could not be read/);
+
+    const refused = products3();
+    refused.getDefiningRelationshipsMany = () => Promise.reject(new TerminologyTransportError('timed out'));
+    const fellBack = await deriveEcl({ conceptIds: set }, refused, {
+      omitTerms: true,
+      refinements: 'always',
+      batchLookups: true,
+    });
+    assert.strictEqual(fellBack.failures, 0);
   });
 
   it('keeps deriving when some relationship lookups fail', async () => {

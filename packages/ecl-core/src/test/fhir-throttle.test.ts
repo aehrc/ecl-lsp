@@ -338,4 +338,44 @@ describe('FhirTerminologyService — x-ratelimit headers', () => {
       await s.stop();
     }
   });
+  it('lets held requests go one at a time after a reset, so a token bucket serves them all', async () => {
+    // A bucket of 5 refilling one every 100 ms, reset given in fractional seconds.
+    // Before, every held request fired when a pause ended: one won, the rest met
+    // 429s and paused again, with no order, until some ran out their budget.
+    const capacity = 5;
+    const refillMs = 100;
+    let tokens = capacity;
+    let last = Date.now();
+    let rejected = 0;
+    const s = await headerServer(() => {
+      const now = Date.now();
+      tokens = Math.min(capacity, tokens + (now - last) / refillMs);
+      last = now;
+      const reset = (((1 - (tokens % 1)) * refillMs) / 1000).toFixed(3);
+      if (tokens < 1) {
+        rejected++;
+        return { status: 429, headers: { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': reset } };
+      }
+      tokens -= 1;
+      return {
+        status: 200,
+        headers: { 'x-ratelimit-remaining': String(Math.floor(tokens)), 'x-ratelimit-reset': reset },
+      };
+    });
+    try {
+      const svc = new FhirTerminologyService({
+        baseUrl: s.url,
+        timeout: 5000,
+        maxConcurrency: 25,
+        rateLimitWaitMs: 8000,
+      });
+      const results = await Promise.allSettled(Array.from({ length: 60 }, (_, i) => svc.evaluateEcl(`<< ${i + 1}`)));
+      assert.strictEqual(results.filter((r) => r.status === 'rejected').length, 0);
+      // Measured: 34-36 with the gate (20 of them the first wave, sent before any
+      // answer said the bucket was empty); 254, or failed requests, without it.
+      assert.ok(rejected <= 60, `${rejected} requests were rejected with 429 for 60 served`);
+    } finally {
+      await s.stop();
+    }
+  });
 });

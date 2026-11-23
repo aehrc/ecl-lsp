@@ -186,6 +186,14 @@ const DEFAULT_RATE_LIMIT_WAIT_MS = 60_000;
  * (seconds or an HTTP date) or `x-ratelimit-reset` (seconds from now, or an
  * epoch time in seconds), whichever is later; 0 when it says neither.
  */
+/** `x-ratelimit-remaining`, when the server sends it. */
+function remainingRequests(headers: Headers): number | undefined {
+  const value = headers.get('x-ratelimit-remaining')?.trim();
+  if (!value) return undefined;
+  const n = Number(value);
+  return Number.isFinite(n) && n >= 0 ? n : undefined;
+}
+
 function serverResetMs(headers: Headers, now: number): number {
   let ms = 0;
   const retryAfter = headers.get('Retry-After')?.trim();
@@ -323,6 +331,18 @@ export class FhirTerminologyService implements ITerminologyService {
   private readonly rateLimitWaitMs: number;
   /** No request is sent before this time: the server said its rate limit is spent until then. */
   private pausedUntil = 0;
+  /**
+   * Requests held by the rate limit, oldest first (a retry goes back to the
+   * front). When a pause ends they do not all go at once, which would meet
+   * one success and a storm of 429s: one goes first (the probe), and its
+   * response says how many more the server has room for.
+   */
+  private readonly held: ((probe: boolean) => void)[] = [];
+  /** A probe is in flight: the others wait for its answer. */
+  private probing = false;
+  /** Requests sent and not yet answered, so `x-ratelimit-remaining` is not spent twice. */
+  private unanswered = 0;
+  private wakeTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(options: FhirTerminologyServiceOptions = {}) {
     const maxConcurrency = options.maxConcurrency ?? 25;
@@ -546,39 +566,92 @@ export class FhirTerminologyService implements ITerminologyService {
   ): Promise<Response> {
     const started = Date.now();
     for (let attempt = 1; ; attempt++) {
-      await this.waitForRateLimit();
-      const response = await this.fetchWithTimeout(url, timeoutMs, init);
+      const probe = await this.waitForRateLimit(attempt > 1);
+      this.unanswered++;
+      let response: Response;
+      try {
+        response = await this.fetchWithTimeout(url, timeoutMs, init);
+      } catch (error) {
+        this.release(probe, 0);
+        throw error;
+      }
       const now = Date.now();
       const resetMs = serverResetMs(response.headers, now);
+      const remaining = remainingRequests(response.headers);
       if (response.status !== 429) {
         // The last request the window allows: hold the next ones until it resets.
-        if (response.headers.get('x-ratelimit-remaining')?.trim() === '0' && resetMs > 0)
-          this.pauseUntil(now + resetMs);
+        if (remaining === 0 && resetMs > 0) this.pauseUntil(now + resetMs);
+        this.release(probe, remaining ?? Infinity);
         return response;
       }
 
       const backoff = Math.min(RETRY_BASE_DELAY_MS * Math.pow(2, attempt - 1), RETRY_MAX_DELAY_MS);
       const jitter = Math.random() * RETRY_JITTER_MS; // eslint-disable-line sonarjs/pseudo-random -- jitter for retry backoff; cryptographic randomness not needed
       const waitMs = (resetMs > 0 ? resetMs : backoff) + jitter;
+      // Shared: the other requests in flight would only meet the same 429.
+      this.pauseUntil(now + waitMs);
+      this.release(probe, 0);
       if (now + waitMs - started > this.rateLimitWaitMs) {
         throw new Error(
           `FHIR request rate-limited after ${attempt} attempts over ${Math.round((now - started) / 1000)} s`,
         );
       }
-      // Shared: the other requests in flight would only meet the same 429.
-      this.pauseUntil(now + waitMs);
     }
   }
 
   private pauseUntil(time: number): void {
     this.pausedUntil = Math.max(this.pausedUntil, time);
+    this.schedule();
   }
 
-  /** Wait while the server's rate limit is spent (see {@link pausedUntil}). */
-  private async waitForRateLimit(): Promise<void> {
-    for (let wait = this.pausedUntil - Date.now(); wait > 0; wait = this.pausedUntil - Date.now()) {
-      await new Promise<void>((resolve) => setTimeout(resolve, wait));
+  /**
+   * Go now, or wait in line while the rate limit is spent or other requests
+   * are held; true when this request is the probe. A retry waits at the front.
+   */
+  private waitForRateLimit(retry: boolean): Promise<boolean> {
+    if (!retry && !this.probing && this.held.length === 0 && Date.now() >= this.pausedUntil) {
+      return Promise.resolve(false);
     }
+    return new Promise<boolean>((resolve) => {
+      if (retry) this.held.unshift(resolve);
+      else this.held.push(resolve);
+      this.schedule();
+    });
+  }
+
+  /** When the pause ends, send the oldest held request alone, as the probe. */
+  private schedule(): void {
+    if (this.wakeTimer !== undefined || this.probing || this.held.length === 0) return;
+    this.wakeTimer = setTimeout(
+      () => {
+        this.wakeTimer = undefined;
+        if (Date.now() < this.pausedUntil) {
+          this.schedule();
+          return;
+        }
+        const next = this.held.shift();
+        if (!next) return;
+        this.probing = true;
+        next(true);
+      },
+      Math.max(0, this.pausedUntil - Date.now()),
+    );
+  }
+
+  /**
+   * A request's answer: if it was the probe, the next may go; while no pause
+   * is set, let as many held requests go as the server has room for
+   * (`remaining`), oldest first, and probe again for the rest.
+   */
+  private release(probe: boolean, room: number): void {
+    this.unanswered--;
+    if (probe) this.probing = false;
+    if (Date.now() >= this.pausedUntil) {
+      // The server's room is shared with the requests already on their way. Those
+      // released here count themselves as they resume, before any other answer.
+      for (let n = room - this.unanswered; n > 0 && this.held.length > 0; n--) this.held.shift()?.(false);
+    }
+    this.schedule();
   }
 
   private fetchQueued(

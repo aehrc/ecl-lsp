@@ -50,7 +50,7 @@ import { canonicalise } from '../canonical/comparator';
 import { formatDocument } from '../formatter/formatter';
 import { defaultFormattingOptions } from '../formatter/options';
 import { NodeType, parseECL, type ExpressionNode, type SubExpressionNode } from '../parser';
-import type { ConceptInfo, ITerminologyService, ValueSetCompose } from '../terminology/types';
+import type { ConceptInfo, EvaluationConcept, ITerminologyService, ValueSetCompose } from '../terminology/types';
 import { isValidConceptId } from '../terminology/verhoeff';
 import {
   byId,
@@ -58,7 +58,9 @@ import {
   countClauses,
   countingFailures,
   orGroup,
+  LOOKUP_CHUNK,
   SetQueries,
+  uncounted,
   SNOMED_ROOT,
   stripTermsAndComments,
   type MemberSet,
@@ -67,9 +69,9 @@ import {
 import { bestSingles, costCover, coverDescend, rootsCover } from './cover-optimiser';
 import { findDuplicateTerms, nearMissCandidates, outermost } from './critique';
 import { greedyGrouping, refactorDescend } from './greedy-grouping';
-import { localScore, render, type ClauseForm, type HierarchyClause } from './hierarchy-clauses';
+import { evaluate, localScore, render, type ClauseForm, type HierarchyClause } from './hierarchy-clauses';
 import { commentSpans } from '../formatter/comments';
-import { loadTaxonomyGraph, type TaxonomyGraph } from './taxonomy-graph';
+import { loadTaxonomyGraph, Walk, type TaxonomyGraph } from './taxonomy-graph';
 import { asFocus, refinementCandidates, refinementText, refsetFoci, type RefinementClause } from './refinements';
 
 // ── Public types ─────────────────────────────────────────────────────────
@@ -158,6 +160,32 @@ export interface DeriveOptions {
    * only. Default `'auto'`.
    */
   restrictTo?: string;
+  /** Fetch the later pages of a multi-page expansion concurrently. Default true. */
+  parallelPages?: boolean;
+  /**
+   * Take graph candidates' counts from the graph instead of the server, and
+   * check only the best candidate on the server (falling back to server counts
+   * for all when its count differs). Default false.
+   */
+  localScoring?: boolean;
+  /**
+   * When counting what a grouper adds (near misses), exclude only the members
+   * below it, which the graph knows, not the whole set. Default true.
+   */
+  scopedExclusions?: boolean;
+  /**
+   * Resolve a list by looking its codes up in chunks, with parents and
+   * children, and build the IS-A graph by walking from there instead of with
+   * queries that carry the list as ECL. Falls back to those queries on a
+   * server that does not return `property=child`, or does not flag inactive
+   * concepts in an expansion. Default true.
+   */
+  walkGraph?: boolean;
+  /**
+   * Read the refinement sample's relationships in one FHIR batch request,
+   * falling back to one lookup each when the server refuses it. Default true.
+   */
+  batchLookups?: boolean;
 }
 
 /** Limits for {@link CodelistCritique}. */
@@ -355,6 +383,11 @@ const DEFAULTS: Required<DeriveOptions> = {
   maxGraphConcepts: 200_000,
   critique: false,
   restrictTo: 'auto',
+  parallelPages: true,
+  localScoring: false,
+  scopedExclusions: true,
+  walkGraph: true,
+  batchLookups: true,
 };
 
 const CRITIQUE_DEFAULTS: Required<CritiqueOptions> = {
@@ -414,10 +447,20 @@ async function derive(
   if (!terminology.expandCompose) throw new Error('unreachable: checked by deriveEcl');
   const opts = { ...DEFAULTS, ...options };
   const expandCompose = terminology.expandCompose.bind(terminology);
-  const q = new SetQueries((compose, o) => expandCompose(compose, { timeoutMs: opts.queryTimeoutMs, ...o }));
+  const q = new SetQueries(
+    (compose, o) => expandCompose(compose, { timeoutMs: opts.queryTimeoutMs, ...o }),
+    opts.parallelPages,
+  );
+  // For requests whose failure derive recovers from with other, counted ones.
+  const quiet = uncounted(terminology);
+  const quietExpand = quiet.expandCompose?.bind(quiet) ?? expandCompose;
+  const belowQueries = new SetQueries(
+    (compose, o) => quietExpand(compose, { timeoutMs: opts.queryTimeoutMs, ...o }),
+    opts.parallelPages,
+  );
   const notes: string[] = [];
 
-  const { report, members } = await resolveInput(input, q, terminology, notes);
+  const { report, members } = await resolveInput(input, q, terminology, notes, opts.walkGraph);
   const result: DeriveResult = { input: report, hierarchies: [], roots: 0, candidates: [], notes, failures: 0 };
   if (!members) {
     if (notes.length === 0) {
@@ -426,7 +469,7 @@ async function derive(
     return result;
   }
 
-  const graph = opts.useGraph ? await loadGraph(members, q, opts, notes) : null;
+  const graph = opts.useGraph ? await loadGraph(members, q, opts, notes, belowQueries) : null;
   const critique = critiqueOptions(opts.critique);
   let hierarchies: DeriveResult['hierarchies'] = [];
   if (opts.hierarchySummary || critique) {
@@ -441,8 +484,11 @@ async function derive(
 
   const scorer = new Scorer(members, q, opts, notes);
   // On the graph path only the best by local counts are counted on the server.
+  // localScoring: graph candidates counted on the graph; the best is checked on the server below.
+  const countedLocally = new Set<string>();
   if (graph) {
-    await scorer.score(worthCounting(graphCandidates(graph, opts, notes), inputCost(input, members), opts, notes));
+    const worth = worthCounting(graphCandidates(graph, opts, notes), inputCost(input, members), opts, notes);
+    await scorer.score(countOnGraph(worth, graph, opts, countedLocally));
     await scorer.score(await restrictedCovers(graph, members, q, opts, notes));
   } else await scorer.score(await hierarchyCandidates(rootQuery.codes, result.roots, members, q, opts, notes));
   if (wantRefinements(opts.refinements, result.roots, scorer.scored)) {
@@ -464,8 +510,9 @@ async function derive(
   const useful = scorer.scored.filter((s) => s.covered > 0);
   useful.sort((a, b) => byRank(rankOf(a), rankOf(b)));
   const top = useful.slice(0, opts.maxCandidates);
+  await checkLocalCounts(top, countedLocally, members, q, opts, notes);
 
-  const terms = opts.omitTerms ? new Map<string, string>() : await displayTerms(top, terminology);
+  const terms = opts.omitTerms ? new Map<string, string>() : await displayTerms(top, terminology, notes);
   result.candidates = top.map((s) => ({ expression: decorate(s.ecl, terms), ...s }));
   return result;
 }
@@ -491,6 +538,7 @@ async function scoreRefinements(
     q,
     terminology,
     notes,
+    opts.batchLookups,
   );
   const refinements = found.map(({ focus, clauses }) => ({
     ecl: refinementText(focus, clauses),
@@ -648,9 +696,19 @@ async function nearMisses(
     limits.maxNearMisses * NEAR_MISS_CANDIDATES_PER_REPORTED,
   );
   // Advisory: a failed count drops that near miss, never the result.
-  const counted = await Promise.allSettled(
-    local.map((n) => q.sample({ include: [{ ecl: `<< ${n.conceptId}` }], exclude: [members.clause] }, opts.sampleSize)),
-  );
+  const counted =
+    (await nearMissesOnGraph(local, graph, opts.sampleSize)) ??
+    (await Promise.allSettled(
+      local.map((n) =>
+        q.sample(
+          {
+            include: [{ ecl: `<< ${n.conceptId}` }],
+            exclude: [opts.scopedExclusions ? { concepts: graph.membersBelow(n.conceptId) } : members.clause],
+          },
+          opts.sampleSize,
+        ),
+      ),
+    ));
   const confirmed: NearMiss[] = [];
   counted.forEach((r, i) => {
     const { conceptId, listed } = local[i];
@@ -680,6 +738,33 @@ async function nearMisses(
 }
 
 /**
+ * What each near-miss candidate adds, counted on a walked graph
+ * after walking down below the candidates whose descendants are not loaded;
+ * null when the graph cannot (not walked, or too many), and the server counts.
+ */
+async function nearMissesOnGraph(
+  local: { conceptId: string }[],
+  graph: TaxonomyGraph,
+  sampleSize: number,
+): Promise<PromiseSettledResult<SetDifference>[] | null> {
+  if (!graph.loadBelow || local.length === 0) return null;
+  const need = local.map((n) => n.conceptId).filter((id) => !graph.hasDescendants(id));
+  try {
+    if (need.length > 0 && !(await graph.loadBelow(need))) return null;
+  } catch {
+    return null;
+  }
+  return local.map((n) => {
+    const missing = graph
+      .descendants(n.conceptId)
+      .filter((x) => !graph.members.has(x))
+      .sort(byId);
+    const sample = missing.slice(0, sampleSize).map((code) => ({ code, display: graph.term?.(code) ?? '' }));
+    return { status: 'fulfilled' as const, value: { count: missing.length, sample } };
+  });
+}
+
+/**
  * Members that share a preferred term (CHK13): one listing of the members with
  * their terms, plus a lookup of the FSNs that tell each group apart.
  */
@@ -702,7 +787,9 @@ async function sharedTerms(
   }
   let groups;
   try {
-    groups = findDuplicateTerms((await q.concepts({ include: [members.clause] }, members.size)).concepts);
+    groups = findDuplicateTerms(
+      members.concepts ?? (await q.concepts({ include: [members.clause] }, members.size)).concepts,
+    );
   } catch (error) {
     notes.push(`Shared terms were not checked: ${errorMessage(error)}.`);
     return [];
@@ -787,6 +874,7 @@ async function resolveInput(
   q: SetQueries,
   terminology: ITerminologyService,
   notes: string[],
+  lookUp = false,
 ): Promise<{ report: DeriveInputReport; members: MemberSet | null }> {
   if ('refsetId' in input) return resolveRefset(input.refsetId.trim(), q, terminology, notes);
   if ('ecl' in input) {
@@ -819,14 +907,86 @@ async function resolveInput(
   // Unknown codes are dropped silently by $expand, and inactive ones kept unless
   // activeOnly, so ask twice and difference the answers.
   const listed: ValueSetCompose = { include: [{ concepts: wellFormed }] };
-  const active = (await q.codes(listed, wellFormed.length, true)).codes;
-  const known = new Set((await q.codes(listed, wellFormed.length, false)).codes);
+  let activeConcepts: { concepts: EvaluationConcept[] };
+  let knownConcepts: { concepts: EvaluationConcept[] };
+  let walk: Walk | undefined;
+  let walkable = true;
+  const looked = lookUp ? await lookUpList(wellFormed, q) : null;
+  if (looked) {
+    knownConcepts = { concepts: looked.concepts };
+    activeConcepts = { concepts: looked.concepts.filter((c) => !c.inactive) };
+    walk = looked.walk;
+    walkable = looked.walkable;
+  } else {
+    [activeConcepts, knownConcepts] = await Promise.all([
+      q.conceptsUpTo(listed, wellFormed.length, true),
+      q.conceptsUpTo(listed, wellFormed.length, false),
+    ]);
+  }
+  const active = activeConcepts.concepts.map((c) => c.code).sort(byId);
+  const known = new Set(knownConcepts.concepts.map((c) => c.code));
   const activeSet = new Set(active);
   report.inactive = wellFormed.filter((id) => known.has(id) && !activeSet.has(id));
   report.unknown = wellFormed.filter((id) => !known.has(id));
   report.members = active.length;
   if (active.length === 0) return { report, members: null };
-  return { report, members: { clause: { concepts: active }, ecl: orGroup(active), size: active.length } };
+  // Frozen so the service can keep its request text for this list (it is sent with every comparison).
+  Object.freeze(active);
+  return {
+    report,
+    members: {
+      clause: { concepts: active },
+      ecl: orGroup(active),
+      size: active.length,
+      concepts: activeConcepts.concepts,
+      ...(walk ? { walk } : {}),
+      ...(walkable ? {} : { walkUnsupported: true }),
+    },
+  };
+}
+
+/**
+ * One chunked lookup of a list, for activity, terms, parents and children (for
+ * walkGraph). Each chunk is cut down as it arrives: the terms kept, the active
+ * concepts' parents and children numbered into a walk (none when the server
+ * left them out).
+ */
+/**
+ * The list looked up once, with each concept's activity, parents and children:
+ * its concepts, and the walk they seed (absent, with `walkable` false, when
+ * the server gave no parents or children). Activity is asked for explicitly
+ * (`property=inactive`), so a server that states it (Ontoserver) answers with
+ * nothing more. On one that does not, a list with no concept flagged inactive
+ * is checked with one count per chunk; null when that count disagrees: the
+ * server does not flag inactive concepts, so the caller must ask twice and
+ * difference the answers.
+ */
+async function lookUpList(
+  codes: string[],
+  q: SetQueries,
+): Promise<{ concepts: EvaluationConcept[]; walk?: Walk; walkable: boolean } | null> {
+  const seed = new Walk();
+  const lookup = { activeOnly: false, parents: true, children: true, activity: true };
+  const chunks = await q.lookupEach(codes, lookup, (concepts) => ({
+    terms: concepts.map(({ code, display, inactive }) => (inactive ? { code, display, inactive } : { code, display })),
+    nodes: seed.nodesFor(concepts.filter((c) => !c.inactive)),
+    stated: concepts.every((c) => c.inactive !== undefined),
+  }));
+  const concepts = chunks.flatMap((c) => c.terms);
+  const unstated = chunks.some((c) => !c.stated);
+  if (unstated && !concepts.some((c) => c.inactive) && (await activeCount(codes, q)) !== concepts.length) return null;
+  if (chunks.some((c) => c.nodes === null)) return { concepts, walkable: false };
+  for (const c of chunks) if (c.nodes) seed.add(c.nodes);
+  return { concepts, walk: seed, walkable: true };
+}
+
+/** How many of `codes` are active, one count per lookup chunk. */
+async function activeCount(codes: string[], q: SetQueries): Promise<number> {
+  const counts: Promise<number>[] = [];
+  for (let i = 0; i < codes.length; i += LOOKUP_CHUNK) {
+    counts.push(q.count({ include: [{ concepts: codes.slice(i, i + LOOKUP_CHUNK) }] }));
+  }
+  return (await Promise.all(counts)).reduce((a, b) => a + b, 0);
 }
 
 async function resolveRefset(
@@ -847,7 +1007,13 @@ async function resolveRefset(
   const ecl = `(^ ${refsetId})`;
   report.members = await q.countEcl(ecl);
   if (report.members === 0) {
-    const info = await terminology.getConceptInfo(refsetId);
+    let info: ConceptInfo | null;
+    try {
+      info = await terminology.getConceptInfo(refsetId);
+    } catch (error) {
+      notes.push(`${refsetId} has no active members; could not look it up to say why: ${errorMessage(error)}.`);
+      return { report, members: null };
+    }
     if (info === null) report.unknown.push(refsetId);
     else if (info.active) notes.push(`${refsetId} |${info.pt}| has no active members, or is not a reference set.`);
     else report.inactive.push(refsetId);
@@ -900,6 +1066,7 @@ async function loadGraph(
   q: SetQueries,
   opts: Required<DeriveOptions>,
   notes: string[],
+  belowQueries: SetQueries,
 ): Promise<TaxonomyGraph | null> {
   let why: string;
   try {
@@ -907,7 +1074,14 @@ async function loadGraph(
       maxConcepts: opts.maxGraphConcepts,
       descend: (id, g) => coverDescend(id, g) || refactorDescend(id, g),
       fallbackDescend: refactorDescend,
+      // The input lookup already showed the server gives no parents or children.
+      walk: opts.walkGraph && !members.walkUnsupported,
+      ...(members.walk ? { seed: members.walk } : {}),
+      belowQueries,
+      ...('concepts' in members.clause ? { memberCodes: members.clause.concepts } : {}),
     });
+    // The graph holds what it needs of the walk.
+    delete members.walk;
     if (!('unavailable' in graph)) {
       if (graph.partial) {
         notes.push(
@@ -969,7 +1143,7 @@ function graphCandidates(
     if (seen.has(key)) continue;
     seen.add(key);
     const local = localScore(form, g) ?? (opts.within ? withinOnlyScore(form, g) : null);
-    if (local) candidates.push({ ecl, construction, local });
+    if (local) candidates.push({ ecl, construction, local, form });
   }
   return candidates.sort((a, b) =>
     byRank({ ecl: a.ecl, inputItself: false, ...a.local }, { ecl: b.ecl, inputItself: false, ...b.local }),
@@ -1449,6 +1623,8 @@ interface Built {
   construction: CandidateConstruction;
   known?: Omit<Scored, 'ecl' | 'construction'>;
   local?: LocalCounts;
+  /** The hierarchy form the candidate renders, when it came from the graph. */
+  form?: ClauseForm;
 }
 
 interface LocalCounts {
@@ -1579,6 +1755,97 @@ function exactScore(size: number): Omit<Scored, 'ecl' | 'construction'> {
   };
 }
 
+/**
+ * localScoring: the candidates with their counts taken from the
+ * graph, when it is complete and nothing restricts what additions count;
+ * `countedLocally` collects those so counted.
+ */
+function countOnGraph(
+  candidates: Built[],
+  graph: TaxonomyGraph,
+  opts: Required<DeriveOptions>,
+  countedLocally: Set<string>,
+): Built[] {
+  if (!opts.localScoring || graph.partial || opts.within) return candidates;
+  return candidates.map((b) => {
+    const known = b.form ? graphScore(b.form, graph, opts.sampleSize) : null;
+    if (!known) return b;
+    countedLocally.add(b.ecl);
+    return { ...b, known: { ...known, clauses: countClauses(b.ecl) } };
+  });
+}
+
+/** Additions and misses of a form counted on the graph, with sample codes (no terms yet). */
+function graphScore(
+  form: ClauseForm,
+  g: TaxonomyGraph,
+  sampleSize: number,
+): Omit<Scored, 'ecl' | 'construction' | 'clauses'> | null {
+  const selected = evaluate(form, g);
+  if (!selected) return null;
+  const additions = [...selected].filter((x) => !g.members.has(x)).sort(byId);
+  const misses = [...g.members].filter((m) => !selected.has(m)).sort(byId);
+  const sample = (ids: string[]) => ids.slice(0, sampleSize).map((code) => ({ code, display: '' }));
+  return {
+    covered: g.members.size - misses.length,
+    additions: { count: additions.length, sample: sample(additions) },
+    misses: { count: misses.length, sample: sample(misses) },
+    exact: additions.length === 0 && misses.length === 0,
+  };
+}
+
+/**
+ * The best candidate, when counted on the graph, is counted again
+ * on the server (the server's counts replace the graph's), and the samples of
+ * the others counted on the graph get their terms in one lookup.
+ */
+async function checkLocalCounts(
+  top: Scored[],
+  countedLocally: Set<string>,
+  members: MemberSet,
+  q: SetQueries,
+  opts: Required<DeriveOptions>,
+  notes: string[],
+): Promise<void> {
+  if (countedLocally.size === 0) return;
+  const best = top.length > 0 ? top[0] : undefined;
+  if (best && countedLocally.has(best.ecl)) {
+    try {
+      // The graph's selection is right if the server selects as many: one count, with no list in it.
+      if ((await q.countEcl(best.ecl)) === best.covered + best.additions.count) {
+        await fillTerms(top, countedLocally, q);
+        return;
+      }
+      const server = await compare(best.ecl, members, q, opts.sampleSize, opts.within);
+      if (server.additions.count !== best.additions.count || server.misses.count !== best.misses.count) {
+        notes.push(
+          `Graph counts for ${best.ecl.slice(0, 120)} differed from the server's ` +
+            `(+${best.additions.count} -${best.misses.count} on the graph, +${server.additions.count} -${server.misses.count} on the server).`,
+        );
+      }
+      Object.assign(best, server);
+    } catch (error) {
+      notes.push(`Could not check ${best.ecl.slice(0, 120)} on the server: ${errorMessage(error)}`);
+    }
+  }
+  await fillTerms(top, countedLocally, q);
+}
+
+/** Terms for the samples of the candidates counted on the graph, in one lookup. */
+async function fillTerms(top: Scored[], countedLocally: Set<string>, q: SetQueries): Promise<void> {
+  const codes = new Set<string>();
+  for (const s of top) {
+    if (!countedLocally.has(s.ecl)) continue;
+    for (const c of [...s.additions.sample, ...s.misses.sample]) if (!c.display) codes.add(c.code);
+  }
+  if (codes.size === 0) return;
+  const found = await q.concepts({ include: [{ concepts: [...codes] }] }, codes.size, false);
+  const terms = new Map(found.concepts.map((c) => [c.code, c.display]));
+  for (const s of top) {
+    for (const c of [...s.additions.sample, ...s.misses.sample]) if (!c.display) c.display = terms.get(c.code) ?? '';
+  }
+}
+
 /** Additions and misses of `ecl` against the set, counted and sampled by the server. */
 async function compare(
   ecl: string,
@@ -1604,9 +1871,16 @@ async function compare(
 
 // ── Presentation ─────────────────────────────────────────────────────────
 
+/**
+ * Preferred terms for the ids in the candidates worth decorating. Terms are
+ * decoration: when the lookup fails, the candidates go out with bare ids and,
+ * given `notes`, a note says why (the failure itself is counted by the caller's
+ * service), rather than losing a finished result.
+ */
 export async function displayTerms(
   candidates: { ecl: string; clauses: number }[],
   terminology: ITerminologyService,
+  notes?: string[],
 ): Promise<Map<string, string>> {
   const ids = new Set<string>();
   for (const c of candidates) {
@@ -1615,7 +1889,13 @@ export async function displayTerms(
   }
   const terms = new Map<string, string>();
   if (ids.size === 0) return terms;
-  const infos = await terminology.validateConcepts([...ids].sort(byId));
+  let infos: Map<string, ConceptInfo | null>;
+  try {
+    infos = await terminology.validateConcepts([...ids].sort(byId));
+  } catch (error) {
+    notes?.push(`Display terms could not be looked up: ${errorMessage(error)}.`);
+    return terms;
+  }
   for (const [id, info] of infos) if (info?.pt) terms.set(id, info.pt);
   return terms;
 }

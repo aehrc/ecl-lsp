@@ -575,6 +575,41 @@ describe('expandCompose — inline compose (issue #147)', () => {
     });
   });
 
+  it('sends the same concept list in both clauses, and leaves ECL that looks like a list placeholder alone', async () => {
+    const service = new FhirTerminologyService({ baseUrl, timeout: 2000 });
+    const codes = ['46635009', '44054006'];
+
+    await service.expandCompose({
+      include: [{ concepts: codes }, { ecl: '\u00000\u0000' }],
+      exclude: [{ concepts: codes }],
+    });
+
+    const body = JSON.parse(stub.requests[0].body ?? '{}') as {
+      compose: { include: Record<string, unknown>[]; exclude: Record<string, unknown>[] };
+    };
+    const listed = [{ code: '46635009' }, { code: '44054006' }];
+    assert.deepStrictEqual(body.compose.include[0].concept, listed);
+    assert.deepStrictEqual(body.compose.exclude[0].concept, listed);
+    assert.deepStrictEqual(body.compose.include[1].filter, [
+      { property: 'constraint', op: '=', value: '\u00000\u0000' },
+    ]);
+  });
+
+  it('sends the list as it is now when a caller reuses and changes the same array', async () => {
+    const service = new FhirTerminologyService({ baseUrl, timeout: 2000 });
+    const codes = ['46635009', '44054006'];
+    await service.expandCompose({ include: [{ concepts: codes }] });
+    codes.push('73211009');
+    await service.expandCompose({ include: [{ concepts: codes }] });
+
+    const body = JSON.parse(stub.requests[1].body ?? '{}') as { compose: { include: { concept: unknown }[] } };
+    assert.deepStrictEqual(body.compose.include[0].concept, [
+      { code: '46635009' },
+      { code: '44054006' },
+      { code: '73211009' },
+    ]);
+  });
+
   it('defaults to a count-only, active-only request and pins the configured version', async () => {
     const version = 'http://snomed.info/sct/32506021000036107/version/20260930';
     const service = new FhirTerminologyService({ baseUrl, timeout: 2000, snomedVersion: version });
@@ -625,6 +660,42 @@ describe('expandCompose — inline compose (issue #147)', () => {
     assert.deepStrictEqual(
       result.concepts.map((c) => c.parents),
       [['126877002', '362969004'], ['73211009'], undefined],
+    );
+  });
+
+  it('reads the activity each concept states when asked, and nothing when it is not stated', async () => {
+    const activity = (value: boolean) => ({
+      url: 'http://hl7.org/fhir/5.0/StructureDefinition/extension-ValueSet.expansion.contains.property',
+      extension: [
+        { url: 'code', valueCode: 'inactive' },
+        { url: 'value', valueBoolean: value },
+      ],
+    });
+    stub.setHandler(() => ({
+      status: 200,
+      body: {
+        resourceType: 'ValueSet',
+        expansion: {
+          total: 3,
+          contains: [
+            { code: '73211009', display: 'Diabetes', extension: [activity(false)] },
+            { code: '45518007', display: 'Thiazide', inactive: true, extension: [activity(true)] },
+            { code: '46635009', display: 'Type 1' },
+          ],
+        },
+      },
+    }));
+    const service = new FhirTerminologyService({ baseUrl, timeout: 2000 });
+
+    const result = await service.expandCompose(
+      { include: [{ concepts: ['73211009', '45518007', '46635009'] }] },
+      { count: 3, activeOnly: false, activity: true },
+    );
+
+    assert.match(stub.requests[0].url, /&property=inactive$/);
+    assert.deepStrictEqual(
+      result.concepts.map((c) => c.inactive),
+      [false, true, undefined],
     );
   });
 

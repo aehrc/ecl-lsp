@@ -138,6 +138,7 @@ const fhir = new FhirTerminologyService({
   baseUrl: 'https://tx.ontoserver.csiro.au/fhir', // default
   timeout: 2000, // lookup timeout (ms)
   snomedVersion: '', // SNOMED version URI (empty = server default)
+  rateLimitWaitMs: 60_000, // how long one request may wait out HTTP 429s
 });
 
 const concept = await fhir.getConceptInfo('404684003');
@@ -146,6 +147,15 @@ const concept = await fhir.getConceptInfo('404684003');
 const results = await fhir.evaluateEcl('< 404684003');
 // { concepts: [...], total }
 ```
+
+Rate limits: when the server says its allowance is spent (a 429, or
+`x-ratelimit-remaining: 0`), every request of the service waits for the reset
+it gives (`Retry-After` or `x-ratelimit-reset`), up to `rateLimitWaitMs` per
+request, rather than failing. When the limit resets, held requests go oldest
+first, as many at a time as the server says it has room for. This applies to
+every user of the service (hovers, diagnostics, derive), so a request can take
+that long on a rate-limited server, or longer when many are queued: the budget
+is checked after each 429, not while a request waits its turn.
 
 ### Deriving ECL from a Concept List
 
@@ -173,11 +183,15 @@ additions reported), a greedy grouping, a cost-based cover, and always the
 enumeration or `^ refset` itself. They are ranked by clauses + additions +
 misses.
 
-The hierarchy candidates are built from one IS-A subgraph around the set,
-fetched in about four expansions that return each concept's parents
-(`expandCompose` with `parents: true`, FHIR `property=parent`): the set, its
-ancestors, their children, and the descendants of the ancestors worth trying
-as groupers. Candidates are built and ranked on that graph without further
+The hierarchy candidates are built from one IS-A subgraph around the set. For
+a list (`walkGraph`, the default) it is walked: the codes are looked up in
+chunks of 10,000 with their activity, parents and children (`expandCompose`
+with `parents`/`children`, FHIR `property=parent`/`property=child`), then each
+new level of ancestors, and then below the ancestors worth trying as groupers,
+level by level. No request carries the list as ECL. A server that does not
+return children, or does not flag inactive concepts in an expansion, gets the
+older path: about four expansions that carry the set as ECL and return
+parents. Candidates are built and ranked on that graph without further
 requests, and only the best are counted again on the server, so every count
 reported comes from the server. A graph candidate that by its local counts
 costs at least as much as the input itself (listing every member, or the
@@ -219,6 +233,46 @@ Refinement values can be concepts (`<< x`), concrete values (`#500`, a shared
 value, a range with `>=` and `<=`, or `= *`) and cardinalities
 (`[2..*] attribute = *`). When no refinement is exact, a subtraction
 `(C) MINUS (D)` is also tried, with D describing what the refinement C adds.
+
+Lists that are one slice of a hierarchy, such as an AMT list of MPUUs under
+its drug classes, also get a **restricted cover**, `(<< A OR << B …) AND ^ R`,
+exact by construction: the groupers alone would add concepts outside the
+slice, and `R` removes them. `restrictTo: 'auto'` (the default) uses the AMT
+level reference set that holds every member when all of them are medicinal
+products, and does nothing otherwise; give an expression to use it instead, or
+`''` to turn the cover off. Once this cover is exact, the attribute-refinement
+search is skipped in `'auto'` mode.
+
+#### Incomplete results
+
+Derive goes on when a server request fails (times out, is rate-limited past
+`rateLimitWaitMs`, or answers 5xx): it drops what the request was for and adds
+a note. `result.failures` counts the requests whose loss changed the result,
+and `formatDeriveReport` then starts with "Incomplete: N server queries
+failed". A request whose failure derive makes up for with others is not
+counted. Check `failures` before treating a long enumeration as "no rule
+exists": with every count failing, the enumeration is all that is left.
+`compressExpression` reports `failures` the same way.
+
+#### Large lists
+
+These options keep large lists cheap for the server and for memory. All but
+`localScoring` are on by default.
+
+| Option             | Default | Effect                                                                                                |
+| ------------------ | ------- | ----------------------------------------------------------------------------------------------------- |
+| `walkGraph`        | `true`  | Build the graph by looking codes up in chunks, as above                                               |
+| `batchLookups`     | `true`  | Read the refinement sample's relationships in one FHIR batch request (`getDefiningRelationshipsMany`) |
+| `scopedExclusions` | `true`  | Count a near miss's additions excluding only the members below it, not the whole list                 |
+| `parallelPages`    | `true`  | Ask for the later pages of a multi-page expansion at once                                             |
+| `localScoring`     | `false` | Count graph candidates on the graph and check only the best on the server                             |
+
+Measured on `tx.ontoserver.csiro.au` with an 87,000-code list, all to the same
+result: with the defaults, 32–40 s, 37 requests and 22 MB uploaded (most of it
+the list, sent with each candidate's server count); with `localScoring` on,
+11–13 s, 29 requests and 2.5 MB; before these options, 207 s and 69 MB. In a 512 MiB container (`node:20-alpine`) that list peaks at 136 MB of
+heap and a 195,000-code list at 164 MB. Above `maxGraphConcepts` (200,000)
+derive falls back to a query per count, which is slow.
 
 `deriveEcl({ ecl }, terminology)` takes the set an expression selects. For
 pasted text, `deriveInputFromText(text)` picks the input: a list of bare

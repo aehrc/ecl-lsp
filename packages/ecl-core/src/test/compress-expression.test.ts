@@ -76,6 +76,15 @@ describe('compressExpression', () => {
     assert.match(formatCompressReport(result), /^Incomplete: \d+ server quer(y|ies) failed/);
   });
 
+  it('returns its candidates without display terms when the term lookup fails', async () => {
+    const mock = fixture();
+    mock.validateConcepts = () => Promise.reject(new Error('timed out after 2000ms'));
+    const original = [id.X, `<< ${id.C1}`, id.C2, id.C3, id.C4, id.C5, id.C6, id.C7, id.C8].join(' OR ');
+    const result = await compressExpression(original, mock);
+    assert.strictEqual(result.candidates[0].ecl, `<< ${id.X}`);
+    assert.match(result.notes.join('\n'), /Display terms could not be looked up: timed out after 2000ms/);
+  });
+
   it('reports no failures when every query succeeds', async () => {
     const mock = fixture();
     const original = [id.X, `<< ${id.C1}`, id.C2, id.C3, id.C4, id.C5, id.C6, id.C7, id.C8].join(' OR ');

@@ -26,6 +26,14 @@ export interface EvaluationConcept {
   display: string;
   /** Direct IS-A parents, when asked for with `ExpandComposeOptions.parents` and the server returns them. */
   parents?: string[];
+  /** Direct IS-A children, when asked for with `ExpandComposeOptions.children`. */
+  children?: string[];
+  /**
+   * True when the server flags the concept inactive (only possible with
+   * `activeOnly: false`). False when the server stated it active, which it
+   * does when asked with `ExpandComposeOptions.activity`. Absent: not stated.
+   */
+  inactive?: boolean;
 }
 
 export interface EvaluationResponse {
@@ -113,6 +121,12 @@ export interface ITerminologyService {
    * @throws `TerminologyTransportError` / `TerminologyHttpError` on failure.
    */
   getDefiningRelationships?(conceptId: string): Promise<DefiningRelationship[] | null>;
+  /**
+   * {@link getDefiningRelationships} for many concepts in one request (a FHIR
+   * batch), aligned with `conceptIds`; an entry the server could not answer is
+   * an Error. Optional.
+   */
+  getDefiningRelationshipsMany?(conceptIds: string[]): Promise<(DefiningRelationship[] | null | Error)[]>;
 }
 
 /** One `attribute = value` relationship of a concept. */
@@ -148,4 +162,16 @@ export interface ExpandComposeOptions {
    * `parents`.
    */
   parents?: boolean;
+  /**
+   * Ask for each concept's direct IS-A children too (`property=child`).
+   * Default false. Ontoserver supports it; a leaf comes back with `children: []`.
+   */
+  children?: boolean;
+  /**
+   * Ask for each concept's activity (`property=inactive`), so active concepts
+   * come back with `inactive: false` rather than nothing: then a missing flag
+   * means the server does not state activity, not that the concept is active.
+   * Default false. Ontoserver supports it.
+   */
+  activity?: boolean;
 }

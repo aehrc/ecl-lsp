@@ -66,7 +66,7 @@ interface FhirExpansionContains {
   property?: { code?: string; valueBoolean?: boolean; valueCode?: string }[];
   designation?: FhirDesignation[];
   /** R4 servers carry R5 `contains.property` as this extension. */
-  extension?: { url?: string; extension?: { url?: string; valueCode?: string }[] }[];
+  extension?: { url?: string; extension?: { url?: string; valueCode?: string; valueBoolean?: boolean }[] }[];
 }
 
 /** The expansion section of a ValueSet. */
@@ -105,17 +105,36 @@ const CONTAINS_PROPERTY_EXTENSION =
  * extension form; undefined when the server sent no parent property at all.
  */
 function parentCodes(item: FhirExpansionContains): string[] | undefined {
+  return propertyCodes(item, 'parent');
+}
+
+/** One boolean property of an expansion entry, from R5 `property` or its R4 extension form; undefined when absent. */
+function propertyBoolean(item: FhirExpansionContains, code: string): boolean | undefined {
+  const direct = item.property?.find((p) => p.code === code && typeof p.valueBoolean === 'boolean');
+  if (direct) return direct.valueBoolean;
+  for (const ext of item.extension ?? []) {
+    if (ext.url !== CONTAINS_PROPERTY_EXTENSION) continue;
+    const parts = ext.extension ?? [];
+    if (parts.find((x) => x.url === 'code')?.valueCode !== code) continue;
+    const value = parts.find((x) => x.url === 'value')?.valueBoolean;
+    if (typeof value === 'boolean') return value;
+  }
+  return undefined;
+}
+
+/** The codes of one coded property of an expansion entry, or undefined when the entry has none. */
+function propertyCodes(item: FhirExpansionContains, code: string): string[] | undefined {
   const codes: string[] = [];
   let seen = false;
   for (const p of item.property ?? []) {
-    if (p.code !== 'parent') continue;
+    if (p.code !== code) continue;
     seen = true;
     if (p.valueCode) codes.push(p.valueCode);
   }
   for (const ext of item.extension ?? []) {
     if (ext.url !== CONTAINS_PROPERTY_EXTENSION) continue;
     const parts = ext.extension ?? [];
-    if (parts.find((x) => x.url === 'code')?.valueCode !== 'parent') continue;
+    if (parts.find((x) => x.url === 'code')?.valueCode !== code) continue;
     seen = true;
     const value = parts.find((x) => x.url === 'value')?.valueCode;
     if (value) codes.push(value);
@@ -123,7 +142,26 @@ function parentCodes(item: FhirExpansionContains): string[] | undefined {
   return seen ? codes : undefined;
 }
 
+/** One concept's relationships in a batch: null for an unknown code, an Error for any other failure. */
+type RelationshipAnswer = DefiningRelationship[] | null | Error;
+
 // ── Module-level constants ──────────────────────────────────────────────
+
+const conceptListCache = new WeakMap<readonly string[], string>();
+
+/**
+ * `[{"code": ...}, ...]` for a compose's `concept`. Cached for the life of the
+ * list only when the array is frozen, so the text cannot go stale: derive
+ * freezes its member list, which it sends with every comparison, and any other
+ * caller's array is built afresh each time.
+ */
+function conceptListJson(codes: readonly string[]): string {
+  const cached = conceptListCache.get(codes);
+  if (cached !== undefined) return cached;
+  const json = '[' + codes.map((code) => '{"code":' + JSON.stringify(code) + '}').join(',') + ']';
+  if (Object.isFrozen(codes)) conceptListCache.set(codes, json);
+  return json;
+}
 
 const DEFAULT_USER_AGENT = 'ecl-lsp/1.0.0';
 
@@ -223,7 +261,9 @@ export interface FhirTerminologyServiceOptions {
    * fails, in milliseconds. While the server reports its limit spent
    * (`x-ratelimit-remaining: 0`, or any 429), every request of this service
    * waits for the reset it gives (`Retry-After` or `x-ratelimit-reset`).
-   * Default 60,000.
+   * The budget is checked after each 429, so time a request spends held
+   * behind others before its first attempt is not counted: with many
+   * requests queued, one can wait longer than this. Default 60,000.
    */
   rateLimitWaitMs?: number;
 }
@@ -1202,6 +1242,64 @@ export class FhirTerminologyService implements ITerminologyService {
     return FhirTerminologyService.relationshipsOf(data.parameter ?? []);
   }
 
+  /**
+   * Many `$lookup`s in one FHIR batch Bundle, so a sample of relationships
+   * costs one request against the rate limit rather than one per concept.
+   */
+  async getDefiningRelationshipsMany(conceptIds: string[]): Promise<RelationshipAnswer[]> {
+    const version = this.snomedVersion ? `&version=${encodeURIComponent(this.snomedVersion)}` : '';
+    const body = {
+      resourceType: 'Bundle',
+      type: 'batch',
+      entry: conceptIds.map((id) => ({
+        request: {
+          method: 'GET',
+          url: `CodeSystem/$lookup?system=http://snomed.info/sct&code=${encodeURIComponent(id)}&property=*${version}`,
+        },
+      })),
+    };
+    const operation = `batch $lookup of the relationships of ${conceptIds.length} concepts`;
+    const url = this.baseUrl;
+    // One request doing the work of many: allow each lookup its usual time.
+    const response = await this.request(url, this.timeout * Math.max(1, conceptIds.length), operation, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/fhir+json', Accept: 'application/fhir+json' },
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) {
+      const { detail } = await FhirTerminologyService.readErrorBody(response);
+      throw toHttpError({ status: response.status, statusText: response.statusText, url, operation, detail });
+    }
+    const data = (await response.json()) as {
+      entry?: { resource?: FhirParametersResponse & FhirOperationOutcomeResponse; response?: { status?: string } }[];
+    };
+    return conceptIds.map((id, i) => FhirTerminologyService.batchRelationships(id, data.entry?.[i]));
+  }
+
+  /** One batch entry's relationships: null for an unknown code, an Error for any other failure. */
+  private static batchRelationships(
+    id: string,
+    entry:
+      { resource?: FhirParametersResponse & FhirOperationOutcomeResponse; response?: { status?: string } } | undefined,
+  ): RelationshipAnswer {
+    const status = Number.parseInt(entry?.response?.status ?? '', 10);
+    const resource = entry?.resource;
+    let answer: RelationshipAnswer;
+    if (status >= 200 && status < 300 && resource?.resourceType === 'Parameters') {
+      answer = FhirTerminologyService.relationshipsOf(resource.parameter ?? []);
+    } else if (
+      FhirTerminologyService.isUnknownCodeResponse(
+        status,
+        resource?.resourceType === 'OperationOutcome' ? resource : null,
+      )
+    ) {
+      answer = null;
+    } else {
+      answer = new Error(`$lookup of ${id} in a batch answered ${entry?.response?.status ?? 'nothing'}`);
+    }
+    return answer;
+  }
+
   /** The relationships in a `$lookup` response's `property` parameters; role groups are numbered from 1. */
   private static relationshipsOf(parameters: FhirParameter[]): DefiningRelationship[] {
     const partValue = (parts: FhirParameterPart[] | undefined, name: string) =>
@@ -1245,29 +1343,36 @@ export class FhirTerminologyService implements ITerminologyService {
    * @throws {TerminologyHttpError} when the server answered with an error status.
    */
   async expandCompose(compose: ValueSetCompose, options: ExpandComposeOptions = {}): Promise<EvaluationResponse> {
-    const { count = 0, offset = 0, activeOnly = true, timeoutMs = 60_000, parents = false } = options;
-    const toInclude = (clause: ValueSetClause): Record<string, unknown> => ({
-      system: 'http://snomed.info/sct',
-      ...(this.snomedVersion ? { version: this.snomedVersion } : {}),
-      ...('ecl' in clause
-        ? { filter: [{ property: 'constraint', op: '=', value: clause.ecl }] }
-        : { concept: clause.concepts.map((code) => ({ code })) }),
-    });
-    const body = {
-      resourceType: 'ValueSet',
-      compose: {
-        include: compose.include.map(toInclude),
-        ...(compose.exclude?.length ? { exclude: compose.exclude.map(toInclude) } : {}),
-      },
-    };
+    const {
+      count = 0,
+      offset = 0,
+      activeOnly = true,
+      timeoutMs = 60_000,
+      parents = false,
+      children = false,
+      activity = false,
+    } = options;
+    // A concept list is spliced in as text, serialised once per list: a derive
+    // sends the same list of up to hundreds of thousands of codes in many
+    // requests at once.
+    const system = { system: 'http://snomed.info/sct', ...(this.snomedVersion ? { version: this.snomedVersion } : {}) };
+    const toInclude = (clause: ValueSetClause): string =>
+      'ecl' in clause
+        ? JSON.stringify({ ...system, filter: [{ property: 'constraint', op: '=', value: clause.ecl }] })
+        : `${JSON.stringify(system).slice(0, -1)},"concept":${conceptListJson(clause.concepts)}}`;
+    const exclude = compose.exclude?.length ? `,"exclude":[${compose.exclude.map(toInclude).join(',')}]` : '';
+    const body = `{"resourceType":"ValueSet","compose":{"include":[${compose.include.map(toInclude).join(',')}]${exclude}}}`;
 
-    const property = parents ? '&property=parent' : '';
+    const property =
+      (parents ? '&property=parent' : '') +
+      (children ? '&property=child' : '') +
+      (activity ? '&property=inactive' : '');
     const url = `${this.baseUrl}/ValueSet/$expand?count=${count}&offset=${offset}&activeOnly=${activeOnly}${property}`;
     const operation = 'POST ValueSet/$expand of an inline compose';
     const response = await this.request(url, timeoutMs, operation, {
       method: 'POST',
       headers: { 'Content-Type': 'application/fhir+json', Accept: 'application/fhir+json' },
-      body: JSON.stringify(body),
+      body,
     });
     if (!response.ok) {
       const { detail } = await FhirTerminologyService.readErrorBody(response);
@@ -1279,6 +1384,18 @@ export class FhirTerminologyService implements ITerminologyService {
       (data.expansion?.contains ?? []).forEach((item, i) => {
         const found = parentCodes(item);
         if (found) result.concepts[i].parents = found;
+      });
+    }
+    if (activity) {
+      (data.expansion?.contains ?? []).forEach((item, i) => {
+        const stated = item.inactive === true ? true : propertyBoolean(item, 'inactive');
+        if (stated !== undefined) result.concepts[i].inactive = stated;
+      });
+    }
+    if (children) {
+      // A leaf has no child entries, so an entry without them has none: [] rather than unknown.
+      (data.expansion?.contains ?? []).forEach((item, i) => {
+        result.concepts[i].children = propertyCodes(item, 'child') ?? [];
       });
     }
     return result;
@@ -1332,6 +1449,7 @@ export class FhirTerminologyService implements ITerminologyService {
     const concepts = contains.map((item) => ({
       code: item.code ?? '',
       display: item.display ?? '',
+      ...(item.inactive === true ? { inactive: true } : {}),
     }));
 
     return {

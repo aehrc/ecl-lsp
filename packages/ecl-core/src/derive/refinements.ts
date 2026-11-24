@@ -31,6 +31,7 @@ import {
   stripTermsAndComments,
   type MemberSet,
   type SetQueries,
+  uncounted,
 } from './set-queries';
 
 /** One part of a refinement: `[cardinality] attribute comparison value`. */
@@ -102,6 +103,30 @@ async function readRelationships(
 }
 
 /**
+ * The sample's relationships in one batch request; null (read one by one)
+ * when the batch fails. Entries the batch could not answer are read one by
+ * one. `many` is not counted as a failure (see `uncounted`): only the one-by-one
+ * reads, which lose what they cannot read, are.
+ */
+async function readMany(
+  sample: string[],
+  many: (ids: string[]) => Promise<(DefiningRelationship[] | null | Error)[]>,
+  getRelationships: (conceptId: string) => Promise<DefiningRelationship[] | null>,
+  notes: string[],
+): Promise<(DefiningRelationship[] | null)[] | null> {
+  let answers: (DefiningRelationship[] | null | Error)[];
+  try {
+    answers = await many(sample);
+  } catch {
+    return null;
+  }
+  const answered = answers.filter((a): a is DefiningRelationship[] | null => !(a instanceof Error));
+  const retry = sample.filter((_, i) => answers[i] instanceof Error);
+  if (retry.length > 0) answered.push(...(await readRelationships(retry, getRelationships, notes)));
+  return answered;
+}
+
+/**
  * Refinement candidates for the set, likeliest first. `roots` are the set's
  * roots (all of them when `roots.total` fits); `givenFoci` come from the input
  * or the caller, and the most specific concept above every member is added
@@ -115,6 +140,7 @@ export async function refinementCandidates(
   q: SetQueries,
   terminology: ITerminologyService,
   notes: string[],
+  batch = false,
 ): Promise<{ focus: string; clauses: RefinementClause[] }[]> {
   const getRelationships = terminology.getDefiningRelationships?.bind(terminology);
   if (!getRelationships) {
@@ -123,7 +149,11 @@ export async function refinementCandidates(
   }
 
   const sample = (await q.codes({ include: [members.clause] }, REFINEMENT_SAMPLE)).codes;
-  const sampled = await readRelationships(sample, getRelationships, notes);
+  const quiet = uncounted(terminology);
+  const many = batch ? quiet.getDefiningRelationshipsMany?.bind(quiet) : undefined;
+  const sampled =
+    (many && (await readMany(sample, many, getRelationships, notes))) ??
+    (await readRelationships(sample, getRelationships, notes));
   const profiles = profileAttributes(sampled);
   if (profiles.length === 0) {
     notes.push('No attribute is shared by most members, so no refinement candidates were built.');

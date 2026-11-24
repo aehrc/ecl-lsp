@@ -160,7 +160,7 @@ async function compress(
   // The original and its simplification stay choices whatever the limit, so no
   // caller is left with only lossy forms.
   for (const c of built) if (c.source !== 'derived' && !top.includes(c)) top.push(c);
-  const terms = options.omitTerms ? new Map<string, string>() : await displayTerms(top, terminology);
+  const terms = options.omitTerms ? new Map<string, string>() : await displayTerms(top, terminology, result.notes);
   result.candidates = top.map((c) => ({
     expression: decorate(c.ecl, terms),
     ...c,

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.0] - 2026-11-24
+
+A minor release, mostly for deriving ECL from code lists. Derive now waits out a terminology server's rate limit instead of failing, says when a result is incomplete, finds covers within a reference set (the usual shape of an AMT list), and is much lighter on the server and on memory for large lists. The rate-limit change applies to every user of `FhirTerminologyService`: on a rate-limited server, hovers and diagnostics now wait up to 60 s instead of failing in about 1.5 s.
+
 ### Added
 
 - **Derive finds a cover within a reference set** (`ecl-core`): `(<< A OR << B …) AND ^ R`, for a list that is one reference set's members under a few groupers, where the groupers alone add concepts outside the refset. This is the usual shape of an AMT list: one level (MPUU, MP, TPP …) under some drug classes. Before, derive offered only the enumeration for these. On the AU edition, a 263-MPUU diabetes list now comes back as 11 class groupers ANDed with the MPUU refset, exact. The new `restrictTo` option names the expression to cover within. Its default, `'auto'`, uses the AMT level refset holding every member when all of them are medicinal products, at a cost of at most seven counts and one query, and does nothing for other sets. The construction is `restricted-cover`. When it is exact, `refinements: 'auto'` no longer runs the attribute-refinement search, which costs a few hundred requests: the 263-MPUU list takes 14 requests and about 3 s, down from about 270 requests and 8 minutes on the public server.

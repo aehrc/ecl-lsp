@@ -52,8 +52,8 @@
     "monaco-editor": ">=0.40.0"
   },
   "devDependencies": {
-    "@playwright/test": "^1.65.0",
-    "@storybook/web-components-vite": "^10.6.0",
+    "@playwright/test": "^1.65.1",
+    "@storybook/web-components-vite": "^10.6.8",
     "lit": "^3.3.3",
     "monaco-editor": "^0.57.0",
     "storybook": "^10.3.3",
@@ -61,6 +61,6 @@
     "vite": "^8.2.2",
     "vite-plugin-dts": "^5.1.2",
     "vite-plugin-node-polyfills": "^0.28.0",
-    "vitest": "^5.1.0"
+    "vitest": "^5.1.1"
   }
 }

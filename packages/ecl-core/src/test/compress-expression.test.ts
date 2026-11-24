@@ -65,6 +65,24 @@ describe('compressExpression', () => {
     assertHonest(mock, original, result);
   });
 
+  it('counts failed server queries and says the result is incomplete', async () => {
+    const mock = fixture();
+    const expand = mock.expandCompose.bind(mock);
+    mock.expandCompose = (compose, options) =>
+      compose.exclude ? Promise.reject(new Error('rate-limited')) : expand(compose, options);
+    const original = [id.X, `<< ${id.C1}`, id.C2, id.C3, id.C4, id.C5, id.C6, id.C7, id.C8].join(' OR ');
+    const result = await compressExpression(original, mock, { omitTerms: true });
+    assert.ok(result.failures > 0, `failures = ${result.failures}`);
+    assert.match(formatCompressReport(result), /^Incomplete: \d+ server quer(y|ies) failed/);
+  });
+
+  it('reports no failures when every query succeeds', async () => {
+    const mock = fixture();
+    const original = [id.X, `<< ${id.C1}`, id.C2, id.C3, id.C4, id.C5, id.C6, id.C7, id.C8].join(' OR ');
+    const result = await compressExpression(original, mock, { omitTerms: true });
+    assert.strictEqual(result.failures, 0);
+  });
+
   it('offers a lossy grouper with what it adds, and keeps the original as an exact choice', async () => {
     const mock = fixture();
     // 7 of X's 8 children: `< X` is 1 clause plus C1's subtree (3), against 7 clauses;

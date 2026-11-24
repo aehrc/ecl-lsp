@@ -27,11 +27,12 @@ import {
   decorate,
   deriveEcl,
   displayTerms,
+  incompleteLine,
   type CandidateConstruction,
   type DeriveCandidate,
   type DeriveOptions,
 } from './derive-ecl';
-import { countClauses, stripTermsAndComments, type SetDifference } from './set-queries';
+import { countClauses, countingFailures, stripTermsAndComments, type SetDifference } from './set-queries';
 
 export interface CompressCandidate {
   /** The candidate, formatted, with display terms unless `omitTerms`. */
@@ -71,6 +72,8 @@ export interface CompressResult {
   notes: string[];
   /** Syntax errors; the expression is not compressed when there are any. */
   errors: string[];
+  /** Server requests that failed; above 0 a shorter form may be missing (see `DeriveResult.failures`). */
+  failures: number;
 }
 
 /**
@@ -84,11 +87,22 @@ export async function compressExpression(
   terminology: ITerminologyService,
   options: DeriveOptions = {},
 ): Promise<CompressResult> {
+  const { service, failures } = countingFailures(terminology);
+  const result = await compress(ecl, service, options);
+  result.failures = failures();
+  return result;
+}
+
+async function compress(
+  ecl: string,
+  terminology: ITerminologyService,
+  options: DeriveOptions,
+): Promise<CompressResult> {
   // Terms and comments are dropped: candidates get fresh terms, and offsets and
   // clause counts must not see digits inside them.
   const original = stripTermsAndComments(ecl);
   const parsed = parseECL(original);
-  const result: CompressResult = { members: 0, group: null, candidates: [], notes: [], errors: [] };
+  const result: CompressResult = { members: 0, group: null, candidates: [], notes: [], errors: [], failures: 0 };
   if (!parsed.ast || parsed.errors.length > 0) {
     result.errors = parsed.errors.map((e) => e.message);
     return result;
@@ -276,6 +290,7 @@ function orInside(
 export function formatCompressReport(result: CompressResult): string {
   if (result.errors.length > 0) return `Not compressed: ${result.errors.join('; ')}`;
   const lines = [`Original selects ${result.members} concepts.`];
+  if (result.failures > 0) lines.unshift(incompleteLine(result.failures));
   if (result.group && result.group.start > 0) lines.push(`Compressed group: ${result.group.text}`);
   for (const note of result.notes) lines.push(`Note: ${note}`);
   result.candidates.forEach((c, i) => {

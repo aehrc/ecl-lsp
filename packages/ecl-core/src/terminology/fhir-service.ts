@@ -177,8 +177,37 @@ class ConcurrencyQueue {
 
 const RETRY_BASE_DELAY_MS = 500;
 const RETRY_MAX_DELAY_MS = 10_000;
-const RETRY_MAX_ATTEMPTS = 3;
 const RETRY_JITTER_MS = 200;
+/** Default for {@link FhirTerminologyServiceOptions.rateLimitWaitMs}. */
+const DEFAULT_RATE_LIMIT_WAIT_MS = 60_000;
+
+/**
+ * Milliseconds until the server says requests may resume, from `Retry-After`
+ * (seconds or an HTTP date) or `x-ratelimit-reset` (seconds from now, or an
+ * epoch time in seconds), whichever is later; 0 when it says neither.
+ */
+/** `x-ratelimit-remaining`, when the server sends it. */
+function remainingRequests(headers: Headers): number | undefined {
+  const value = headers.get('x-ratelimit-remaining')?.trim();
+  if (!value) return undefined;
+  const n = Number(value);
+  return Number.isFinite(n) && n >= 0 ? n : undefined;
+}
+
+function serverResetMs(headers: Headers, now: number): number {
+  let ms = 0;
+  const retryAfter = headers.get('Retry-After')?.trim();
+  if (retryAfter) {
+    const seconds = Number(retryAfter);
+    const at = Number.isFinite(seconds) ? now + seconds * 1000 : Date.parse(retryAfter);
+    if (Number.isFinite(at)) ms = Math.max(ms, at - now);
+  }
+  const reset = Number(headers.get('x-ratelimit-reset'));
+  if (Number.isFinite(reset) && reset > 0) {
+    ms = Math.max(ms, reset > 1e9 ? reset * 1000 - now : reset * 1000);
+  }
+  return Math.max(0, ms);
+}
 
 export interface FhirTerminologyServiceOptions {
   baseUrl?: string;
@@ -189,6 +218,14 @@ export interface FhirTerminologyServiceOptions {
   evaluationStrategy?: EclEvaluationStrategy;
   onResolvedVersion?: (versionUri: string) => void;
   maxConcurrency?: number;
+  /**
+   * How long one request may spend waiting out rate limits (HTTP 429) before it
+   * fails, in milliseconds. While the server reports its limit spent
+   * (`x-ratelimit-remaining: 0`, or any 429), every request of this service
+   * waits for the reset it gives (`Retry-After` or `x-ratelimit-reset`).
+   * Default 60,000.
+   */
+  rateLimitWaitMs?: number;
 }
 
 /**
@@ -291,11 +328,27 @@ export class FhirTerminologyService implements ITerminologyService {
    */
   private bulkExpandUnsupported = false;
   private readonly queue: ConcurrencyQueue;
+  private readonly rateLimitWaitMs: number;
+  /** No request is sent before this time: the server said its rate limit is spent until then. */
+  private pausedUntil = 0;
+  /**
+   * Requests held by the rate limit, oldest first (a retry goes back to the
+   * front). When a pause ends they do not all go at once, which would meet
+   * one success and a storm of 429s: one goes first (the probe), and its
+   * response says how many more the server has room for.
+   */
+  private readonly held: ((probe: boolean) => void)[] = [];
+  /** A probe is in flight: the others wait for its answer. */
+  private probing = false;
+  /** Requests sent and not yet answered, so `x-ratelimit-remaining` is not spent twice. */
+  private unanswered = 0;
+  private wakeTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(options: FhirTerminologyServiceOptions = {}) {
     const maxConcurrency = options.maxConcurrency ?? 25;
     if (maxConcurrency <= 0) throw new Error(`maxConcurrency must be > 0, got ${maxConcurrency}`);
     this.queue = new ConcurrencyQueue(maxConcurrency);
+    this.rateLimitWaitMs = options.rateLimitWaitMs ?? DEFAULT_RATE_LIMIT_WAIT_MS;
     this.baseUrl = options.baseUrl ?? 'https://tx.ontoserver.csiro.au/fhir';
     this.timeout = options.timeout ?? 2000;
     this.userAgent = options.userAgent ?? DEFAULT_USER_AGENT;
@@ -511,24 +564,94 @@ export class FhirTerminologyService implements ITerminologyService {
     timeoutMs: number,
     init?: { method?: string; headers?: Record<string, string>; body?: string },
   ): Promise<Response> {
-    for (let attempt = 0; attempt < RETRY_MAX_ATTEMPTS; attempt++) {
-      const response = await this.fetchWithTimeout(url, timeoutMs, init);
-      if (response.status !== 429) return response;
-
-      if (attempt === RETRY_MAX_ATTEMPTS - 1) {
-        throw new Error(`FHIR request rate-limited after ${RETRY_MAX_ATTEMPTS} attempts`);
+    const started = Date.now();
+    for (let attempt = 1; ; attempt++) {
+      const probe = await this.waitForRateLimit(attempt > 1);
+      this.unanswered++;
+      let response: Response;
+      try {
+        response = await this.fetchWithTimeout(url, timeoutMs, init);
+      } catch (error) {
+        this.release(probe, 0);
+        throw error;
+      }
+      const now = Date.now();
+      const resetMs = serverResetMs(response.headers, now);
+      const remaining = remainingRequests(response.headers);
+      if (response.status !== 429) {
+        // The last request the window allows: hold the next ones until it resets.
+        if (remaining === 0 && resetMs > 0) this.pauseUntil(now + resetMs);
+        this.release(probe, remaining ?? Infinity);
+        return response;
       }
 
-      const retryAfterHeader = response.headers.get('Retry-After');
-      const retryAfterMs = retryAfterHeader ? parseInt(retryAfterHeader, 10) * 1000 : 0;
-      const backoff = Math.min(RETRY_BASE_DELAY_MS * Math.pow(2, attempt), RETRY_MAX_DELAY_MS);
+      const backoff = Math.min(RETRY_BASE_DELAY_MS * Math.pow(2, attempt - 1), RETRY_MAX_DELAY_MS);
       const jitter = Math.random() * RETRY_JITTER_MS; // eslint-disable-line sonarjs/pseudo-random -- jitter for retry backoff; cryptographic randomness not needed
-      const waitMs = Math.max(retryAfterMs, backoff + jitter);
-
-      await new Promise<void>((resolve) => setTimeout(resolve, waitMs));
+      const waitMs = (resetMs > 0 ? resetMs : backoff) + jitter;
+      // Shared: the other requests in flight would only meet the same 429.
+      this.pauseUntil(now + waitMs);
+      this.release(probe, 0);
+      if (now + waitMs - started > this.rateLimitWaitMs) {
+        throw new Error(
+          `FHIR request rate-limited after ${attempt} attempts over ${Math.round((now - started) / 1000)} s`,
+        );
+      }
     }
+  }
 
-    throw new Error('Unreachable');
+  private pauseUntil(time: number): void {
+    this.pausedUntil = Math.max(this.pausedUntil, time);
+    this.schedule();
+  }
+
+  /**
+   * Go now, or wait in line while the rate limit is spent or other requests
+   * are held; true when this request is the probe. A retry waits at the front.
+   */
+  private waitForRateLimit(retry: boolean): Promise<boolean> {
+    if (!retry && !this.probing && this.held.length === 0 && Date.now() >= this.pausedUntil) {
+      return Promise.resolve(false);
+    }
+    return new Promise<boolean>((resolve) => {
+      if (retry) this.held.unshift(resolve);
+      else this.held.push(resolve);
+      this.schedule();
+    });
+  }
+
+  /** When the pause ends, send the oldest held request alone, as the probe. */
+  private schedule(): void {
+    if (this.wakeTimer !== undefined || this.probing || this.held.length === 0) return;
+    this.wakeTimer = setTimeout(
+      () => {
+        this.wakeTimer = undefined;
+        if (Date.now() < this.pausedUntil) {
+          this.schedule();
+          return;
+        }
+        const next = this.held.shift();
+        if (!next) return;
+        this.probing = true;
+        next(true);
+      },
+      Math.max(0, this.pausedUntil - Date.now()),
+    );
+  }
+
+  /**
+   * A request's answer: if it was the probe, the next may go; while no pause
+   * is set, let as many held requests go as the server has room for
+   * (`remaining`), oldest first, and probe again for the rest.
+   */
+  private release(probe: boolean, room: number): void {
+    this.unanswered--;
+    if (probe) this.probing = false;
+    if (Date.now() >= this.pausedUntil) {
+      // The server's room is shared with the requests already on their way. Those
+      // released here count themselves as they resume, before any other answer.
+      for (let n = room - this.unanswered; n > 0 && this.held.length > 0; n--) this.held.shift()?.(false);
+    }
+    this.schedule();
   }
 
   private fetchQueued(

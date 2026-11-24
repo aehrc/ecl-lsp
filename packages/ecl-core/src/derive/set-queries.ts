@@ -4,6 +4,7 @@
 // Server-side set queries and small helpers shared by deriveEcl and its
 // refinement candidates (issues #147, #149).
 
+import { isTerminologyHttpError } from '../terminology/errors';
 import type { EvaluationConcept, ITerminologyService, ValueSetClause, ValueSetCompose } from '../terminology/types';
 
 export interface SetDifference {
@@ -50,6 +51,37 @@ export function countClauses(ecl: string): number {
 }
 
 export type ExpandCompose = NonNullable<ITerminologyService['expandCompose']>;
+
+/**
+ * `terminology`, counting the requests that fail because of the server: it
+ * could not be reached, timed out, was rate-limited or answered 5xx. A 4xx
+ * other than 429 is about the request, not the server, and is not counted.
+ * Derive drops what a failed request was for and goes on, so this count is
+ * what tells a degraded result from a complete one.
+ */
+export function countingFailures(terminology: ITerminologyService): {
+  service: ITerminologyService;
+  failures: () => number;
+} {
+  let count = 0;
+  const counted = (error: unknown): never => {
+    const requestFault =
+      isTerminologyHttpError(error) && error.status >= 400 && error.status < 500 && error.status !== 429;
+    if (!requestFault) count++;
+    throw error;
+  };
+  const service = new Proxy(terminology, {
+    get(target, prop, receiver) {
+      const value: unknown = Reflect.get(target, prop, receiver);
+      if (typeof value !== 'function') return value;
+      return (...args: unknown[]): unknown => {
+        const out: unknown = value.apply(target, args);
+        return out instanceof Promise ? out.catch(counted) : out;
+      };
+    },
+  });
+  return { service, failures: () => count };
+}
 
 /** The set under study, as a compose clause and as an ECL operand. */
 export interface MemberSet {

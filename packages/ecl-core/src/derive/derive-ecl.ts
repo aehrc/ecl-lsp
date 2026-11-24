@@ -56,6 +56,7 @@ import {
   byId,
   compareText,
   countClauses,
+  countingFailures,
   orGroup,
   SetQueries,
   SNOMED_ROOT,
@@ -105,12 +106,13 @@ export interface DeriveOptions {
   /**
    * Attribute refinement candidates (`focus : attribute = value`):
    * `'auto'` builds them when the set cuts across the IS-A hierarchy: more than
-   * 20 roots, or more than 3 with no exact IS-A candidate of 3 clauses or fewer.
+   * 20 roots, or more than 3 with no exact IS-A candidate of 3 clauses or fewer;
+   * never when an exact cover within a reference set was found (see `restrictTo`).
    * Default `'auto'`. Needs `getDefiningRelationships`.
    */
   refinements?: 'auto' | 'always' | 'never';
   /**
-   * The focus for refinement candidates, e.g. `^ 929360081000036101` for AMT
+   * The focus for refinement candidates, e.g. `^ 929360071000036103` for AMT
    * MPUUs. Default: `<<` the most specific concept above every member.
    */
   refinementFocus?: string;
@@ -146,6 +148,16 @@ export interface DeriveOptions {
    * `true` uses the defaults of {@link CritiqueOptions}. Default false.
    */
   critique?: boolean | CritiqueOptions;
+  /**
+   * Build a cover that is exact within this expression, `(<< A OR << B …) AND R`,
+   * for sets that are one slice of a hierarchy: a reference set's members under
+   * a few groupers, where the groupers alone add the concepts outside it (an
+   * AMT list of MPUUs under its drug classes). `'auto'` uses the AMT level
+   * reference set holding every member when all of them are medicinal
+   * products, and is a no-op otherwise; `''` turns the cover off. Graph path
+   * only. Default `'auto'`.
+   */
+  restrictTo?: string;
 }
 
 /** Limits for {@link CodelistCritique}. */
@@ -254,6 +266,13 @@ export type CandidateConstruction =
       exclusions: HierarchyClause[];
     }
   | {
+      /** A cover exact within `restrictTo`: the clauses ORed, then `AND restrictTo`. */
+      kind: 'restricted-cover';
+      restrictTo: string;
+      /** The highest concepts with no non-member of `restrictTo` below them, as `<< x`; a member that has one, as `= x`. */
+      includes: HierarchyClause[];
+    }
+  | {
       kind: 'ancestor-cover';
       /** The clauses, in the order chosen: `<< member` or `< ancestor` (a non-member). */
       foci: { conceptId: string; operator: '<' | '<<'; member: boolean }[];
@@ -304,6 +323,14 @@ export interface DeriveResult {
   notes: string[];
   /** Structural checks on the list, when the `critique` option asks for them. */
   critique?: CodelistCritique;
+  /**
+   * Server requests that failed (unreachable, timed out, rate-limited, 5xx).
+   * Each drops a candidate or a check rather than the result, so above 0 the
+   * result is incomplete: a candidate the server could not count is missing,
+   * and the best one left may be far worse than the best that exists. `notes`
+   * says what was lost.
+   */
+  failures: number;
 }
 
 // ── Defaults and small helpers ───────────────────────────────────────────
@@ -327,6 +354,7 @@ const DEFAULTS: Required<DeriveOptions> = {
   useGraph: true,
   maxGraphConcepts: 200_000,
   critique: false,
+  restrictTo: 'auto',
 };
 
 const CRITIQUE_DEFAULTS: Required<CritiqueOptions> = {
@@ -372,13 +400,25 @@ export async function deriveEcl(
   if (!terminology.expandCompose) {
     throw new Error('deriveEcl needs a terminology service that supports expandCompose (POST ValueSet/$expand)');
   }
+  const { service, failures } = countingFailures(terminology);
+  const result = await derive(input, service, options);
+  result.failures = failures();
+  return result;
+}
+
+async function derive(
+  input: DeriveInput,
+  terminology: ITerminologyService,
+  options: DeriveOptions,
+): Promise<DeriveResult> {
+  if (!terminology.expandCompose) throw new Error('unreachable: checked by deriveEcl');
   const opts = { ...DEFAULTS, ...options };
   const expandCompose = terminology.expandCompose.bind(terminology);
   const q = new SetQueries((compose, o) => expandCompose(compose, { timeoutMs: opts.queryTimeoutMs, ...o }));
   const notes: string[] = [];
 
   const { report, members } = await resolveInput(input, q, terminology, notes);
-  const result: DeriveResult = { input: report, hierarchies: [], roots: 0, candidates: [], notes };
+  const result: DeriveResult = { input: report, hierarchies: [], roots: 0, candidates: [], notes, failures: 0 };
   if (!members) {
     if (notes.length === 0) {
       notes.push('The input has no active concepts the server knows, so there is nothing to derive.');
@@ -401,9 +441,10 @@ export async function deriveEcl(
 
   const scorer = new Scorer(members, q, opts, notes);
   // On the graph path only the best by local counts are counted on the server.
-  if (graph)
+  if (graph) {
     await scorer.score(worthCounting(graphCandidates(graph, opts, notes), inputCost(input, members), opts, notes));
-  else await scorer.score(await hierarchyCandidates(rootQuery.codes, result.roots, members, q, opts, notes));
+    await scorer.score(await restrictedCovers(graph, members, q, opts, notes));
+  } else await scorer.score(await hierarchyCandidates(rootQuery.codes, result.roots, members, q, opts, notes));
   if (wantRefinements(opts.refinements, result.roots, scorer.scored)) {
     await scoreRefinements(input, members, rootQuery, scorer, q, terminology, opts, notes);
   }
@@ -419,8 +460,10 @@ export async function deriveEcl(
     );
   }
 
-  scorer.scored.sort((a, b) => byRank(rankOf(a), rankOf(b)));
-  const top = scorer.scored.slice(0, opts.maxCandidates);
+  // A form that selects no member describes nothing about the set, however it ranks on cost.
+  const useful = scorer.scored.filter((s) => s.covered > 0);
+  useful.sort((a, b) => byRank(rankOf(a), rankOf(b)));
+  const top = useful.slice(0, opts.maxCandidates);
 
   const terms = opts.omitTerms ? new Map<string, string>() : await displayTerms(top, terminology);
   result.candidates = top.map((s) => ({ expression: decorate(s.ecl, terms), ...s }));
@@ -490,7 +533,13 @@ async function subtractions(
       omitTerms: true,
       maxCandidates: 3,
     });
-    const d = extra.candidates.find((x) => x.construction.kind !== 'expression' && x.misses.count === 0);
+    // Judged within C, D's additions are the members it would take away: worth
+    // it only when that is fewer than the non-members C adds. Otherwise D can
+    // be all of C (`< Medicinal product` under a product focus), and C MINUS D
+    // selects nothing.
+    const d = extra.candidates.find(
+      (x) => x.construction.kind !== 'expression' && x.misses.count === 0 && x.additions.count < c.additions.count,
+    );
     if (d) {
       built.push({
         ecl: `(${c.ecl}) MINUS (${d.ecl})`,
@@ -509,6 +558,9 @@ async function subtractions(
 function wantRefinements(mode: DeriveOptions['refinements'], roots: number, scored: Scored[]): boolean {
   if (mode === 'always') return true;
   if (mode === 'never') return false;
+  // An exact cover within a reference set has explained the set; the search
+  // costs a few hundred requests, minutes on a rate-limited server.
+  if (scored.some((c) => c.exact && c.construction.kind === 'restricted-cover')) return false;
   if (roots > REFINEMENT_ROOTS) return true;
   return roots > 3 && !scored.some((c) => c.exact && c.clauses <= 3);
 }
@@ -922,6 +974,81 @@ function graphCandidates(
   return candidates.sort((a, b) =>
     byRank({ ecl: a.ecl, inputItself: false, ...a.local }, { ecl: b.ecl, inputItself: false, ...b.local }),
   );
+}
+
+/** AMT's level reference sets, likeliest first for a list of products: MPUU, MP, TPUU, TP, MPP, TPP, CTPP. */
+const AMT_LEVEL_REFSETS = [
+  '929360071000036103',
+  '929360061000036106',
+  '929360031000036100',
+  '929360021000036102',
+  '929360081000036101',
+  '929360041000036105',
+  '929360051000036108',
+];
+const MEDICINAL_PRODUCT = '763158003';
+
+/**
+ * The cover exact within `restrictTo` (see {@link DeriveOptions.restrictTo}).
+ * A concept of `>> set` may stand as `<< x` when nothing of `restrictTo` below
+ * it is a non-member: one query finds the concepts of `>> set` that are above
+ * such a non-member. The highest of the rest, with each member that is itself
+ * above a non-member, cover the set exactly once ANDed with `restrictTo`.
+ */
+async function restrictedCovers(
+  g: TaxonomyGraph,
+  members: MemberSet,
+  q: SetQueries,
+  opts: Required<DeriveOptions>,
+  notes: string[],
+): Promise<Built[]> {
+  if (g.partial) return [];
+  const restrictTo = opts.restrictTo === 'auto' ? await amtLevel(g, members, q) : opts.restrictTo.trim();
+  if (!restrictTo) return [];
+  const within = /^\^ ?\d+$/.test(restrictTo) ? restrictTo : `(${restrictTo})`;
+  let blocked: { codes: string[]; total: number };
+  try {
+    blocked = await q.codes(
+      { include: [{ ecl: `(>> ${members.ecl}) AND (>> (${within} MINUS ${members.ecl}))` }] },
+      opts.maxGraphConcepts,
+    );
+  } catch (error) {
+    notes.push(`No cover within ${restrictTo}: ${errorMessage(error)}.`);
+    return [];
+  }
+  const above = new Set(blocked.codes);
+  const free = (id: string) => id !== SNOMED_ROOT && !above.has(id);
+  const includes: HierarchyClause[] = [];
+  for (const x of new Set([...g.ancestors(), ...g.members])) {
+    if (free(x)) {
+      if (!g.parents(x).some(free)) includes.push({ conceptId: x, operator: '<<' });
+    } else if (g.members.has(x)) {
+      includes.push({ conceptId: x, operator: '=' });
+    }
+  }
+  // It ANDs one more clause on; no shorter than listing the members, it is not worth counting.
+  if (includes.length + 1 >= members.size) return [];
+  includes.sort((a, b) => byId(a.conceptId, b.conceptId));
+  const terms = includes.map((c) => (c.operator === '=' ? c.conceptId : `<< ${c.conceptId}`));
+  return [
+    {
+      ecl: `${orGroup(terms)} AND ${within}`,
+      construction: { kind: 'restricted-cover', restrictTo, includes },
+    },
+  ];
+}
+
+/** `^ R` for the AMT level reference set R holding every member, when all of them are medicinal products; else ''. */
+async function amtLevel(g: TaxonomyGraph, members: MemberSet, q: SetQueries): Promise<string> {
+  if (g.truePos(MEDICINAL_PRODUCT) !== members.size) return '';
+  for (const refset of AMT_LEVEL_REFSETS) {
+    try {
+      if ((await q.count({ include: [members.clause], exclude: [{ ecl: `^ ${refset}` }] })) === 0) return `^ ${refset}`;
+    } catch {
+      // Not on this edition, or the server failed (counted in `failures`): try the next.
+    }
+  }
+  return '';
 }
 
 /**
@@ -1585,6 +1712,7 @@ function bareSub(s: SubExpressionNode): string[] | null {
 export function formatDeriveReport(result: DeriveResult): string {
   const lines: string[] = [];
   const { input } = result;
+  if (result.failures > 0) lines.push(incompleteLine(result.failures));
   const duplicates = input.duplicates ? ` (${plural(input.duplicates, 'duplicate')} ignored)` : '';
   lines.push(`Members: ${input.members} of ${input.given} distinct ids${duplicates}`);
   const leftOut: [string, string[]][] = [
@@ -1660,6 +1788,14 @@ function reviewLines(c: CodelistCritique, inactiveListedAbove: boolean): string[
     lines.push(`Same term, different concepts: |${d.term}| is ${concepts.join(', ')}.`);
   }
   return lines.length > 0 ? lines : ['Nothing flagged.'];
+}
+
+/** The first line of a report whose result lost candidates or checks to server failures. */
+export function incompleteLine(failures: number): string {
+  return (
+    `Incomplete: ${failures} server ${failures === 1 ? 'query' : 'queries'} failed, so candidates or checks ` +
+    'that needed them are missing and a better form may exist (see Notes). Run it again when the server recovers.'
+  );
 }
 
 function errorMessage(error: unknown): string {
